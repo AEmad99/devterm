@@ -1,0 +1,2735 @@
+:root {
+  /* Core palette — overridden live per-theme by applyTheme() (lib/themes.ts).
+     The values here are the boot defaults (Tokyo Night) so first paint matches. */
+  --bg: #16161e;
+  --bg-term: #1a1b26;
+  --panel: #1a1b26;
+  --panel-2: #20212e;
+  --border: #2a2c3d;
+  --fg: #c0caf5;
+  --term-fg: #c0caf5;
+  --muted: #565f89;
+  --accent: #7aa2f7;
+  --accent-fg: #0b0e14;
+  --selection: rgba(122, 162, 247, 0.3);
+  --claude: #7c5cff;
+  --danger: #e0564f;
+  --ok: #3fb950;
+
+  /* Derived tokens — resolve against the live core vars, so they re-theme for
+     free. color-mix is supported by the bundled Chromium. */
+  --accent-quiet: color-mix(in srgb, var(--accent) 16%, var(--panel));
+  --accent-soft: color-mix(in srgb, var(--accent) 24%, transparent);
+  --accent-strong: color-mix(in srgb, var(--accent) 88%, #000);
+  --hover: color-mix(in srgb, var(--fg) 9%, transparent);
+  --row-active: color-mix(in srgb, var(--accent) 18%, transparent);
+  --input-bg: color-mix(in srgb, #000 22%, var(--panel));
+  --path-fg: color-mix(in srgb, var(--accent) 70%, var(--fg));
+
+  /* Shape + depth scale. */
+  --radius-sm: 6px;
+  --radius: 9px;
+  --radius-lg: 14px;
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-2: 0 8px 24px rgba(0, 0, 0, 0.36);
+  --shadow-pop: 0 18px 50px rgba(0, 0, 0, 0.5);
+
+  /* Glass tuning (used when data-glass='on'). */
+  --glass-blur: 22px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--fg);
+  font-family:
+    'Segoe UI',
+    system-ui,
+    -apple-system,
+    sans-serif;
+  font-size: 13px;
+}
+
+/* Dark scrollbars everywhere */
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  background: #3a404b;
+  border-radius: 5px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: #4a515e;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.titlebar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 12px;
+  background: color-mix(in srgb, var(--panel) 80%, var(--bg));
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+  user-select: none;
+}
+
+.titlebar .brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+}
+.titlebar .brand-name {
+  background: linear-gradient(180deg, var(--fg), color-mix(in srgb, var(--fg) 72%, var(--muted)));
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+.titlebar .brand svg {
+  filter: drop-shadow(0 1px 3px color-mix(in srgb, var(--accent) 45%, transparent));
+}
+
+.titlebar .badge {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.titlebar .spacer {
+  flex: 1;
+}
+
+.sidebar-toggle {
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  background: transparent !important;
+  color: var(--muted);
+  padding: 5px 7px !important;
+  border-radius: var(--radius-sm);
+}
+.sidebar-toggle:hover {
+  background: var(--hover) !important;
+  color: var(--fg);
+}
+
+.body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.sidebar {
+  flex: 0 0 auto;
+  background: var(--panel);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Draggable splitters */
+.splitter {
+  flex: 0 0 auto;
+  background: var(--border);
+  z-index: 5;
+}
+.splitter:hover {
+  background: var(--accent);
+}
+.splitter-horizontal {
+  width: 4px;
+  cursor: col-resize;
+}
+.splitter-vertical {
+  height: 4px;
+  cursor: row-resize;
+}
+
+/* Terminal | Claude split */
+.term-claude-split {
+  display: flex;
+  height: 100%;
+}
+.tc-term {
+  flex: 1;
+  min-width: 0;
+}
+.tc-claude {
+  flex: 0 0 auto;
+  min-width: 0;
+  border-left: 1px solid var(--border);
+}
+.claude-host {
+  background: var(--bg-term);
+}
+.vt-spacer {
+  flex: 1;
+}
+/* Agent guardrail picker — a labelled pill so "Read-only / Ask / Full" reads clearly. */
+.policy-field {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 2px 4px 2px 11px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+}
+.policy-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.policy-select {
+  background: transparent;
+  color: #dfe3ea;
+  border: none;
+  border-radius: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 2px;
+  cursor: pointer;
+}
+.policy-select:focus {
+  outline: none;
+}
+.policy-select:disabled {
+  color: var(--muted);
+  cursor: default;
+}
+.policy-select option {
+  background: var(--panel-2);
+  color: #dfe3ea;
+}
+
+/* Claude launch button — accent pill, flips to an outlined "close" when open. */
+.view-toggle button.claude-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--claude);
+  border: 1px solid var(--claude);
+  color: #fff;
+}
+.view-toggle button.claude-btn:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+.view-toggle button.claude-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.view-toggle button.claude-btn.active {
+  background: transparent;
+  border-color: var(--danger);
+  color: var(--danger);
+}
+.view-toggle button.claude-btn.active:hover {
+  background: rgba(255, 90, 90, 0.12);
+  filter: none;
+}
+
+/* Confirm action modal */
+.confirm-modal {
+  width: 480px;
+}
+.confirm-tool {
+  font-weight: 600;
+  color: #ffd479;
+  margin: 2px 0;
+}
+.confirm-detail {
+  background: var(--input-bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 200px;
+  overflow: auto;
+}
+.confirm-modal .danger-btn {
+  background: #a33;
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  padding: 7px 16px;
+  cursor: pointer;
+}
+
+.main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* File explorer side panel */
+.explorer {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  font-size: 12px;
+}
+.explorer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 10px;
+  background: var(--panel-2);
+  border-bottom: 1px solid var(--border);
+  font-weight: 600;
+}
+.explorer-head button {
+  background: var(--panel-2);
+  color: #ddd;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 13px;
+  padding: 1px 7px;
+}
+.explorer-pathbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--border);
+}
+.explorer-pathbar button {
+  background: var(--panel-2);
+  color: #ddd;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  padding: 1px 7px;
+}
+.explorer-pathbar button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.ex-path {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--path-fg);
+  font-size: 11px;
+  direction: rtl;
+  text-align: left;
+}
+.explorer-list {
+  flex: 1;
+  overflow-y: auto;
+}
+.ex-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  cursor: default;
+}
+.ex-row:hover {
+  background: var(--hover);
+}
+.ex-icon {
+  width: 16px;
+}
+.ex-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.explorer-error {
+  padding: 6px 8px;
+  color: #f48771;
+  background: #2a1a1a;
+}
+.explorer-empty {
+  padding: 10px;
+  color: #666;
+}
+
+.titlebar button {
+  background: var(--accent);
+  color: var(--accent-fg);
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    filter 0.12s ease,
+    transform 0.05s ease;
+}
+
+.titlebar button:hover {
+  filter: brightness(1.12);
+}
+.titlebar button:active {
+  transform: translateY(1px);
+}
+
+.terminal-host {
+  width: 100%;
+  height: 100%;
+  padding: 6px 8px;
+  background: var(--bg-term);
+  overflow: hidden;
+}
+
+.terminal-host .xterm {
+  height: 100%;
+}
+.terminal-host .xterm-viewport::-webkit-scrollbar {
+  width: 10px;
+}
+
+/* --- in-app browser pane (BrowserPane.tsx) --- */
+.browser-pane {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  background: var(--bg);
+}
+.browser-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 7px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+.browser-btn {
+  flex: 0 0 auto;
+  background: var(--panel-2);
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 4px 9px;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease;
+}
+.browser-btn:hover:not(:disabled) {
+  background: var(--accent);
+  color: #fff;
+}
+.browser-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.browser-addr-form {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+}
+.browser-addr {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  background: var(--bg-term);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0 10px;
+  font-size: 12px;
+  outline: none;
+}
+.browser-addr:focus {
+  border-color: var(--accent);
+}
+.browser-progress {
+  height: 2px;
+  flex: 0 0 auto;
+  background: var(--accent);
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+.browser-progress.on {
+  opacity: 1;
+  animation: browser-progress-pulse 1s ease-in-out infinite;
+}
+@keyframes browser-progress-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+.browser-stack {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  display: flex;
+}
+.browser-view {
+  flex: 1;
+  min-width: 0;
+}
+.browser-webview {
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #fff;
+}
+
+/* In-pane browser tab strip (distinct from the pane/layout .tab strip). */
+.browser-tabs {
+  display: flex;
+  align-items: stretch;
+  gap: 3px;
+  padding: 4px 6px 0;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+}
+.browser-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 200px;
+  padding: 5px 8px 6px 12px;
+  font-size: 12px;
+  color: var(--muted);
+  background: var(--panel-2);
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 7px 7px 0 0;
+  cursor: pointer;
+  white-space: nowrap;
+  position: relative;
+  top: 1px;
+}
+.browser-tab:hover {
+  color: var(--fg);
+}
+.browser-tab.active {
+  background: var(--bg-term);
+  color: #fff;
+  border-color: var(--border);
+}
+.browser-tab.active::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 2px;
+  background: var(--accent);
+  border-radius: 2px 2px 0 0;
+}
+.browser-tab-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.browser-tab-close {
+  flex: 0 0 auto;
+  background: transparent;
+  border: none;
+  color: inherit;
+  opacity: 0.6;
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 1;
+  padding: 2px 3px;
+  border-radius: 4px;
+}
+.browser-tab-close:hover {
+  opacity: 1;
+  background: var(--accent);
+  color: #fff;
+}
+.browser-tab-new {
+  flex: 0 0 auto;
+  align-self: center;
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+  padding: 4px 8px;
+  border-radius: 6px;
+}
+.browser-tab-new:hover {
+  color: #fff;
+  background: var(--accent);
+}
+
+.tabs {
+  display: flex;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  padding: 4px 4px 0;
+  gap: 3px;
+}
+
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 12px;
+  font-size: 12px;
+  border-radius: 7px 7px 0 0;
+  cursor: pointer;
+  white-space: nowrap;
+  color: var(--muted);
+  border: 1px solid transparent;
+  border-bottom: none;
+  position: relative;
+  top: 1px;
+}
+.tab:hover {
+  background: var(--panel-2);
+  color: var(--fg);
+}
+
+.tab.active {
+  background: var(--bg-term);
+  color: #fff;
+  border-color: var(--border);
+}
+.tab.active::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 2px;
+  background: var(--accent);
+  border-radius: 2px 2px 0 0;
+}
+
+.tab.closed .tab-title {
+  text-decoration: line-through;
+  color: #777;
+}
+
+.tab .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+.tab .dot[data-kind='local'] {
+  background: #4ec9b0;
+}
+.tab .dot[data-kind='remote'] {
+  background: #569cd6;
+}
+.tab .dot[data-kind='browser'] {
+  background: #d7a35e;
+}
+
+.tab-close {
+  opacity: 0.5;
+  padding: 0 2px;
+}
+.tab-close:hover {
+  opacity: 1;
+  color: #f48771;
+}
+
+/* Merge-pane button — collapses a split pane back into another (no drag). */
+.pane-merge {
+  margin-left: auto;
+  align-self: center;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  border-radius: 6px;
+  font-size: 13px;
+  line-height: 1;
+  padding: 2px 8px;
+  cursor: pointer;
+  pointer-events: auto;
+}
+.pane-merge:hover {
+  background: var(--panel-2);
+  color: var(--fg);
+}
+
+.panes {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
+.pane {
+  position: absolute;
+  inset: 0;
+}
+
+/* Tiling terminal layout (drag-to-arrange + split view) */
+.panes-area {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
+.layout-wrap {
+  position: absolute;
+  inset: 0;
+}
+.panes.tiling {
+  position: absolute;
+  inset: 0;
+}
+.term-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+}
+.term-slot {
+  position: absolute;
+  overflow: hidden;
+  /* Scope layout/paint to each pane so resizing one doesn't relayout the layer. */
+  contain: layout paint;
+}
+.chrome-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+.pane-group {
+  position: absolute;
+  pointer-events: none;
+}
+/* Active-pane indication is intentionally subtle — only a faint tab-strip tint,
+   no bright outline around the pane (that read as a distracting highlight). */
+.pane-group.active > .pane-tabstrip {
+  border-bottom-color: var(--border);
+}
+.pane-tabstrip {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  padding: 4px 4px 0;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  overflow: hidden;
+  pointer-events: auto;
+  box-sizing: border-box;
+}
+.pane-tabstrip .tab {
+  top: 1px;
+}
+.pane-dropzone {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  top: 30px;
+  pointer-events: none;
+}
+.panes.tiling.dragging .pane-dropzone {
+  pointer-events: auto;
+}
+.drop-indicator {
+  position: absolute;
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid var(--accent);
+  border-radius: 2px;
+  pointer-events: none;
+  transition: all 0.06s ease;
+}
+.split-handle {
+  position: absolute;
+  z-index: 3;
+  pointer-events: auto;
+}
+.split-handle.row {
+  width: 8px;
+  margin-left: -4px;
+  cursor: col-resize;
+}
+.split-handle.col {
+  height: 8px;
+  margin-top: -4px;
+  cursor: row-resize;
+}
+.split-handle:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+.empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: #666;
+  font-size: 13px;
+}
+
+.statusbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 5px 12px;
+  background: color-mix(in srgb, var(--panel) 80%, var(--bg));
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.ctx {
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: var(--panel-2);
+  color: #ddd;
+}
+.ctx-remote {
+  background: #1e3a5f;
+}
+.ctx-local {
+  background: #1e4032;
+}
+.ctx-browser {
+  background: #3a2f1e;
+}
+.status-msg {
+  color: #c0a060;
+}
+
+/* Connection modal */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+.modal {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 18px 20px;
+  width: 420px;
+  max-height: 90vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.modal h3 {
+  margin: 0 0 6px;
+}
+.modal label {
+  display: flex;
+  flex-direction: column;
+  font-size: 11px;
+  color: #aaa;
+  gap: 3px;
+}
+.modal .row {
+  display: flex;
+  gap: 8px;
+}
+.modal .row label {
+  flex: 1;
+}
+.modal .row .port {
+  flex: 0 0 70px;
+}
+.modal input[type='text'],
+.modal input:not([type]),
+.modal input[type='password'] {
+  background: var(--input-bg);
+  border: 1px solid var(--border);
+  color: var(--fg);
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-size: 13px;
+}
+.modal .checkbox {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  color: #ddd;
+  font-size: 12px;
+  margin-top: 4px;
+}
+.modal .jump {
+  border-left: 2px solid var(--accent);
+  padding-left: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.modal .actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 10px;
+}
+.modal button {
+  background: var(--accent);
+  color: var(--accent-fg);
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 7px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    filter 0.12s ease,
+    transform 0.05s ease;
+}
+.modal button:hover {
+  filter: brightness(1.08);
+}
+.modal button:active {
+  transform: translateY(1px);
+}
+.modal button.ghost {
+  background: var(--panel-2);
+  color: var(--fg);
+}
+.modal .actions .spacer {
+  flex: 1;
+}
+
+/* Saved connections list inside the SSH modal */
+.saved-conns {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px;
+  background: var(--input-bg);
+  margin-bottom: 4px;
+}
+.saved-head {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--muted);
+  padding: 0 2px;
+}
+.saved-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+.saved-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+.saved-row:hover {
+  background: #26282e;
+}
+.saved-row.active {
+  border-color: var(--accent);
+  background: #23262d;
+}
+.saved-name {
+  font-size: 12px;
+  color: var(--fg);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.saved-target {
+  flex: 1;
+  font-size: 11px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.saved-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.saved-row .saved-connect {
+  background: var(--accent);
+  color: var(--accent-fg);
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 3px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.saved-row .saved-del {
+  background: transparent;
+  color: var(--muted);
+  border: none;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+}
+.saved-row .saved-del:hover {
+  color: #f48771;
+}
+
+/* Remote session view (terminal | files toggle) */
+.remote-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+.view-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+.view-toggle button {
+  background: var(--panel-2);
+  color: #cfd4dc;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: filter 0.12s ease;
+}
+.view-toggle button:hover {
+  filter: brightness(1.15);
+}
+.view-toggle button.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-fg);
+}
+.view-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+.view-layer {
+  position: absolute;
+  inset: 0;
+}
+
+/* SFTP browser */
+.sftp-browser {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+.panes-row {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+.pane-fixed {
+  flex: 0 0 auto;
+  min-width: 0;
+  display: flex;
+}
+.pane-grow {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+}
+.filepane {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.filepane-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 5px 8px;
+  background: var(--panel-2);
+  border-bottom: 1px solid var(--border);
+}
+.fp-title {
+  font-size: 12px;
+  font-weight: 600;
+}
+.fp-path {
+  font-size: 11px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.filepane-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--border);
+}
+.filepane-toolbar button {
+  background: var(--panel-2);
+  color: #ddd;
+  border: none;
+  border-radius: 3px;
+  padding: 3px 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.filepane-toolbar button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.filepane-toolbar button.primary {
+  background: var(--accent);
+  color: #fff;
+}
+.filepane-toolbar button.danger:not(:disabled):hover {
+  background: #a33;
+  color: #fff;
+}
+.filepane-toolbar .spacer {
+  flex: 1;
+}
+.fp-error {
+  padding: 6px 8px;
+  color: #f48771;
+  font-size: 12px;
+  background: #2a1a1a;
+}
+.filelist {
+  flex: 1;
+  overflow-y: auto;
+  font-size: 12px;
+}
+.filerow {
+  display: flex;
+  align-items: center;
+  padding: 3px 8px;
+  cursor: pointer;
+  gap: 8px;
+}
+.filerow:hover {
+  background: var(--hover);
+}
+.filerow.sel {
+  background: var(--accent-quiet);
+  color: #fff;
+}
+.filerow.header {
+  position: sticky;
+  top: 0;
+  background: var(--input-bg);
+  color: var(--muted);
+  cursor: default;
+  font-size: 11px;
+  text-transform: uppercase;
+}
+.col-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.col-size {
+  width: 80px;
+  text-align: right;
+  color: #aaa;
+}
+.col-mode {
+  width: 100px;
+  text-align: right;
+  color: var(--muted);
+  font-family: monospace;
+}
+.fp-empty {
+  padding: 10px;
+  color: #666;
+}
+
+/* Transfer queue */
+.transfer-queue {
+  border-top: 1px solid var(--border);
+  background: var(--input-bg);
+  max-height: 30%;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+.tq-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 2px 10px;
+  font-size: 11px;
+  color: #aaa;
+}
+.tq-head button.ghost,
+.tq-item button.ghost {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: #bbb;
+  border-radius: 3px;
+  font-size: 11px;
+  padding: 1px 8px;
+  cursor: pointer;
+}
+.tq-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 10px;
+  font-size: 12px;
+}
+.tq-dir {
+  width: 14px;
+}
+.tq-name {
+  width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tq-bar {
+  flex: 1;
+  height: 8px;
+  background: var(--panel-2);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.tq-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.1s linear;
+}
+.tq-fill.done {
+  background: #4ec9b0;
+}
+.tq-fill.err {
+  background: #f48771;
+}
+.tq-fill.cancel {
+  background: var(--muted);
+}
+.tq-status {
+  width: 64px;
+  text-align: right;
+  color: #aaa;
+}
+.tq-spacer {
+  width: 52px;
+}
+
+/* ── File editor ─────────────────────────────────────────────────────── */
+.tab-editor .tab-icon {
+  font-size: 11px;
+  opacity: 0.85;
+}
+.tab-editor.active .tab-close {
+  opacity: 0.8;
+}
+
+.pane-editor {
+  display: flex;
+}
+.editor-area {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-term);
+}
+.editor-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  background: var(--panel-2);
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+.editor-scope {
+  font-size: 12px;
+}
+.editor-path {
+  color: var(--path-fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl; /* keep the filename visible when the path is long */
+  text-align: left;
+}
+.editor-dirty {
+  color: var(--accent);
+  font-size: 14px;
+  line-height: 1;
+}
+.editor-toolbar .spacer {
+  flex: 1;
+}
+.editor-toolbar-error {
+  color: var(--danger);
+}
+
+/* --- Snippets + command palette ----------------------------------------- */
+.sn-mono {
+  font-family: ui-monospace, 'Cascadia Code', Menlo, Consolas, monospace;
+}
+.sn-opt {
+  color: #8b93a1;
+  font-weight: 400;
+  font-size: 12px;
+}
+.sn-hint {
+  font-size: 12px;
+  color: #8b93a1;
+  margin: -2px 0 4px;
+}
+.sn-hint code {
+  background: #2a2e37;
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+.modal textarea.sn-command {
+  width: 100%;
+  box-sizing: border-box;
+  background: #14161b;
+  border: 1px solid #2a2e37;
+  border-radius: 6px;
+  color: #e6e9ef;
+  padding: 8px 10px;
+  font-family: ui-monospace, 'Cascadia Code', Menlo, Consolas, monospace;
+  font-size: 13px;
+  resize: vertical;
+  outline: none;
+}
+.manager-empty kbd,
+.palette-foot kbd {
+  font-family: ui-monospace, monospace;
+  background: #2a2e37;
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+.palette {
+  position: absolute;
+  top: 12vh;
+  width: 560px;
+  max-width: 92vw;
+  background: #1c1f26;
+  border: 1px solid #2a2e37;
+  border-radius: 10px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+.palette-input {
+  width: 100%;
+  box-sizing: border-box;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid #2a2e37;
+  padding: 14px 16px;
+  font-size: 15px;
+  color: #e6e9ef;
+  outline: none;
+}
+.palette-list {
+  max-height: 46vh;
+  overflow: auto;
+}
+.palette-row {
+  padding: 9px 16px;
+  cursor: pointer;
+  border-left: 2px solid transparent;
+}
+.palette-row.sel {
+  background: #232733;
+  border-left-color: var(--accent, #4c8bf5);
+}
+.palette-name {
+  font-weight: 600;
+}
+.palette-cmd {
+  font-size: 12px;
+  color: #8b93a1;
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.palette-empty {
+  padding: 18px 16px;
+  color: #8b93a1;
+  font-size: 13px;
+}
+.palette-error {
+  padding: 8px 16px;
+  color: #f0a0a0;
+  font-size: 12px;
+}
+.palette-foot {
+  display: flex;
+  gap: 14px;
+  padding: 8px 16px;
+  border-top: 1px solid #2a2e37;
+  font-size: 12px;
+  color: #8b93a1;
+}
+.palette-params {
+  padding: 16px;
+}
+.palette-params .palette-cmd {
+  white-space: normal;
+  margin: 4px 0 12px;
+}
+.palette-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.palette-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: #8b93a1;
+}
+.palette-grid input {
+  background: #14161b;
+  border: 1px solid #2a2e37;
+  border-radius: 6px;
+  color: #e6e9ef;
+  padding: 7px 10px;
+  font-size: 13px;
+  outline: none;
+}
+.palette-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.shortcuts-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 6px 0 4px;
+}
+.shortcut-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 7px 4px;
+  border-bottom: 1px solid #23262e;
+  font-size: 13px;
+}
+.shortcut-row:last-child {
+  border-bottom: none;
+}
+.shortcut-row kbd {
+  font-family: ui-monospace, monospace;
+  background: #2a2e37;
+  border: 1px solid #3a3f4b;
+  border-radius: 5px;
+  padding: 2px 7px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+/* --- Terminal QoL: search, visual bell, reconnect, rename, selects -------- */
+.terminal-wrap {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+.terminal-host.bell-flash {
+  animation: dt-bell 0.16s ease;
+}
+@keyframes dt-bell {
+  0% {
+    box-shadow: inset 0 0 0 9999px rgba(120, 150, 255, 0.18);
+  }
+  100% {
+    box-shadow: inset 0 0 0 9999px rgba(120, 150, 255, 0);
+  }
+}
+.term-search {
+  position: absolute;
+  top: 8px;
+  right: 12px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: #1c1f26;
+  border: 1px solid #3a3f4b;
+  border-radius: 8px;
+  padding: 4px 6px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
+}
+.term-search-input {
+  background: #14161b;
+  border: 1px solid #2a2e37;
+  border-radius: 5px;
+  color: #e6e9ef;
+  padding: 4px 8px;
+  font-size: 12px;
+  width: 160px;
+  outline: none;
+}
+.term-search button {
+  background: #2a2e37;
+  border: none;
+  color: #cdd3df;
+  border-radius: 5px;
+  width: 24px;
+  height: 24px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.term-search button:hover {
+  background: #3a3f4b;
+}
+.term-reconnect {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(12, 14, 18, 0.55);
+  z-index: 4;
+}
+.term-reconnect button {
+  background: var(--accent, #4c8bf5);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 9px 18px;
+  font-size: 14px;
+  cursor: pointer;
+}
+.tab-rename {
+  background: #14161b;
+  border: 1px solid var(--accent, #4c8bf5);
+  border-radius: 4px;
+  color: #e6e9ef;
+  font-size: 12px;
+  padding: 1px 5px;
+  width: 110px;
+  outline: none;
+}
+.settings-select {
+  background: #14161b;
+  border: 1px solid #2a2e37;
+  border-radius: 6px;
+  color: #e6e9ef;
+  padding: 5px 8px;
+  font-size: 13px;
+  outline: none;
+  min-width: 160px;
+}
+.editor-toolbar button.primary {
+  background: var(--accent-quiet);
+  color: #fff;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  padding: 4px 12px;
+  cursor: pointer;
+}
+.editor-toolbar button.primary:disabled {
+  background: var(--panel);
+  border-color: var(--border);
+  color: var(--muted);
+  cursor: default;
+}
+.editor-status {
+  padding: 16px;
+  color: var(--muted);
+}
+.editor-status-error {
+  color: var(--danger);
+}
+.editor-status-detail {
+  margin-top: 6px;
+  color: var(--muted);
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+}
+.cm-host {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+.cm-host .cm-editor {
+  height: 100%;
+}
+.cm-host .cm-scroller {
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  font-size: 13px;
+}
+
+/* ===========================================================================
+   v1.0.1 — top-level views, new-terminal picker, managers, path inputs
+   =========================================================================== */
+
+/* Any stray control inherits the dark theme instead of the OS default white. */
+input,
+select,
+textarea {
+  font-family: inherit;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  outline: none;
+}
+input:focus,
+select:focus,
+textarea:focus {
+  border-color: var(--claude);
+  box-shadow: 0 0 0 2px rgba(124, 92, 255, 0.18);
+}
+select option {
+  background: var(--panel);
+  color: var(--fg);
+}
+
+/* --- segmented top-level view nav --- */
+.top-nav {
+  display: flex;
+  gap: 2px;
+  margin-left: 14px;
+  padding: 3px;
+  background: var(--accent-quiet);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  -webkit-app-region: no-drag;
+}
+.top-nav button {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  border-radius: 6px;
+  padding: 5px 14px;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease;
+}
+.top-nav button:hover {
+  color: var(--fg);
+}
+.top-nav button.active {
+  background: color-mix(in srgb, var(--fg) 12%, transparent);
+  color: var(--fg);
+}
+
+/* --- pane tab-strip "new terminal" button --- */
+.pane-add,
+.pane-merge {
+  -webkit-app-region: no-drag;
+  background: transparent;
+  color: var(--muted);
+  border: none;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 3px 8px;
+  border-radius: 6px;
+  align-self: center;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease;
+}
+.pane-add:hover,
+.pane-merge:hover {
+  background: var(--panel-2);
+  color: var(--fg);
+}
+
+/* horizontally scrollable tab list (no visible scrollbar) + overflow chevrons */
+.pane-tabs {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.pane-tabs::-webkit-scrollbar {
+  display: none;
+}
+.tab-nav {
+  -webkit-app-region: no-drag;
+  align-self: center;
+  flex: 0 0 auto;
+  background: var(--panel-2);
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 3px 7px;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease;
+}
+.tab-nav:hover {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+/* --- new-terminal picker modal --- */
+.new-term-modal {
+  width: 560px;
+  gap: 12px;
+}
+.nt-choices {
+  display: flex;
+  gap: 12px;
+  margin: 4px 0 2px;
+}
+.nt-choice {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  padding: 22px 14px;
+  background: linear-gradient(180deg, var(--panel-2), var(--panel));
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  color: var(--fg);
+  cursor: pointer;
+  transition:
+    border-color 0.12s ease,
+    transform 0.06s ease,
+    box-shadow 0.12s ease;
+}
+.nt-choice:hover {
+  border-color: var(--claude);
+  transform: translateY(-1px);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+}
+.nt-choice:active {
+  transform: translateY(0);
+}
+.nt-ico {
+  font-size: 30px;
+}
+.nt-label {
+  font-weight: 700;
+  font-size: 14px;
+}
+.nt-desc {
+  font-size: 11px;
+  color: var(--muted);
+  text-align: center;
+}
+
+/* --- editable path boxes (file explorer + sftp panes) --- */
+.ex-pathform,
+.fp-pathform {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+}
+.ex-path-input,
+.fp-pathinput {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--path-fg);
+  font-size: 11px;
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  padding: 3px 8px;
+  transition:
+    border-color 0.12s ease,
+    box-shadow 0.12s ease;
+}
+.ex-path-input:focus,
+.fp-pathinput:focus {
+  border-color: var(--claude);
+  box-shadow: 0 0 0 2px rgba(124, 92, 255, 0.16);
+}
+.filepane-head {
+  align-items: center;
+}
+
+/* --- full-pane managers (Connections + Workspaces) --- */
+.manager {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  padding: 22px 26px;
+}
+.manager-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.manager-head h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+}
+.manager-head .spacer {
+  flex: 1;
+}
+.manager-sub {
+  color: var(--muted);
+  font-size: 12.5px;
+  margin: -8px 0 16px;
+}
+.manager-empty {
+  color: var(--muted);
+  font-size: 13px;
+  padding: 22px;
+  text-align: center;
+  background: var(--panel);
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+}
+.manager-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.manager-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 16px;
+  background: linear-gradient(180deg, var(--panel), #1b1e25);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  transition:
+    border-color 0.12s ease,
+    transform 0.06s ease;
+}
+.manager-row:hover {
+  border-color: var(--accent);
+  transform: translateY(-1px);
+}
+.mr-icon {
+  font-size: 20px;
+  width: 26px;
+  text-align: center;
+}
+.mr-main {
+  flex: 1;
+  min-width: 0;
+}
+.mr-name {
+  font-weight: 600;
+  font-size: 14px;
+}
+.mr-sub {
+  font-size: 12px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-top: 2px;
+}
+.mr-actions {
+  display: flex;
+  gap: 6px;
+}
+
+/* shared button styling within managers + workspace builder */
+.manager button,
+.ws-card button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  background: linear-gradient(180deg, var(--panel-2), color-mix(in srgb, var(--panel-2) 78%, #000));
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 7px 14px;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--fg) 7%, transparent),
+    var(--shadow-1);
+  transition:
+    border-color 0.13s ease,
+    background 0.13s ease,
+    transform 0.06s ease,
+    box-shadow 0.13s ease;
+}
+.manager button:hover,
+.ws-card button:hover {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  background: linear-gradient(180deg, var(--panel-2), var(--panel));
+  transform: translateY(-1px);
+}
+.manager button:active,
+.ws-card button:active {
+  transform: translateY(0);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+.manager button.primary,
+.ws-card button.primary {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 92%, #fff), var(--accent));
+  border-color: var(--accent-strong);
+  color: var(--accent-fg);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.25),
+    0 4px 14px var(--accent-soft);
+}
+.manager button.primary:hover,
+.ws-card button.primary:hover {
+  filter: brightness(1.07);
+  border-color: var(--accent);
+  transform: translateY(-1px);
+}
+.manager button.danger,
+.ws-card button.danger {
+  background: transparent;
+  border-color: transparent;
+  color: var(--muted);
+  box-shadow: none;
+}
+.manager button.danger:hover {
+  background: color-mix(in srgb, var(--danger) 16%, transparent);
+  border-color: color-mix(in srgb, var(--danger) 55%, transparent);
+  color: color-mix(in srgb, var(--danger) 70%, #fff);
+}
+.manager button:disabled,
+.ws-card button:disabled {
+  opacity: 0.4;
+  cursor: default;
+  filter: none;
+  transform: none;
+  box-shadow: none;
+  background: var(--panel-2);
+  color: var(--muted);
+}
+.manager button svg,
+.ws-card button svg {
+  opacity: 0.9;
+}
+
+/* --- workspace builder card --- */
+.ws-card {
+  margin-top: 22px;
+  padding: 18px;
+  background: linear-gradient(180deg, var(--panel), #1b1e25);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+}
+.ws-card h3 {
+  margin: 0 0 4px;
+  font-size: 14px;
+}
+.ws-card .ws-hint {
+  color: var(--muted);
+  font-size: 12px;
+  margin: 0 0 12px;
+}
+.ws-form {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.ws-name {
+  flex: 1;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--fg);
+  padding: 9px 12px;
+  font-size: 13px;
+}
+.ws-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 12px;
+}
+.ws-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--accent-quiet);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-size: 12px;
+  color: var(--fg);
+}
+
+/* --- empty terminals state (no panes → still offer a way to open one) --- */
+.empty-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 34px 44px;
+  background: linear-gradient(180deg, var(--panel), #1b1e25);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+}
+.empty-ico {
+  font-size: 38px;
+  opacity: 0.9;
+}
+.empty-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--fg);
+}
+.empty-sub {
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.empty-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 8px;
+  background: linear-gradient(180deg, var(--accent), var(--accent-strong));
+  border: 1px solid var(--accent-strong);
+  color: var(--accent-fg);
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: var(--radius);
+  padding: 9px 20px;
+  cursor: pointer;
+  box-shadow: 0 6px 18px var(--accent-soft);
+  transition:
+    filter 0.12s ease,
+    transform 0.05s ease;
+}
+.empty-cta:hover {
+  filter: brightness(1.12);
+}
+.empty-cta:active {
+  transform: translateY(1px);
+}
+
+/* Top-level view panes share the panes-area box; only one is visible at a time.
+   The terminals pane is always mounted (hidden, not unmounted) — see App.tsx. */
+.view-pane {
+  position: absolute;
+  inset: 0;
+}
+
+/* Terminals pane = optional group bar on top + the tiling layout below. */
+.terminals-stack {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+}
+.terminals-body {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* Group bar: top-level tabs (default "Terminals" + one per launched workspace).
+   The pane tab strip inside the layout is the second tier (the terminals). */
+.group-bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  padding: 5px 6px 0;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+}
+.group-tab {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-bottom: none;
+  border-radius: 8px 8px 0 0;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.group-tab:hover {
+  color: var(--fg);
+}
+.group-tab.active {
+  color: var(--fg);
+  background: var(--bg-term);
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+.group-tab .group-icon {
+  font-size: 12px;
+}
+.group-tab .group-count {
+  min-width: 16px;
+  text-align: center;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 9px;
+  padding: 1px 6px;
+}
+.group-tab .group-close {
+  font-size: 14px;
+  line-height: 1;
+  color: var(--muted);
+  border-radius: 4px;
+  padding: 0 3px;
+}
+.group-tab .group-close:hover {
+  color: var(--fg);
+  background: rgba(255, 255, 255, 0.12);
+}
+.group-bar .spacer {
+  flex: 1 1 auto;
+}
+/* "Save as workspace" action lives at the right end of the group bar. */
+.group-save {
+  flex: 0 0 auto;
+  align-self: center;
+  margin-bottom: 5px;
+  padding: 5px 11px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.group-save:hover:not(:disabled) {
+  color: var(--fg);
+  border-color: var(--accent);
+}
+.group-save:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+/* A group tab (or the "+" zone) lit up as a drop target while dragging a tab. */
+.group-tab.drop-target,
+.group-new.drop-target {
+  color: var(--fg);
+  border-color: var(--accent);
+  background: rgba(90, 75, 212, 0.22);
+}
+/* "+ New group" — click to add an empty group, or drop a terminal tab to spin it off. */
+.group-new {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 11px;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--muted);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-bottom: none;
+  border-radius: 8px 8px 0 0;
+  cursor: pointer;
+  user-select: none;
+}
+.group-new:hover {
+  color: var(--fg);
+  border-color: var(--accent);
+}
+/* Prompt overlaid on an empty active tab. It sits next to .layout-wrap, whose
+   inner .term-layer (z-index:1) / .chrome-layer (z-index:2) leak into the shared
+   stacking context — so without a higher z-index the (pointer-events:auto)
+   term-layer covers this card and eats the "New terminal" click. */
+.empty-group-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+}
+
+/* Settings gear in the titlebar — subtle, not an accent-filled button. */
+.titlebar button.settings-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  color: var(--muted);
+  padding: 6px 8px;
+}
+.titlebar button.settings-btn:hover {
+  background: var(--hover);
+  color: var(--fg);
+  filter: none;
+}
+
+/* --- Settings modal --- */
+.settings-modal {
+  width: 460px;
+  gap: 4px;
+}
+.settings-modal .modal-head,
+.settings-modal .modal-foot {
+  display: flex;
+  align-items: center;
+}
+.settings-modal .modal-head {
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+.settings-modal .modal-head h2 {
+  margin: 0;
+  font-size: 16px;
+}
+.settings-modal .modal-x {
+  background: transparent;
+  color: var(--muted);
+  font-size: 20px;
+  line-height: 1;
+  padding: 0 6px;
+}
+.settings-modal .modal-x:hover {
+  color: var(--fg);
+  filter: none;
+}
+.settings-section {
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.settings-section h3 {
+  margin: 0;
+  font-size: 13px;
+  color: var(--fg);
+}
+.settings-modal .settings-row {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--fg);
+  font-size: 13px;
+}
+.settings-label {
+  color: #bbb;
+}
+.settings-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.settings-control input[type='color'] {
+  width: 34px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: none;
+  cursor: pointer;
+}
+.settings-hex {
+  width: 90px;
+  background: var(--input-bg);
+  border: 1px solid var(--border);
+  color: var(--fg);
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-size: 13px;
+}
+.settings-swatches {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.swatch {
+  width: 26px;
+  height: 26px;
+  border-radius: 5px;
+  border: 2px solid transparent;
+  cursor: pointer;
+  padding: 0;
+}
+.swatch.active {
+  border-color: var(--fg);
+}
+.settings-bg-preview {
+  height: 90px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background-size: cover;
+  background-position: center;
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-end;
+}
+.settings-bg-preview span {
+  font-size: 10px;
+  color: #cfcfcf;
+  padding: 4px 7px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.settings-control input[type='range'] {
+  width: 220px;
+}
+.settings-error {
+  color: #ff8080;
+  font-size: 12px;
+}
+.settings-modal .modal-foot {
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+
+/* ===========================================================================
+   v1.0.4 — theme engine, custom icons, glass, polish
+   =========================================================================== */
+
+/* --- inline SVG icon defaults: inherit text colour, align to the baseline --- */
+.titlebar svg,
+.top-nav svg,
+.group-tab svg,
+.group-new svg,
+.group-save svg,
+.nt-ico svg,
+.tab svg,
+.btn svg {
+  display: block;
+  flex: 0 0 auto;
+}
+
+/* Icon wrappers that used to hold an emoji glyph now centre an SVG. */
+.nt-ico {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent);
+  margin-bottom: 2px;
+}
+.group-icon,
+.group-close,
+.group-new {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.group-save {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Focus ring follows the theme accent rather than a fixed purple. */
+input:focus,
+select:focus,
+textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+/* Softer, deeper modals/popovers that read as elevated surfaces. */
+.modal {
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-pop);
+}
+.palette {
+  box-shadow: var(--shadow-pop);
+}
+
+/* --- Settings: small section hint under a heading --- */
+.settings-sub-hint {
+  font-size: 11.5px;
+  color: var(--muted);
+  margin: -4px 0 2px;
+}
+
+/* --- Theme gallery (Settings → Theme) --- */
+.theme-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.theme-swatch {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 7px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  text-align: left;
+  transition:
+    border-color 0.12s ease,
+    transform 0.06s ease,
+    box-shadow 0.12s ease;
+}
+.theme-swatch:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
+}
+.theme-swatch.active {
+  border-color: var(--accent);
+  box-shadow:
+    0 0 0 1px var(--accent),
+    0 6px 16px var(--accent-soft);
+}
+.theme-swatch-preview {
+  position: relative;
+  height: 64px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--sw-border, var(--border));
+  padding: 8px 9px;
+  overflow: hidden;
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  font-size: 10.5px;
+  line-height: 1.5;
+}
+.theme-swatch.is-glass .theme-swatch-preview {
+  backdrop-filter: blur(2px);
+}
+.tsw-line {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+}
+.tsw-caret {
+  display: inline-block;
+  width: 5px;
+  height: 12px;
+  border-radius: 1px;
+  margin-left: 1px;
+}
+.tsw-dots {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  display: flex;
+  gap: 3px;
+}
+.tsw-dots span {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+.theme-swatch-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg);
+  padding: 0 2px;
+}
+.theme-tag {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--accent);
+  border: 1px solid var(--accent-soft);
+  border-radius: 999px;
+  padding: 1px 6px;
+}
+
+/* --- Empty-state illustration spacing --- */
+.empty-card svg {
+  margin-bottom: 2px;
+}
+
+/* ===========================================================================
+   Glass theme — translucent surfaces + backdrop blur. Enabled when the Glass
+   theme is active (applyTheme sets data-glass). The window itself is transparent
+   (main/index.ts), so where a surface is translucent the desktop shows through;
+   the blur frosts whatever app content sits behind a panel. The chrome colour
+   tokens already carry alpha for this theme, so we only add the blur here.
+   =========================================================================== */
+:root[data-glass='on'] .titlebar,
+:root[data-glass='on'] .statusbar,
+:root[data-glass='on'] .sidebar,
+:root[data-glass='on'] .group-bar,
+:root[data-glass='on'] .pane-tabstrip,
+:root[data-glass='on'] .tabs,
+:root[data-glass='on'] .browser-toolbar,
+:root[data-glass='on'] .browser-tabs,
+:root[data-glass='on'] .view-toggle,
+:root[data-glass='on'] .explorer-head,
+:root[data-glass='on'] .filepane-head {
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.4);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.4);
+}
+:root[data-glass='on'] .modal,
+:root[data-glass='on'] .palette,
+:root[data-glass='on'] .term-search {
+  background: color-mix(in srgb, var(--panel) 78%, transparent);
+  backdrop-filter: blur(30px) saturate(1.5);
+  -webkit-backdrop-filter: blur(30px) saturate(1.5);
+}
+/* A subtle top sheen on the titlebar sells the glass. */
+:root[data-glass='on'] .titlebar {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+/* Tabs/panels read better with a faint translucent fill rather than the solid one. */
+:root[data-glass='on'] .tab.active,
+:root[data-glass='on'] .group-tab.active {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+/* ===========================================================================
+   Frameless window — the titlebar is the OS drag handle, with custom controls.
+   =========================================================================== */
+.titlebar {
+  -webkit-app-region: drag;
+}
+/* Everything interactive in the titlebar must opt out of the drag region. */
+.titlebar button,
+.titlebar .top-nav,
+.titlebar .win-controls,
+.titlebar input,
+.titlebar select {
+  -webkit-app-region: no-drag;
+}
+
+.win-controls {
+  display: flex;
+  align-self: stretch;
+  margin: -7px -12px -7px 4px;
+}
+.win-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  background: transparent !important;
+  color: var(--muted) !important;
+  border: none !important;
+  border-radius: 0 !important;
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease;
+}
+.win-btn:hover {
+  background: var(--hover) !important;
+  color: var(--fg) !important;
+  filter: none !important;
+}
+.win-btn.win-close:hover {
+  background: #e3413a !important;
+  color: #fff !important;
+}
+
+/* ===========================================================================
+   Button system — a single slick look shared across the app. Subtle raised
+   surface with a hairline top highlight; primary uses the theme accent with a
+   soft glow; ghost/danger stay quiet until hovered.
+   =========================================================================== */
+.btn,
+.btn-row {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    border-color 0.13s ease,
+    background 0.13s ease,
+    transform 0.06s ease,
+    box-shadow 0.13s ease,
+    filter 0.13s ease;
+}
+.btn svg,
+.btn-row svg {
+  opacity: 0.9;
+}
+
+/* Compact toolbar buttons (file panes). */
+.filepane-toolbar button.btn-row {
+  background: linear-gradient(180deg, var(--panel-2), color-mix(in srgb, var(--panel-2) 80%, #000));
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 4px 9px;
+  font-size: 11px;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--fg) 6%, transparent);
+}
+.filepane-toolbar button.btn-row:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
+  transform: translateY(-1px);
+}
+.filepane-toolbar button.btn-row.primary {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 92%, #fff), var(--accent));
+  border-color: var(--accent-strong);
+  color: var(--accent-fg);
+  box-shadow: 0 3px 10px var(--accent-soft);
+}
+.filepane-toolbar button.btn-row.danger:not(:disabled):hover {
+  background: color-mix(in srgb, var(--danger) 16%, transparent);
+  border-color: color-mix(in srgb, var(--danger) 55%, transparent);
+  color: color-mix(in srgb, var(--danger) 70%, #fff);
+}
+
+/* Small square icon buttons (explorer header / pathbar). */
+.explorer-head button,
+.explorer-pathbar button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  padding: 4px 6px;
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease,
+    border-color 0.12s ease;
+}
+.explorer-head button:hover:not(:disabled),
+.explorer-pathbar button:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--fg);
+  border-color: var(--border);
+}
+
+/* Modal primary/ghost get the slick raised treatment too. */
+.modal button.primary {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 92%, #fff), var(--accent));
+  color: var(--accent-fg);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    0 4px 14px var(--accent-soft);
+}
+
+/* ===========================================================================
+   Icon alignment for chrome that now uses inline SVGs.
+   =========================================================================== */
+.ctx,
+.ex-kind {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.ctx svg {
+  flex: 0 0 auto;
+}
+.mr-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent);
+}
+.mr-icon svg {
+  opacity: 0.92;
+}
+.mr-actions {
+  align-items: center;
+}
+.ws-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.ws-chip svg {
+  color: var(--accent);
+}
+.editor-scope {
+  display: inline-flex;
+  align-items: center;
+  color: var(--muted);
+}
+.tab-icon {
+  display: inline-flex;
+  align-items: center;
+  color: var(--muted);
+}
+
+/* File/folder row glyphs — folders pick up the accent, files stay muted. */
+.ex-icon,
+.file-ico {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  color: var(--muted);
+}
+.file-ico {
+  vertical-align: -3px;
+  margin-right: 2px;
+}
+.ex-icon.is-dir,
+.file-ico.is-dir {
+  color: color-mix(in srgb, var(--accent) 80%, var(--fg));
+}
+
+/* Merge/add pane buttons centre their glyph. */
+.pane-add,
+.pane-merge,
+.tab-close,
+.group-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}

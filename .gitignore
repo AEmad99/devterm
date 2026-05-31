@@ -1,0 +1,15 @@
+# dependencies / build output
+node_modules/
+out/
+dist/
+
+# logs & os cruft
+*.log
+.DS_Store
+
+# secrets — never commit (.env holds a GitHub token used only for releasing)
+.env
+.env.*
+
+# local Claude Code overrides (per-user)
+.claude/settings.local.json

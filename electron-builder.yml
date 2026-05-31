@@ -1,0 +1,37 @@
+appId: com.devterm.app
+productName: DevTerm
+directories:
+  output: dist
+  buildResources: resources
+files:
+  - out/**/*
+  - package.json
+  # Trim debug symbols and prebuilds for other platforms from the Windows build.
+  - "!**/*.pdb"
+  - "!**/node_modules/node-pty/prebuilds/linux-*/**"
+asarUnpack:
+  - "**/node_modules/node-pty/**"
+win:
+  icon: resources/icon.ico
+  target:
+    - target: nsis
+      arch:
+        - x64
+  artifactName: ${productName}-${version}-setup.${ext}
+  # Builds are unsigned; electron-updater would otherwise try to match a publisher cert.
+  verifyUpdateCodeSignature: false
+publish:
+  - provider: github
+    owner: AEmad99
+    repo: devterm
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+linux:
+  icon: resources/icon.png
+  target:
+    - AppImage
+  category: Utility
+# node-pty is supplied as a prebuilt binary matching Electron's ABI; do not recompile.
+npmRebuild: false
