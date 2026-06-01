@@ -303,7 +303,7 @@ async function testBridge(): Promise<void> {
       context,
       airGapped: true,
       policy: new Policy('full'),
-      confirm: async () => true
+      confirm: async () => 'approved' as const
     })
     const info = await bridge.start()
     check('mcp bridge binds to 127.0.0.1 with token', info.url.startsWith('http://127.0.0.1:') && info.token.length > 0)
@@ -346,7 +346,7 @@ async function testBridge(): Promise<void> {
       context,
       airGapped: true,
       policy: new Policy('read_only'),
-      confirm: async () => true
+      confirm: async () => 'approved' as const
     })
     const roInfo = await roBridge.start()
     const roClient = new Client({ name: 'ro', version: '0.1.0' })

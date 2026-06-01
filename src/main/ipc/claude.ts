@@ -2,6 +2,7 @@ import { ipcMain, BrowserWindow } from 'electron'
 import { randomUUID } from 'crypto'
 import { IPC, type ClaudeOpenOpts, type ClaudeOpenResult, type ConfirmRequest } from '@shared/types'
 import { McpBridge } from '../mcp/server'
+import type { ConfirmOutcome } from '../mcp/tools'
 import { Policy } from '../mcp/policy'
 import { buildClaudeMd } from '../claude/context'
 import { prepareClaudeLaunch } from '../claude/launch'
@@ -24,7 +25,7 @@ export function registerClaudeIpc(
   getWindow: () => BrowserWindow | null
 ): ClaudeController {
   const sessions = new Map<string, ClaudeSession>()
-  const pendingConfirms = new Map<string, (approved: boolean) => void>()
+  const pendingConfirms = new Map<string, (outcome: ConfirmOutcome) => void>()
 
   const send = (channel: string, ...args: unknown[]) => {
     const win = getWindow()
@@ -32,14 +33,16 @@ export function registerClaudeIpc(
   }
 
   // Ask the renderer to approve a guarded action (confirm mode / destructive op).
-  const confirm = (sessionId: string, tool: string, detail: string): Promise<boolean> =>
+  // Resolves 'timeout' if the operator never answers — distinct from an explicit
+  // 'denied' so the tool can tell the agent the connection is still healthy.
+  const confirm = (sessionId: string, tool: string, detail: string): Promise<ConfirmOutcome> =>
     new Promise((resolve) => {
       const reqId = randomUUID()
       pendingConfirms.set(reqId, resolve)
       const req: ConfirmRequest = { reqId, sessionId, tool, detail }
       send(IPC.claudeConfirm, req)
       setTimeout(() => {
-        if (pendingConfirms.delete(reqId)) resolve(false)
+        if (pendingConfirms.delete(reqId)) resolve('timeout')
       }, 120000)
     })
 
@@ -47,7 +50,7 @@ export function registerClaudeIpc(
     const r = pendingConfirms.get(reqId)
     if (r) {
       pendingConfirms.delete(reqId)
-      r(approved)
+      r(approved ? 'approved' : 'denied')
     }
   })
 

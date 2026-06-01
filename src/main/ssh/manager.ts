@@ -122,38 +122,41 @@ export class SSHManager {
     return this.sessions.get(sessionId)?.context
   }
 
-  /** One-shot command over a dedicated exec channel on the session's client. */
+  /**
+   * One-shot command over a dedicated exec channel on the session's client.
+   * On timeout we RESOLVE (never reject) with `timedOut: true` plus whatever
+   * output arrived so far: the command keeps running on the host and the ssh2
+   * client is untouched, so a timeout is NOT a disconnect. Callers must report
+   * it as such rather than letting it read as a dead connection.
+   */
   exec(
     sessionId: string,
     command: string,
     timeoutMs = 30000
-  ): Promise<{ stdout: string; stderr: string; code: number | null }> {
+  ): Promise<{ stdout: string; stderr: string; code: number | null; timedOut: boolean }> {
     const s = this.sessions.get(sessionId)
     if (!s) return Promise.reject(new Error('unknown session'))
     return new Promise((resolve, reject) => {
       let settled = false
-      const finish = (r: { stdout: string; stderr: string; code: number | null }) => {
+      let stdout = ''
+      let stderr = ''
+      let code: number | null = null
+      const finish = (r: { stdout: string; stderr: string; code: number | null; timedOut: boolean }) => {
         if (!settled) {
           settled = true
           resolve(r)
         }
       }
-      const timer = setTimeout(
-        () => finish({ stdout: '', stderr: `timed out after ${timeoutMs}ms`, code: null }),
-        timeoutMs
-      )
+      const timer = setTimeout(() => finish({ stdout, stderr, code: null, timedOut: true }), timeoutMs)
       s.client.exec(command, (err, stream) => {
         if (err) {
           clearTimeout(timer)
           return reject(err)
         }
-        let stdout = ''
-        let stderr = ''
-        let code: number | null = null
         stream
           .on('close', (c: number) => {
             clearTimeout(timer)
-            finish({ stdout, stderr, code: c ?? code })
+            finish({ stdout, stderr, code: c ?? code, timedOut: false })
           })
           .on('data', (d: Buffer) => (stdout += d.toString()))
           .stderr.on('data', (d: Buffer) => (stderr += d.toString()))
