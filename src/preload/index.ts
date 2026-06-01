@@ -54,6 +54,7 @@ const api: DevTermApi = {
     list: (path?: string): Promise<DirListing> => ipcRenderer.invoke(IPC.fsList, path),
     home: (): Promise<string> => ipcRenderer.invoke(IPC.fsHome),
     mkdir: (path: string): Promise<void> => ipcRenderer.invoke(IPC.fsMkdir, path),
+    createFile: (path: string): Promise<void> => ipcRenderer.invoke(IPC.fsCreateFile, path),
     rename: (from: string, to: string): Promise<void> => ipcRenderer.invoke(IPC.fsRename, from, to),
     delete: (path: string): Promise<void> => ipcRenderer.invoke(IPC.fsDelete, path),
     readFile: (path: string): Promise<FileContent> => ipcRenderer.invoke(IPC.fsReadFile, path),
@@ -66,6 +67,8 @@ const api: DevTermApi = {
     home: (sid: string): Promise<string> => ipcRenderer.invoke(IPC.sftpHome, sid),
     mkdir: (sid: string, path: string): Promise<void> =>
       ipcRenderer.invoke(IPC.sftpMkdir, sid, path),
+    createFile: (sid: string, path: string): Promise<void> =>
+      ipcRenderer.invoke(IPC.sftpCreateFile, sid, path),
     rename: (sid: string, from: string, to: string): Promise<void> =>
       ipcRenderer.invoke(IPC.sftpRename, sid, from, to),
     delete: (sid: string, path: string): Promise<void> =>

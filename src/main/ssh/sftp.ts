@@ -7,7 +7,8 @@ import { decodeText, detectEol, encodeText, looksBinary } from '../fs/content'
 
 const promise = <T>(
   fn: (cb: (err: Error | null | undefined, res: T) => void) => void
-): Promise<T> => new Promise((resolve, reject) => fn((err, res) => (err ? reject(err) : resolve(res))))
+): Promise<T> =>
+  new Promise((resolve, reject) => fn((err, res) => (err ? reject(err) : resolve(res))))
 
 function isDirMode(mode: number): boolean {
   return (mode & S_IFMT) === S_IFDIR
@@ -62,7 +63,13 @@ export async function readFileRemote(sftp: SFTPWrapper, path: string): Promise<F
   const buf = await promise<Buffer>((cb) => sftp.readFile(p, (err, data) => cb(err, data)))
   if (looksBinary(buf)) throw new Error('File appears to be binary and cannot be edited as text')
   const content = decodeText(buf)
-  return { path: p, content, size: buf.length, mtimeMs: (st.mtime ?? 0) * 1000, eol: detectEol(content) }
+  return {
+    path: p,
+    content,
+    size: buf.length,
+    mtimeMs: (st.mtime ?? 0) * 1000,
+    eol: detectEol(content)
+  }
 }
 
 export async function writeFileRemote(
@@ -79,6 +86,13 @@ export async function writeFileRemote(
 
 export function mkdirRemote(sftp: SFTPWrapper, path: string): Promise<void> {
   return promise<void>((cb) => sftp.mkdir(path, cb))
+}
+
+/** Create an empty remote file. The `wx` flag fails if anything already exists at `path`. */
+export async function createFileRemote(sftp: SFTPWrapper, path: string): Promise<void> {
+  const p = posix.normalize(path)
+  const handle = await promise<Buffer>((cb) => sftp.open(p, 'wx', (err, h) => cb(err, h)))
+  await promise<void>((cb) => sftp.close(handle, (err) => cb(err, undefined)))
 }
 
 export function renameRemote(sftp: SFTPWrapper, from: string, to: string): Promise<void> {

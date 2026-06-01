@@ -224,6 +224,20 @@ export const IconMerge = (p: IconProps) => (
   </Svg>
 )
 
+/** Disclosure chevron — points down (collapsed); callers rotate 180° when expanded. */
+export const IconChevron = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="m6 9 6 6 6-6" />
+  </Svg>
+)
+
+/** Focus / magnify — four arrows expanding to the corners. */
+export const IconFocus = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M8 4H4v4M16 4h4v4M16 20h4v-4M8 20H4v-4" />
+  </Svg>
+)
+
 /* Window controls (frameless titlebar) — pixel-snapped 10px glyphs. */
 export const IconWinMin = (p: IconProps) => (
   <Svg viewBox="0 0 24 24" {...p}>

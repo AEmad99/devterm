@@ -1,26 +1,24 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { DirListing, FileEntry } from '@shared/types'
-import { IconArrowUp, IconHome, IconPlus, IconEdit, IconFolder, IconFile, IconLink } from './Icons'
+import type { FsApi } from '../lib/fsapi'
+import FileTree, { type FileTreeHandle } from './FileTree'
+import { IconArrowUp, IconHome, IconPlus, IconFile, IconEdit } from './Icons'
 
-export interface FsApi {
-  list(path?: string): Promise<DirListing>
-  home(): Promise<string>
-  mkdir(path: string): Promise<void>
-  rename(from: string, to: string): Promise<void>
-  delete(path: string): Promise<void>
-}
+// Re-exported for existing importers (e.g. SftpBrowser).
+export type { FsApi } from '../lib/fsapi'
 
-function fmtSize(n: number): string {
-  if (n < 1024) return `${n} B`
-  const u = ['KB', 'MB', 'GB', 'TB']
-  let v = n / 1024
-  let i = 0
-  while (v >= 1024 && i < u.length - 1) {
-    v /= 1024
-    i++
-  }
-  return `${v.toFixed(1)} ${u[i]}`
+/** Strip a trailing path separator. */
+const strip = (p: string) => p.replace(/[/\\]+$/, '')
+/** Join a directory and a child name with the pane's separator. */
+const childOf = (dir: string, name: string, sep: string) => strip(dir) + sep + name
+/** Parent directory of a path (handles both separators and the posix root). */
+function parentDir(p: string): string {
+  const i = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'))
+  if (i > 0) return p.slice(0, i)
+  if (i === 0) return p.slice(0, 1)
+  return strip(p)
 }
+const samePath = (a: string, b: string) => strip(a) === strip(b)
 
 export default function FilePane({
   api,
@@ -45,11 +43,12 @@ export default function FilePane({
   onEdit?: (entry: FileEntry) => void
 }) {
   const [listing, setListing] = useState<DirListing | null>(null)
-  const [selected, setSelected] = useState<string | null>(null)
+  const [sel, setSel] = useState<FileEntry | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const [pathInput, setPathInput] = useState('')
   // Tracks the directory actually shown, so follow/edit effects don't loop.
   const currentPath = useRef<string | null>(null)
+  const treeRef = useRef<FileTreeHandle>(null)
 
   const load = useCallback(
     async (path?: string) => {
@@ -58,7 +57,7 @@ export default function FilePane({
         const l = await api.list(path)
         currentPath.current = l.path
         setListing(l)
-        setSelected(null)
+        setSel(null)
         onCwd(l.path)
       } catch (e) {
         setErr(String((e as Error).message || e))
@@ -90,31 +89,49 @@ export default function FilePane({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reloadSignal])
 
-  const child = (name: string) => (listing ? listing.path.replace(/[/\\]$/, '') + sep + name : name)
-  const sel = listing?.entries.find((e) => e.name === selected) || null
+  // New files/folders are created inside the selected folder when one is picked,
+  // otherwise in the directory currently shown as the tree root.
+  const createDir = sel?.isDir ? sel.path : (listing?.path ?? '')
 
   // In-app dialogs — Electron does not implement window.prompt(), and
   // alert/confirm are unreliable under sandbox, so we use our own modal.
   const [dialog, setDialog] = useState<null | {
-    kind: 'mkdir' | 'rename' | 'delete'
+    kind: 'mkdir' | 'newfile' | 'rename' | 'delete'
     value: string
   }>(null)
   const [busy, setBusy] = useState(false)
+
+  // After a mutation, refresh the affected directory: the root via load(), a
+  // nested directory via the tree's imperative reload (expanding it to reveal a
+  // freshly created child).
+  const refreshDir = async (dir: string) => {
+    if (listing && samePath(dir, listing.path)) await load(listing.path)
+    else await treeRef.current?.openDir(dir)
+  }
 
   const submitDialog = async () => {
     if (!dialog || !listing) return
     setBusy(true)
     try {
-      if (dialog.kind === 'mkdir') {
-        if (dialog.value.trim()) await api.mkdir(child(dialog.value.trim()))
-      } else if (dialog.kind === 'rename' && sel) {
-        if (dialog.value.trim() && dialog.value !== sel.name)
-          await api.rename(sel.path, child(dialog.value.trim()))
+      const name = dialog.value.trim()
+      if (dialog.kind === 'mkdir' && name) {
+        await api.mkdir(childOf(createDir, name, sep))
+        await refreshDir(createDir)
+      } else if (dialog.kind === 'newfile' && name) {
+        await api.createFile(childOf(createDir, name, sep))
+        await refreshDir(createDir)
+      } else if (dialog.kind === 'rename' && sel && name && name !== sel.name) {
+        const parent = parentDir(sel.path)
+        await api.rename(sel.path, childOf(parent, name, sep))
+        setSel(null)
+        await refreshDir(parent)
       } else if (dialog.kind === 'delete' && sel) {
+        const parent = parentDir(sel.path)
         await api.delete(sel.path)
+        setSel(null)
+        await refreshDir(parent)
       }
       setDialog(null)
-      await load(listing.path)
     } catch (e) {
       setErr(`${dialog.kind} failed: ${(e as Error).message}`)
       setDialog(null)
@@ -124,6 +141,7 @@ export default function FilePane({
   }
 
   const doMkdir = () => setDialog({ kind: 'mkdir', value: '' })
+  const doNewFile = () => setDialog({ kind: 'newfile', value: '' })
   const doRename = () => sel && setDialog({ kind: 'rename', value: sel.name })
   const doDelete = () => sel && setDialog({ kind: 'delete', value: sel.name })
 
@@ -162,7 +180,11 @@ export default function FilePane({
           <IconHome size={13} />
           Home
         </button>
-        <button className="btn-row" onClick={doMkdir}>
+        <button className="btn-row" onClick={doNewFile} title={`New file in ${createDir || '…'}`}>
+          <IconFile size={13} />
+          File
+        </button>
+        <button className="btn-row" onClick={doMkdir} title={`New folder in ${createDir || '…'}`}>
           <IconPlus size={13} />
           Folder
         </button>
@@ -193,34 +215,18 @@ export default function FilePane({
       </div>
       {err && <div className="fp-error">{err}</div>}
       <div className="filelist">
-        <div className="filerow header">
-          <span className="col-name">Name</span>
-          <span className="col-size">Size</span>
-          <span className="col-mode">Perms</span>
-        </div>
-        {listing?.entries.map((e) => (
-          <div
-            key={e.path}
-            className={`filerow ${selected === e.name ? 'sel' : ''}`}
-            onClick={() => setSelected(e.name)}
-            onDoubleClick={() => (e.isDir ? load(e.path) : onTransfer(e))}
-          >
-            <span className="col-name">
-              <span className={`file-ico ${e.isDir ? 'is-dir' : ''}`}>
-                {e.isDir ? (
-                  <IconFolder size={14} />
-                ) : e.isSymlink ? (
-                  <IconLink size={14} />
-                ) : (
-                  <IconFile size={14} />
-                )}
-              </span>
-              {e.name}
-            </span>
-            <span className="col-size">{e.isDir ? '' : fmtSize(e.size)}</span>
-            <span className="col-mode">{e.mode}</span>
-          </div>
-        ))}
+        {listing && (
+          <FileTree
+            ref={treeRef}
+            api={api}
+            rootPath={listing.path}
+            rootEntries={listing.entries}
+            selectedPath={sel?.path ?? null}
+            onSelect={setSel}
+            onActivateFile={onTransfer}
+            onActivateDir={(e) => load(e.path)}
+          />
+        )}
         {listing && listing.entries.length === 0 && <div className="fp-empty">(empty)</div>}
       </div>
 
@@ -257,9 +263,19 @@ export default function FilePane({
               </>
             ) : (
               <>
-                <h3>{dialog.kind === 'mkdir' ? 'New folder' : 'Rename'}</h3>
+                <h3>
+                  {dialog.kind === 'mkdir'
+                    ? 'New folder'
+                    : dialog.kind === 'newfile'
+                      ? 'New file'
+                      : 'Rename'}
+                </h3>
                 <label>
-                  {dialog.kind === 'mkdir' ? 'Folder name' : 'New name'}
+                  {dialog.kind === 'rename'
+                    ? 'New name'
+                    : dialog.kind === 'newfile'
+                      ? 'File name'
+                      : 'Folder name'}
                   <input
                     autoFocus
                     value={dialog.value}
@@ -277,7 +293,7 @@ export default function FilePane({
                     Cancel
                   </button>
                   <button type="submit" disabled={busy || !dialog.value.trim()}>
-                    {dialog.kind === 'mkdir' ? 'Create' : 'Rename'}
+                    {dialog.kind === 'rename' ? 'Rename' : 'Create'}
                   </button>
                 </div>
               </>

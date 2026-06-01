@@ -374,6 +374,82 @@ body,
   color: #666;
 }
 
+/* ---------------------------------------------------------------------------
+   Collapsible file tree — shared by the sidebar explorer and the SFTP panes.
+   Folders show a disclosure chevron pointing down when collapsed (click to
+   expand) and up when expanded (click to collapse); children indent inline.
+   --------------------------------------------------------------------------- */
+.file-tree {
+  font-size: 12px;
+}
+.tree-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px 2px 0;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+.tree-row:hover {
+  background: var(--hover);
+}
+.tree-row.sel {
+  background: var(--accent-quiet);
+  color: #fff;
+}
+.tree-twisty {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  color: var(--muted);
+  cursor: pointer;
+  transition:
+    transform 0.12s ease,
+    background 0.12s ease,
+    color 0.12s ease;
+}
+.tree-twisty.spacer {
+  cursor: default;
+}
+.tree-twisty:not(.spacer):hover {
+  background: var(--hover);
+  color: var(--fg);
+}
+.tree-twisty.open {
+  transform: rotate(180deg);
+}
+.tree-icon {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  color: var(--muted);
+}
+.tree-icon.is-dir {
+  color: color-mix(in srgb, var(--accent) 80%, var(--fg));
+}
+.tree-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tree-note {
+  padding: 2px 8px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.tree-note.error {
+  color: var(--danger);
+}
+
 .titlebar button {
   background: var(--accent);
   color: var(--accent-fg);
@@ -787,6 +863,60 @@ body,
 }
 .split-handle:hover {
   background: rgba(255, 255, 255, 0.12);
+}
+
+/* ---------------------------------------------------------------------------
+   Focus (magnify) mode — one pane enlarged + centered, the rest dimmed behind
+   a backdrop. The focused .term-slot is repositioned in place (FOCUSED_SLOT in
+   TerminalLayout), never reparented, so its PTY/xterm stays alive.
+   --------------------------------------------------------------------------- */
+.focus-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 5; /* above normal term-slots (auto z-index), below the focused slot (6) */
+  background: color-mix(in srgb, var(--bg) 55%, transparent);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+  cursor: zoom-out;
+}
+.term-slot.focused {
+  /* Drop paint-containment so the card's shadow isn't clipped; layout
+     containment still gives it a stacking context + containing block. */
+  contain: layout;
+  border: 1px solid color-mix(in srgb, var(--accent) 60%, var(--border));
+  border-radius: 10px;
+  box-shadow:
+    0 18px 60px rgba(0, 0, 0, 0.55),
+    0 0 0 1px var(--accent-soft);
+}
+/* Tab strips + split dividers sit in a separate layer that stacks above the
+   terminals; hide that chrome while magnified so the card reads as one clean
+   surface (re-shown on exit). */
+.panes.tiling.focused .chrome-layer {
+  display: none;
+}
+.focus-exit {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--panel) 82%, transparent);
+  color: var(--muted);
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease;
+}
+.focus-exit:hover {
+  background: var(--panel-2);
+  color: var(--fg);
 }
 .empty {
   display: flex;
@@ -1668,7 +1798,8 @@ select option {
 
 /* --- pane tab-strip "new terminal" button --- */
 .pane-add,
-.pane-merge {
+.pane-merge,
+.pane-focus {
   -webkit-app-region: no-drag;
   background: transparent;
   color: var(--muted);
@@ -1684,7 +1815,8 @@ select option {
     color 0.12s ease;
 }
 .pane-add:hover,
-.pane-merge:hover {
+.pane-merge:hover,
+.pane-focus:hover {
   background: var(--panel-2);
   color: var(--fg);
 }
@@ -2658,6 +2790,18 @@ textarea:focus {
   color: var(--fg);
   border-color: var(--border);
 }
+.explorer-head button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.explorer-head button.danger:hover:not(:disabled) {
+  color: color-mix(in srgb, var(--danger) 70%, #fff);
+  border-color: color-mix(in srgb, var(--danger) 55%, transparent);
+}
+/* The header now hosts file actions (new/rename/delete/refresh); space them. */
+.explorer-head {
+  gap: 2px;
+}
 
 /* Modal primary/ghost get the slick raised treatment too. */
 .modal button.primary {
@@ -2732,6 +2876,7 @@ textarea:focus {
 /* Merge/add pane buttons centre their glyph. */
 .pane-add,
 .pane-merge,
+.pane-focus,
 .tab-close,
 .group-close {
   display: inline-flex;
@@ -2799,6 +2944,20 @@ textarea:focus {
   }
 }
 
+/* Magnified pane entrance — opacity + a small rise only. No scale: scaling a
+   live terminal blurs its text, and the grid is already sized to the final
+   rect (so xterm refits exactly once). */
+@keyframes dt-focus-pop {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 @media (prefers-reduced-motion: no-preference) {
   /* --- Overlay entrances: backdrop fades, panel scales up.
      These mount fresh on each open, so the keyframe plays once per open. --- */
@@ -2809,6 +2968,14 @@ textarea:focus {
   .palette,
   .confirm-modal {
     animation: dt-pop-in var(--dur) var(--ease-out) both;
+  }
+
+  /* --- Focus (magnify) mode: backdrop fades in, the card rises into place. --- */
+  .focus-backdrop {
+    animation: dt-fade-in var(--dur-fast) ease both;
+  }
+  .term-slot.focused {
+    animation: dt-focus-pop var(--dur) var(--ease-out) both;
   }
 
   /* --- Top-level manager views (Connections / Workspaces / Snippets).

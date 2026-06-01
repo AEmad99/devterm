@@ -5,9 +5,19 @@ import BrowserPane from './BrowserPane'
 import { useSessions, type Session } from '../store/sessions'
 import { useEditors } from '../store/editors'
 import { useLayout, computeLayout, type DropZone, type LeafNode, type Rect } from '../store/layout'
-import { IconMerge, IconPlus } from './Icons'
+import { IconMerge, IconPlus, IconFocus, IconClose } from './Icons'
 
 const TAB_H = 30 // px height of a pane's tab strip
+
+// Centered, enlarged rect used for the magnified pane in focus mode. It sits
+// above the dimming backdrop (see .term-slot.focused / .focus-backdrop in CSS).
+const FOCUSED_SLOT: React.CSSProperties = {
+  left: '5%',
+  top: '5%',
+  width: '90%',
+  height: '90%',
+  zIndex: 6
+}
 
 const pct = (n: number) => `${n * 100}%`
 
@@ -59,6 +69,8 @@ export default function TerminalLayout({
   const mergeLeaf = useLayout((s) => s.mergeLeaf)
   const reorderTab = useLayout((s) => s.reorderTab)
   const drop = useLayout((s) => s.drop)
+  const focusedId = useLayout((s) => s.focusedId)
+  const toggleFocus = useLayout((s) => s.toggleFocus)
   const setSessionActive = useSessions((s) => s.setActive)
   const setTitle = useSessions((s) => s.setTitle)
   const close = useSessions((s) => s.close)
@@ -88,6 +100,11 @@ export default function TerminalLayout({
     leaves.forEach(({ leaf }) => leaf.tabs.forEach((t) => m.set(t, leaf.id)))
     return m
   }, [leaves])
+
+  // Focus (magnify) mode only applies when the focused session belongs to the
+  // group currently drawn here (focus is cleared on group switch, but guard
+  // anyway so a stray id can't dim a group that doesn't own it).
+  const focusedHere = !!focusedId && leafOfSession.has(focusedId)
 
   const focusSession = (sid: string) => {
     const leafId = leafOfSession.get(sid)
@@ -147,21 +164,40 @@ export default function TerminalLayout({
   })
 
   return (
-    <div className={`panes tiling ${dragId ? 'dragging' : ''}`} ref={panesRef}>
+    <div
+      className={`panes tiling ${dragId ? 'dragging' : ''} ${focusedHere ? 'focused' : ''}`}
+      ref={panesRef}
+    >
       {/* Layer 1: terminals — one stable slot per session, never reparented. */}
       <div className="term-layer">
         {sessions.map((s) => {
           const leafId = leafOfSession.get(s.id)
           const entry = leaves.find((l) => l.leaf.id === leafId)
-          const visible = !!entry && entry.leaf.active === s.id
+          const isFocused = focusedHere && s.id === focusedId
+          const visible = isFocused || (!!entry && entry.leaf.active === s.id)
           const rect = entry?.rect ?? { x: 0, y: 0, w: 1, h: 1 }
+          const style: React.CSSProperties = isFocused
+            ? { ...FOCUSED_SLOT, display: 'block' }
+            : { ...slotBodyStyle(rect), display: visible ? 'block' : 'none' }
           return (
             <div
               key={s.id}
-              className="term-slot"
-              style={{ ...slotBodyStyle(rect), display: visible ? 'block' : 'none' }}
+              className={`term-slot ${isFocused ? 'focused' : ''}`}
+              style={style}
               onMouseDownCapture={() => focusSession(s.id)}
             >
+              {isFocused && (
+                <button
+                  className="focus-exit"
+                  title="Exit focus (Esc)"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    toggleFocus(s.id)
+                  }}
+                >
+                  <IconClose size={14} />
+                </button>
+              )}
               {s.kind === 'browser' ? (
                 <BrowserPane session={s} />
               ) : s.kind === 'remote' ? (
@@ -172,6 +208,13 @@ export default function TerminalLayout({
             </div>
           )
         })}
+        {focusedHere && (
+          <div
+            className="focus-backdrop"
+            title="Exit focus"
+            onClick={() => toggleFocus(focusedId)}
+          />
+        )}
       </div>
 
       {/* Layer 2: chrome — tab strips, pane borders, drop targets, dividers. */}
@@ -187,6 +230,7 @@ export default function TerminalLayout({
             canMerge={leaves.length > 1}
             onNewTerminal={onNewTerminal}
             over={over?.leafId === leaf.id ? over.zone : null}
+            onToggleFocus={toggleFocus}
             onTabClick={focusSession}
             onTabClose={closeSession}
             onRename={setTitle}
@@ -241,6 +285,7 @@ function PaneChrome({
   canMerge,
   over,
   onNewTerminal,
+  onToggleFocus,
   onTabClick,
   onTabClose,
   onRename,
@@ -258,6 +303,7 @@ function PaneChrome({
   canMerge: boolean
   over: DropZone | null
   onNewTerminal?: () => void
+  onToggleFocus: (sid: string) => void
   onTabClick: (sid: string) => void
   onTabClose: (sid: string) => void
   onRename: (sid: string, title: string) => void
@@ -427,6 +473,18 @@ function PaneChrome({
             }}
           >
             ›
+          </button>
+        )}
+        {leaf.active && (
+          <button
+            className="pane-focus"
+            title="Focus (magnify) this terminal — Ctrl/Cmd+Shift+Z"
+            onClick={(e) => {
+              e.stopPropagation()
+              if (leaf.active) onToggleFocus(leaf.active)
+            }}
+          >
+            <IconFocus size={14} />
           </button>
         )}
         {canMerge && (

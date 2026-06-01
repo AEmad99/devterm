@@ -1,25 +1,38 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { DirListing } from '@shared/types'
+import type { DirListing, FileEntry } from '@shared/types'
 import { useSessions } from '../store/sessions'
 import { useEditors } from '../store/editors'
-import { localFsApi, remoteFsApi } from '../lib/fsapi'
-import type { FsApi } from './FilePane'
+import { localFsApi, remoteFsApi, type FsApi } from '../lib/fsapi'
+import FileTree, { type FileTreeHandle } from './FileTree'
 import {
   IconLocal,
   IconRemote,
   IconRefresh,
   IconArrowUp,
   IconHome,
-  IconFolder,
   IconFile,
-  IconLink
+  IconPlus,
+  IconEdit,
+  IconTrash
 } from './Icons'
+
+/** Strip a trailing path separator. */
+const strip = (p: string) => p.replace(/[/\\]+$/, '')
+const childOf = (dir: string, name: string, sep: string) => strip(dir) + sep + name
+function parentDir(p: string): string {
+  const i = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'))
+  if (i > 0) return p.slice(0, i)
+  if (i === 0) return p.slice(0, 1)
+  return strip(p)
+}
+const samePath = (a: string, b: string) => strip(a) === strip(b)
 
 /**
  * Persistent left side-panel file explorer for the active session. It follows
  * the shell's working directory (reported via OSC 7 into the session store) and
- * also supports manual navigation + refresh. Local sessions browse the local
- * filesystem; remote sessions browse over SFTP.
+ * also supports manual navigation, refresh, and create/rename/delete. Folders
+ * expand inline as a tree. Local sessions browse the local filesystem; remote
+ * sessions browse over SFTP.
  */
 export default function FileExplorer() {
   const active = useSessions((s) => s.sessions.find((x) => x.id === s.activeId))
@@ -28,6 +41,7 @@ export default function FileExplorer() {
   const isPending = !active || active.id.startsWith('pending-')
   // Browser panes have no filesystem; the explorer shows a placeholder for them.
   const isBrowser = active?.kind === 'browser'
+  const sep = kind === 'remote' ? '/' : window.devterm.platform === 'win32' ? '\\' : '/'
 
   const api = useMemo<FsApi | null>(() => {
     if (isPending || !active || active.kind === 'browser') return null
@@ -37,9 +51,11 @@ export default function FileExplorer() {
 
   const openEditor = useEditors((s) => s.open)
   const [listing, setListing] = useState<DirListing | null>(null)
+  const [sel, setSel] = useState<FileEntry | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const [pathInput, setPathInput] = useState('')
   const loadedPath = useRef<string | null>(null)
+  const treeRef = useRef<FileTreeHandle>(null)
 
   const load = useCallback(
     async (path?: string) => {
@@ -49,6 +65,7 @@ export default function FileExplorer() {
         const l = await api.list(path)
         loadedPath.current = l.path
         setListing(l)
+        setSel(null)
       } catch (e) {
         setErr(String((e as Error).message || e))
       }
@@ -59,6 +76,7 @@ export default function FileExplorer() {
   // When the active session changes, reset and load its cwd (or home).
   useEffect(() => {
     setListing(null)
+    setSel(null)
     loadedPath.current = null
     if (api) {
       if (cwd) load(cwd)
@@ -79,6 +97,60 @@ export default function FileExplorer() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [listing?.path])
 
+  const openEntryEditor = (e: FileEntry) => {
+    if (e.isSymlink || !active || active.kind === 'browser') return
+    openEditor({
+      scope: active.kind === 'remote' ? 'remote' : 'local',
+      sessionId: active.kind === 'remote' ? active.id : undefined,
+      path: e.path
+    })
+  }
+
+  // New items go inside the selected folder when one is picked, else the root.
+  const createDir = sel?.isDir ? sel.path : (listing?.path ?? '')
+
+  const [dialog, setDialog] = useState<null | {
+    kind: 'mkdir' | 'newfile' | 'rename' | 'delete'
+    value: string
+  }>(null)
+  const [busy, setBusy] = useState(false)
+
+  const refreshDir = async (dir: string) => {
+    if (listing && samePath(dir, listing.path)) await load(listing.path)
+    else await treeRef.current?.openDir(dir)
+  }
+
+  const submitDialog = async () => {
+    if (!dialog || !api || !listing) return
+    setBusy(true)
+    try {
+      const name = dialog.value.trim()
+      if (dialog.kind === 'mkdir' && name) {
+        await api.mkdir(childOf(createDir, name, sep))
+        await refreshDir(createDir)
+      } else if (dialog.kind === 'newfile' && name) {
+        await api.createFile(childOf(createDir, name, sep))
+        await refreshDir(createDir)
+      } else if (dialog.kind === 'rename' && sel && name && name !== sel.name) {
+        const parent = parentDir(sel.path)
+        await api.rename(sel.path, childOf(parent, name, sep))
+        setSel(null)
+        await refreshDir(parent)
+      } else if (dialog.kind === 'delete' && sel) {
+        const parent = parentDir(sel.path)
+        await api.delete(sel.path)
+        setSel(null)
+        await refreshDir(parent)
+      }
+      setDialog(null)
+    } catch (e) {
+      setErr(`${dialog.kind} failed: ${(e as Error).message}`)
+      setDialog(null)
+    } finally {
+      setBusy(false)
+    }
+  }
+
   if (isPending || isBrowser) {
     return (
       <div className="explorer">
@@ -97,6 +169,37 @@ export default function FileExplorer() {
           {kind === 'remote' ? <IconRemote size={14} /> : <IconLocal size={14} />}
           {kind === 'remote' ? 'Remote' : 'Local'}
         </span>
+        <span className="spacer" />
+        <button
+          className="icon-btn"
+          title="New file"
+          onClick={() => setDialog({ kind: 'newfile', value: '' })}
+        >
+          <IconFile size={14} />
+        </button>
+        <button
+          className="icon-btn"
+          title="New folder"
+          onClick={() => setDialog({ kind: 'mkdir', value: '' })}
+        >
+          <IconPlus size={14} />
+        </button>
+        <button
+          className="icon-btn"
+          title="Rename"
+          disabled={!sel}
+          onClick={() => sel && setDialog({ kind: 'rename', value: sel.name })}
+        >
+          <IconEdit size={14} />
+        </button>
+        <button
+          className="icon-btn danger"
+          title="Delete"
+          disabled={!sel}
+          onClick={() => sel && setDialog({ kind: 'delete', value: sel.name })}
+        >
+          <IconTrash size={14} />
+        </button>
         <button
           className="icon-btn"
           title="Refresh"
@@ -137,38 +240,93 @@ export default function FileExplorer() {
       </div>
       {err && <div className="explorer-error">{err}</div>}
       <div className="explorer-list">
-        {listing?.entries.map((e) => (
-          <div
-            key={e.path}
-            className="ex-row"
-            title={`${e.mode}  ${e.isDir ? '' : e.size + ' B'}`}
-            onDoubleClick={() =>
-              e.isDir
-                ? load(e.path)
-                : !e.isSymlink &&
-                  active &&
-                  openEditor({
-                    scope: active.kind === 'remote' ? 'remote' : 'local',
-                    sessionId: active.kind === 'remote' ? active.id : undefined,
-                    path: e.path
-                  })
-            }
-          >
-            <span className={`ex-icon ${e.isDir ? 'is-dir' : ''}`}>
-              {e.isDir ? (
-                <IconFolder size={15} />
-              ) : e.isSymlink ? (
-                <IconLink size={15} />
-              ) : (
-                <IconFile size={15} />
-              )}
-            </span>
-            <span className="ex-name">{e.name}</span>
-          </div>
-        ))}
+        {listing && api && (
+          <FileTree
+            ref={treeRef}
+            api={api}
+            rootPath={listing.path}
+            rootEntries={listing.entries}
+            selectedPath={sel?.path ?? null}
+            onSelect={setSel}
+            onActivateFile={openEntryEditor}
+            onActivateDir={(e) => load(e.path)}
+          />
+        )}
         {listing && listing.entries.length === 0 && <div className="explorer-empty">(empty)</div>}
         {!listing && !err && <div className="explorer-empty">loading…</div>}
       </div>
+
+      {dialog && (
+        <div className="modal-backdrop" onClick={() => !busy && setDialog(null)}>
+          <form
+            className="modal fp-dialog"
+            onClick={(e) => e.stopPropagation()}
+            onSubmit={(e) => {
+              e.preventDefault()
+              submitDialog()
+            }}
+          >
+            {dialog.kind === 'delete' ? (
+              <>
+                <h3>Delete</h3>
+                <p>
+                  Permanently delete <b>{dialog.value}</b>
+                  {sel?.isDir ? ' and everything inside it' : ''}? This cannot be undone.
+                </p>
+                <div className="actions">
+                  <button
+                    type="button"
+                    className="ghost"
+                    onClick={() => setDialog(null)}
+                    disabled={busy}
+                  >
+                    Cancel
+                  </button>
+                  <button type="submit" className="danger-btn" disabled={busy}>
+                    Delete
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <h3>
+                  {dialog.kind === 'mkdir'
+                    ? 'New folder'
+                    : dialog.kind === 'newfile'
+                      ? 'New file'
+                      : 'Rename'}
+                </h3>
+                <label>
+                  {dialog.kind === 'rename'
+                    ? 'New name'
+                    : dialog.kind === 'newfile'
+                      ? 'File name'
+                      : 'Folder name'}
+                  <input
+                    autoFocus
+                    value={dialog.value}
+                    disabled={busy}
+                    onChange={(e) => setDialog({ ...dialog, value: e.target.value })}
+                  />
+                </label>
+                <div className="actions">
+                  <button
+                    type="button"
+                    className="ghost"
+                    onClick={() => setDialog(null)}
+                    disabled={busy}
+                  >
+                    Cancel
+                  </button>
+                  <button type="submit" disabled={busy || !dialog.value.trim()}>
+                    {dialog.kind === 'rename' ? 'Rename' : 'Create'}
+                  </button>
+                </div>
+              </>
+            )}
+          </form>
+        </div>
+      )}
     </div>
   )
 }

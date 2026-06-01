@@ -17,6 +17,7 @@ export default function SftpBrowser({ sessionId }: { sessionId: string }) {
       list: (p) => window.devterm.fs.list(p),
       home: () => window.devterm.fs.home(),
       mkdir: (p) => window.devterm.fs.mkdir(p),
+      createFile: (p) => window.devterm.fs.createFile(p),
       rename: (a, b) => window.devterm.fs.rename(a, b),
       delete: (p) => window.devterm.fs.delete(p)
     }),
@@ -27,6 +28,7 @@ export default function SftpBrowser({ sessionId }: { sessionId: string }) {
       list: (p) => window.devterm.sftp.list(sessionId, p),
       home: () => window.devterm.sftp.home(sessionId),
       mkdir: (p) => window.devterm.sftp.mkdir(sessionId, p),
+      createFile: (p) => window.devterm.sftp.createFile(sessionId, p),
       rename: (a, b) => window.devterm.sftp.rename(sessionId, a, b),
       delete: (p) => window.devterm.sftp.delete(sessionId, p)
     }),

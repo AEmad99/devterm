@@ -259,6 +259,7 @@ export const IPC = {
   fsList: 'fs:list',
   fsHome: 'fs:home',
   fsMkdir: 'fs:mkdir',
+  fsCreateFile: 'fs:createFile',
   fsRename: 'fs:rename',
   fsDelete: 'fs:delete',
   fsReadFile: 'fs:readFile',
@@ -268,6 +269,7 @@ export const IPC = {
   sftpList: 'sftp:list',
   sftpHome: 'sftp:home',
   sftpMkdir: 'sftp:mkdir',
+  sftpCreateFile: 'sftp:createFile',
   sftpRename: 'sftp:rename',
   sftpDelete: 'sftp:delete',
   sftpReadFile: 'sftp:readFile',
@@ -345,6 +347,8 @@ export interface DevTermApi {
     list(path?: string): Promise<DirListing>
     home(): Promise<string>
     mkdir(path: string): Promise<void>
+    /** Create an empty file; rejects if a file/dir already exists at `path`. */
+    createFile(path: string): Promise<void>
     rename(from: string, to: string): Promise<void>
     delete(path: string): Promise<void>
     readFile(path: string): Promise<FileContent>
@@ -355,6 +359,8 @@ export interface DevTermApi {
     list(sessionId: string, path?: string): Promise<DirListing>
     home(sessionId: string): Promise<string>
     mkdir(sessionId: string, path: string): Promise<void>
+    /** Create an empty file; rejects if a file/dir already exists at `path`. */
+    createFile(sessionId: string, path: string): Promise<void>
     rename(sessionId: string, from: string, to: string): Promise<void>
     delete(sessionId: string, path: string): Promise<void>
     readFile(sessionId: string, path: string): Promise<FileContent>

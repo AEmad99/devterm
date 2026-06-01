@@ -259,6 +259,17 @@ export function groupActiveSession(g: Group | undefined): string | null {
 interface LayoutState {
   groups: Group[]
   activeGroupId: string
+  /**
+   * The session currently magnified in focus mode, or null. Focus mode centers
+   * and enlarges one pane with the rest dimmed behind a backdrop; it only repositions
+   * the existing slot (never reparents it). Cleared on group switch and when the
+   * focused session goes away.
+   */
+  focusedId: string | null
+  /** Enter/leave focus mode for a specific session (null exits). */
+  setFocus: (id: string | null) => void
+  /** Toggle focus mode for a session (focus it, or exit if it's already focused). */
+  toggleFocus: (sid: string | null) => void
   /** Reconcile every group's tree with the live sessions (each carries its groupId). */
   sync: (sessions: Array<{ id: string; groupId?: string }>) => void
   /** Create an (empty) group if it doesn't exist yet — used before launching a workspace. */
@@ -296,6 +307,10 @@ function patchActive(s: LayoutState, fn: (g: RootState) => RootState | null): Pa
 export const useLayout = create<LayoutState>((set) => ({
   groups: [{ id: DEFAULT_GROUP, name: 'Terminals', root: null, activeLeaf: null }],
   activeGroupId: DEFAULT_GROUP,
+  focusedId: null,
+
+  setFocus: (id) => set({ focusedId: id }),
+  toggleFocus: (sid) => set((s) => ({ focusedId: sid && s.focusedId !== sid ? sid : null })),
 
   sync: (sessions) =>
     set((s) => {
@@ -345,7 +360,10 @@ export const useLayout = create<LayoutState>((set) => ({
         const populated = groups.find((g) => g.root)
         if (populated) activeGroupId = populated.id
       }
-      return { groups, activeGroupId }
+      // Drop focus mode if its session closed.
+      const liveIds = new Set(sessions.map((ss) => ss.id))
+      const focusedId = s.focusedId && liveIds.has(s.focusedId) ? s.focusedId : null
+      return { groups, activeGroupId, focusedId }
     }),
 
   ensureGroup: (id, name) =>
@@ -360,12 +378,12 @@ export const useLayout = create<LayoutState>((set) => ({
     set((s) => {
       const n = s.groups.filter((g) => g.id !== DEFAULT_GROUP).length + 1
       const group: Group = { id, name: name ?? `Group ${n}`, root: null, activeLeaf: null }
-      return { groups: [...s.groups, group], activeGroupId: id }
+      return { groups: [...s.groups, group], activeGroupId: id, focusedId: null }
     })
     return id
   },
 
-  setActiveGroup: (id) => set({ activeGroupId: id }),
+  setActiveGroup: (id) => set({ activeGroupId: id, focusedId: null }),
 
   setActiveTab: (leafId, sid) =>
     set((s) =>
@@ -498,6 +516,6 @@ export const useLayout = create<LayoutState>((set) => ({
       const groups = exists
         ? s.groups.map((g) => (g.id === id ? { ...g, name, ...built } : g))
         : [...s.groups, { id, name, ...built }]
-      return { groups, activeGroupId: id }
+      return { groups, activeGroupId: id, focusedId: null }
     })
 }))

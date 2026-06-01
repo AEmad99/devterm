@@ -33,7 +33,15 @@ export async function listLocal(dir?: string): Promise<DirListing> {
       })
     } catch {
       // Unreadable entry (permissions, broken link) — list it minimally.
-      entries.push({ name, path: full, isDir: false, isSymlink: false, size: 0, mtimeMs: 0, mode: '----------' })
+      entries.push({
+        name,
+        path: full,
+        isDir: false,
+        isSymlink: false,
+        size: 0,
+        mtimeMs: 0,
+        mode: '----------'
+      })
     }
   }
   entries.sort((a, b) => (a.isDir === b.isDir ? a.name.localeCompare(b.name) : a.isDir ? -1 : 1))
@@ -43,6 +51,11 @@ export async function listLocal(dir?: string): Promise<DirListing> {
 
 export async function mkdirLocal(path: string): Promise<void> {
   await fs.mkdir(path, { recursive: false })
+}
+
+/** Create an empty file. The `wx` flag fails (EEXIST) if anything already exists there. */
+export async function createFileLocal(path: string): Promise<void> {
+  await fs.writeFile(path, '', { flag: 'wx' })
 }
 
 export async function renameLocal(from: string, to: string): Promise<void> {

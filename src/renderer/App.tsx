@@ -176,6 +176,12 @@ export default function App() {
   // shell by TerminalView's custom key handler.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // Escape leaves focus (magnify) mode before any hotkey matching.
+      if (e.key === 'Escape' && useLayout.getState().focusedId) {
+        e.preventDefault()
+        useLayout.getState().setFocus(null)
+        return
+      }
       const id = matchHotkey(e)
       if (!id) return
       e.preventDefault()
@@ -226,6 +232,12 @@ export default function App() {
         case 'prevTerminal':
           cycleTerminal(-1)
           break
+        case 'toggleFocus': {
+          const fid = useSessions.getState().activeId
+          useLayout.getState().toggleFocus(fid)
+          if (fid) focusTerminal(fid)
+          break
+        }
         case 'shortcuts':
           setShowShortcuts((v) => !v)
           break
