@@ -1,5 +1,6 @@
 import { watch as fsWatch, type FSWatcher } from 'fs'
 import { randomUUID } from 'crypto'
+import { dirname, normalize } from 'path'
 import type { DirListing } from '@shared/types'
 import { listLocal } from './local'
 
@@ -12,10 +13,10 @@ const DEBOUNCE_MS = 150
 const SAFETY_POLL_MS = 4000
 
 /**
- * A content signature for a directory listing — name/type/size/mtime of each
+ * A content signature for a directory listing: name/type/size/mtime of each
  * entry. Two listings with the same signature are indistinguishable to the UI,
- * so we only push an event (and trigger a re-render) when this changes. Listings
- * are already sorted by the list functions, so order is stable.
+ * so we only push an event when this changes. Listings are already sorted by
+ * the list functions, so order is stable.
  */
 export function dirSignature(l: DirListing): string {
   return l.entries
@@ -30,11 +31,16 @@ interface LocalWatch {
   lastSig: string
 }
 
+function emptyLocalListing(path: string): DirListing {
+  const p = normalize(path)
+  const parent = dirname(p)
+  return { path: p, parent: parent === p ? null : parent, entries: [] }
+}
+
 /**
  * Watches local directories and pushes a fresh listing whenever the directory's
  * contents change. Each watch is event-driven (fs.watch) with a low-frequency
- * safety poll as a backstop, and emits only on a real content change (diffed via
- * dirSignature) so the renderer never re-renders for nothing.
+ * safety poll as a backstop, and emits only on a real content change.
  */
 export class FsWatchManager {
   private watches = new Map<string, LocalWatch>()
@@ -43,8 +49,6 @@ export class FsWatchManager {
 
   async start(path: string): Promise<string> {
     const id = randomUUID()
-    // Baseline from the current contents so the renderer (which already has this
-    // listing from its own list() call) isn't told about a change that isn't one.
     let lastSig = ''
     try {
       lastSig = dirSignature(await listLocal(path))
@@ -62,7 +66,8 @@ export class FsWatchManager {
           this.emit(id, listing)
         }
       } catch {
-        /* dir vanished/unreadable — the parent dir's watch reflects the removal */
+        this.emit(id, emptyLocalListing(path))
+        this.stop(id)
       }
     }
     const schedule = () => {
@@ -72,10 +77,9 @@ export class FsWatchManager {
 
     try {
       w.watcher = fsWatch(path, { persistent: false }, () => schedule())
-      // A watch error (dir deleted, handle limit) just leaves the poll in charge.
-      w.watcher.on('error', () => {})
+      w.watcher.on('error', () => schedule())
     } catch {
-      /* platform/path doesn't support fs.watch — the poll covers it */
+      /* platform/path does not support fs.watch; the poll covers it */
     }
     w.poll = setInterval(relist, SAFETY_POLL_MS)
     this.watches.set(id, w)

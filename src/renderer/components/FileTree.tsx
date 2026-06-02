@@ -21,6 +21,24 @@ interface DirState {
 const INDENT = 14 // px added per nesting level
 const BASE_PAD = 6 // px left padding at depth 0
 
+function reachableOpenDirs(
+  entries: FileEntry[],
+  dirs: Record<string, DirState>,
+  open: Set<string>
+): Set<string> {
+  const reachable = new Set<string>()
+  const visit = (children: FileEntry[]) => {
+    for (const e of children) {
+      if (!e.isDir || !open.has(e.path)) continue
+      reachable.add(e.path)
+      const nested = dirs[e.path]?.entries
+      if (nested) visit(nested)
+    }
+  }
+  visit(entries)
+  return reachable
+}
+
 /**
  * A collapsible filesystem tree. The PARENT owns the root directory listing
  * (so follow-cwd / reload / transfer logic stays put) and passes its entries in
@@ -66,6 +84,23 @@ function FileTreeImpl(
     setOpen(new Set())
     setDirs({})
   }, [rootPath])
+
+  // Root and nested listings can change underneath us (external delete/rename).
+  // Keep only open dirs that still exist in the currently reachable tree; this
+  // also lets the watch reconciliation below tear down dead watches.
+  useEffect(() => {
+    setOpen((prev) => {
+      const reachable = reachableOpenDirs(rootEntries, dirsRef.current, prev)
+      if (reachable.size === prev.size && [...prev].every((path) => reachable.has(path)))
+        return prev
+      return reachable
+    })
+    setDirs((prev) => {
+      const reachable = reachableOpenDirs(rootEntries, prev, openRef.current)
+      const next = Object.fromEntries(Object.entries(prev).filter(([path]) => reachable.has(path)))
+      return Object.keys(next).length === Object.keys(prev).length ? prev : next
+    })
+  }, [rootEntries, dirs])
 
   // Live updates for expanded sub-directories: each open dir gets a watch so a
   // create/modify/delete/rename inside it is reflected without a refresh (the

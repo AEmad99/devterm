@@ -140,7 +140,6 @@ export class SSHManager {
       let settled = false
       let stdout = ''
       let stderr = ''
-      let code: number | null = null
       const finish = (r: { stdout: string; stderr: string; code: number | null; timedOut: boolean }) => {
         if (!settled) {
           settled = true
@@ -156,7 +155,7 @@ export class SSHManager {
         stream
           .on('close', (c: number) => {
             clearTimeout(timer)
-            finish({ stdout, stderr, code: c ?? code, timedOut: false })
+            finish({ stdout, stderr, code: c ?? null, timedOut: false })
           })
           .on('data', (d: Buffer) => (stdout += d.toString()))
           .stderr.on('data', (d: Buffer) => (stderr += d.toString()))

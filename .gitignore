@@ -2,6 +2,7 @@
 node_modules/
 out/
 dist/
+*.tsbuildinfo
 
 # logs & os cruft
 *.log

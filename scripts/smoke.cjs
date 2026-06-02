@@ -1,8 +1,23 @@
 // Headless Electron smoke test for Phase 0/1 acceptance:
 //   - node-pty and ssh2 load under Electron's ABI
 //   - a real PTY spawns and produces output
-// Run with: npx electron scripts/smoke.cjs   (exits 0 on success, 1 on failure)
-const { app } = require('electron')
+// Run with: node scripts/smoke.cjs   (exits 0 on success, 1 on failure)
+const electron = require('electron')
+
+// When this script is launched with plain Node, the electron package exports the
+// Electron executable path. Re-launch ourselves under Electron so the documented
+// smoke command works without making callers remember the implementation detail.
+if (typeof electron === 'string') {
+  const { spawnSync } = require('child_process')
+  const result = spawnSync(electron, [__filename], { stdio: 'inherit', env: process.env })
+  if (result.error) {
+    console.error('SMOKE FAIL: failed to launch Electron', result.error)
+    process.exit(1)
+  }
+  process.exit(result.status ?? 1)
+}
+
+const { app } = electron
 
 function fail(msg, err) {
   console.error('SMOKE FAIL:', msg, err ? '\n' + (err.stack || err) : '')

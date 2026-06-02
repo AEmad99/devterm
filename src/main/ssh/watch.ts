@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto'
+import { posix } from 'path'
 import type { SFTPWrapper } from 'ssh2'
 import type { DirListing } from '@shared/types'
 import { listRemote } from './sftp'
@@ -13,11 +14,16 @@ interface RemoteWatch {
   lastSig: string
 }
 
+function emptyRemoteListing(path: string): DirListing {
+  const p = posix.normalize(path)
+  return { path: p, parent: p === '/' ? null : posix.dirname(p), entries: [] }
+}
+
 /**
  * Watches remote directories over SFTP by polling readdir on the session's
  * existing channel and pushing a fresh listing only when the content signature
- * changes. If the session's SFTP channel is gone (disconnected), the watch stops
- * itself rather than polling a dead session forever.
+ * changes. If a watched path disappears or the session ends, the watch clears
+ * the stale listing once and then stops itself.
  */
 export class SftpWatchManager {
   private watches = new Map<string, RemoteWatch>()
@@ -29,7 +35,6 @@ export class SftpWatchManager {
 
   async start(sessionId: string, path: string): Promise<string> {
     const id = randomUUID()
-    // Baseline so we don't re-announce the listing the renderer already has.
     let lastSig = ''
     try {
       lastSig = dirSignature(await listRemote(await this.getSftp(sessionId), path))
@@ -46,10 +51,9 @@ export class SftpWatchManager {
           w.lastSig = sig
           this.emit(id, listing)
         }
-      } catch (e) {
-        // The session is gone for good — stop polling. Transient SFTP errors
-        // (a brief readdir failure) are retried on the next tick.
-        if (String((e as Error).message || e).includes('unknown session')) this.stop(id)
+      } catch {
+        this.emit(id, emptyRemoteListing(path))
+        this.stop(id)
       }
     }
     w.poll = setInterval(tick, POLL_MS)

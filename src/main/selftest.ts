@@ -262,7 +262,8 @@ function runTransfer(
       if (i === id && p.done) {
         clearTimeout(timer)
         orig.onProgress = prev
-        p.error ? reject(new Error(p.error)) : resolve(p)
+        if (p.error) reject(new Error(p.error))
+        else resolve(p)
       }
     }
   })
