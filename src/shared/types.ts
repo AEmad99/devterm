@@ -264,6 +264,9 @@ export const IPC = {
   fsDelete: 'fs:delete',
   fsReadFile: 'fs:readFile',
   fsWriteFile: 'fs:writeFile',
+  fsWatch: 'fs:watch',
+  fsUnwatch: 'fs:unwatch',
+  fsWatchEvent: 'fs:watch:event', // suffixed :<watchId>
 
   // remote filesystem (SFTP on the session's existing client)
   sftpList: 'sftp:list',
@@ -274,6 +277,9 @@ export const IPC = {
   sftpDelete: 'sftp:delete',
   sftpReadFile: 'sftp:readFile',
   sftpWriteFile: 'sftp:writeFile',
+  sftpWatch: 'sftp:watch',
+  sftpUnwatch: 'sftp:unwatch',
+  sftpWatchEvent: 'sftp:watch:event', // suffixed :<watchId>
 
   // transfers
   transferStart: 'transfer:start',
@@ -353,6 +359,12 @@ export interface DevTermApi {
     delete(path: string): Promise<void>
     readFile(path: string): Promise<FileContent>
     writeFile(path: string, content: string): Promise<{ mtimeMs: number; size: number }>
+    /** Start watching a directory for live changes; resolves to a watch id. */
+    watch(path: string): Promise<string>
+    /** Stop a watch started with `watch`. */
+    unwatch(watchId: string): void
+    /** Subscribe to fresh listings pushed when the watched directory changes. */
+    onWatchEvent(watchId: string, cb: (listing: DirListing) => void): () => void
   }
   /** Remote filesystem over SFTP (shares the session's SSH client). */
   sftp: {
@@ -369,6 +381,12 @@ export interface DevTermApi {
       path: string,
       content: string
     ): Promise<{ mtimeMs: number; size: number }>
+    /** Start watching a remote directory for live changes; resolves to a watch id. */
+    watch(sessionId: string, path: string): Promise<string>
+    /** Stop a watch started with `watch`. */
+    unwatch(watchId: string): void
+    /** Subscribe to fresh listings pushed when the watched directory changes. */
+    onWatchEvent(watchId: string, cb: (listing: DirListing) => void): () => void
   }
   /** Streamed upload/download with progress + cancel. */
   transfer: {

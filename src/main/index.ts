@@ -44,12 +44,12 @@ import { IPC } from '@shared/types'
 import { initAutoUpdater } from './updater'
 import type { PtyManager } from './pty/manager'
 import type { SSHManager } from './ssh/manager'
-import type { TransferManager } from './transfer'
+import type { FileController } from './ipc/files'
 
 let mainWindow: BrowserWindow | null = null
 let ptyManager: PtyManager | null = null
 let sshManager: SSHManager | null = null
-let transferManager: TransferManager | null = null
+let fileController: FileController | null = null
 let claudeController: ClaudeController | null = null
 
 function createWindow(): void {
@@ -106,7 +106,7 @@ function createWindow(): void {
 function registerIpc(): void {
   ptyManager = registerPtyIpc(() => mainWindow)
   sshManager = registerSshIpc(() => mainWindow)
-  transferManager = registerFileIpc(sshManager, () => mainWindow)
+  fileController = registerFileIpc(sshManager, () => mainWindow)
   claudeController = registerClaudeIpc(sshManager, ptyManager, () => mainWindow)
   registerConnectionsIpc()
   registerWorkspacesIpc()
@@ -213,7 +213,8 @@ if (process.argv.includes('--self-test')) {
 
   app.on('window-all-closed', () => {
     claudeController?.closeAll()
-    transferManager?.cancelAll()
+    fileController?.stopWatches()
+    fileController?.transfers.cancelAll()
     ptyManager?.killAll()
     sshManager?.disconnectAll()
     if (process.platform !== 'darwin') app.quit()
@@ -221,7 +222,8 @@ if (process.argv.includes('--self-test')) {
 
   app.on('before-quit', () => {
     claudeController?.closeAll()
-    transferManager?.cancelAll()
+    fileController?.stopWatches()
+    fileController?.transfers.cancelAll()
     ptyManager?.killAll()
     sshManager?.disconnectAll()
   })

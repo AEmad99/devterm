@@ -67,6 +67,40 @@ function FileTreeImpl(
     setDirs({})
   }, [rootPath])
 
+  // Live updates for expanded sub-directories: each open dir gets a watch so a
+  // create/modify/delete/rename inside it is reflected without a refresh (the
+  // parent owns the root listing's watch). Reconciles the active watch set to
+  // whatever is currently expanded; collapsing or re-rooting tears watches down.
+  const watchRefs = useRef<Map<string, () => void>>(new Map())
+  useEffect(() => {
+    const active = watchRefs.current
+    for (const path of open) {
+      if (active.has(path)) continue
+      active.set(
+        path,
+        api.watch(path, (fresh) => {
+          // Only refresh a dir we've actually loaded; leave loading/error alone.
+          setDirs((d) => (d[path]?.entries ? { ...d, [path]: { entries: fresh.entries } } : d))
+        })
+      )
+    }
+    for (const [path, off] of active) {
+      if (!open.has(path)) {
+        off()
+        active.delete(path)
+      }
+    }
+  }, [open, api])
+
+  // Tear every watch down on unmount.
+  useEffect(() => {
+    const active = watchRefs.current
+    return () => {
+      for (const off of active.values()) off()
+      active.clear()
+    }
+  }, [])
+
   const fetchDir = useCallback(
     async (path: string) => {
       setDirs((d) => ({ ...d, [path]: { ...d[path], loading: true, error: undefined } }))

@@ -97,6 +97,20 @@ export default function FileExplorer() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [listing?.path])
 
+  // Live updates: reflect create / modify / delete / rename in the shown
+  // directory automatically. Main only pushes when the contents actually change,
+  // so the selection is preserved unless the selected entry itself disappears.
+  useEffect(() => {
+    const path = listing?.path
+    if (!api || !path) return
+    const off = api.watch(path, (fresh) => {
+      if (!samePath(fresh.path, loadedPath.current ?? '')) return
+      setListing(fresh)
+      setSel((cur) => (cur && fresh.entries.some((e) => samePath(e.path, cur.path)) ? cur : null))
+    })
+    return off
+  }, [api, listing?.path])
+
   const openEntryEditor = (e: FileEntry) => {
     if (e.isSymlink || !active || active.kind === 'browser') return
     openEditor({

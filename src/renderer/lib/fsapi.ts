@@ -13,6 +13,45 @@ export interface FsApi {
   createFile(path: string): Promise<void>
   rename(from: string, to: string): Promise<void>
   delete(path: string): Promise<void>
+  /**
+   * Watch a directory for live changes. `onChange` fires with a fresh listing
+   * whenever the directory's contents change (file created/modified/deleted/
+   * renamed), so the UI never needs a manual refresh. Returns an unsubscribe
+   * function; call it to stop watching (safe to call before the watch has even
+   * finished starting).
+   */
+  watch(path: string, onChange: (listing: DirListing) => void): () => void
+}
+
+/**
+ * Bridge a "start (async) → stream events → stop" main-process watch into the
+ * synchronous unsubscribe shape the UI wants. The watch id only exists after the
+ * async start resolves, so we defer the subscription and honour an unsubscribe
+ * that races ahead of it (cancelled before start resolves → stop immediately).
+ */
+function watchVia(
+  start: (path: string) => Promise<string>,
+  subscribe: (id: string, cb: (l: DirListing) => void) => () => void,
+  unwatch: (id: string) => void
+) {
+  return (path: string, onChange: (l: DirListing) => void): (() => void) => {
+    let cancelled = false
+    let watchId: string | null = null
+    let off: (() => void) | null = null
+    start(path).then(
+      (id) => {
+        if (cancelled) return unwatch(id)
+        watchId = id
+        off = subscribe(id, onChange)
+      },
+      () => {} // start failed (e.g. session gone) — nothing to clean up
+    )
+    return () => {
+      cancelled = true
+      off?.()
+      if (watchId) unwatch(watchId)
+    }
+  }
 }
 
 /** Local filesystem API surface. */
@@ -23,7 +62,12 @@ export function localFsApi(): FsApi {
     mkdir: (p) => window.devterm.fs.mkdir(p),
     createFile: (p) => window.devterm.fs.createFile(p),
     rename: (a, b) => window.devterm.fs.rename(a, b),
-    delete: (p) => window.devterm.fs.delete(p)
+    delete: (p) => window.devterm.fs.delete(p),
+    watch: watchVia(
+      (p) => window.devterm.fs.watch(p),
+      window.devterm.fs.onWatchEvent,
+      window.devterm.fs.unwatch
+    )
   }
 }
 
@@ -35,6 +79,11 @@ export function remoteFsApi(sessionId: string): FsApi {
     mkdir: (p) => window.devterm.sftp.mkdir(sessionId, p),
     createFile: (p) => window.devterm.sftp.createFile(sessionId, p),
     rename: (a, b) => window.devterm.sftp.rename(sessionId, a, b),
-    delete: (p) => window.devterm.sftp.delete(sessionId, p)
+    delete: (p) => window.devterm.sftp.delete(sessionId, p),
+    watch: watchVia(
+      (p) => window.devterm.sftp.watch(sessionId, p),
+      window.devterm.sftp.onWatchEvent,
+      window.devterm.sftp.unwatch
+    )
   }
 }

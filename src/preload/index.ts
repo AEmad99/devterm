@@ -59,7 +59,10 @@ const api: DevTermApi = {
     delete: (path: string): Promise<void> => ipcRenderer.invoke(IPC.fsDelete, path),
     readFile: (path: string): Promise<FileContent> => ipcRenderer.invoke(IPC.fsReadFile, path),
     writeFile: (path: string, content: string): Promise<{ mtimeMs: number; size: number }> =>
-      ipcRenderer.invoke(IPC.fsWriteFile, path, content)
+      ipcRenderer.invoke(IPC.fsWriteFile, path, content),
+    watch: (path: string): Promise<string> => ipcRenderer.invoke(IPC.fsWatch, path),
+    unwatch: (watchId: string) => ipcRenderer.send(IPC.fsUnwatch, watchId),
+    onWatchEvent: (watchId, cb) => subscribe<DirListing>(`${IPC.fsWatchEvent}:${watchId}`, cb)
   },
   sftp: {
     list: (sid: string, path?: string): Promise<DirListing> =>
@@ -80,7 +83,11 @@ const api: DevTermApi = {
       path: string,
       content: string
     ): Promise<{ mtimeMs: number; size: number }> =>
-      ipcRenderer.invoke(IPC.sftpWriteFile, sid, path, content)
+      ipcRenderer.invoke(IPC.sftpWriteFile, sid, path, content),
+    watch: (sid: string, path: string): Promise<string> =>
+      ipcRenderer.invoke(IPC.sftpWatch, sid, path),
+    unwatch: (watchId: string) => ipcRenderer.send(IPC.sftpUnwatch, watchId),
+    onWatchEvent: (watchId, cb) => subscribe<DirListing>(`${IPC.sftpWatchEvent}:${watchId}`, cb)
   },
   transfer: {
     start: (opts: TransferStartOpts): Promise<string> =>

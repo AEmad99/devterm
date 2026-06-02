@@ -89,6 +89,21 @@ export default function FilePane({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reloadSignal])
 
+  // Live updates: reflect any create / modify / delete / rename in the shown
+  // directory without a manual refresh. Main pushes a fresh listing only on a
+  // real content change; we swap it in place — keeping the selection if it still
+  // exists — so navigation and selection aren't disturbed.
+  useEffect(() => {
+    const path = listing?.path
+    if (!path) return
+    const off = api.watch(path, (fresh) => {
+      if (!samePath(fresh.path, currentPath.current ?? '')) return
+      setListing(fresh)
+      setSel((cur) => (cur && fresh.entries.some((e) => samePath(e.path, cur.path)) ? cur : null))
+    })
+    return off
+  }, [api, listing?.path])
+
   // New files/folders are created inside the selected folder when one is picked,
   // otherwise in the directory currently shown as the tree root.
   const createDir = sel?.isDir ? sel.path : (listing?.path ?? '')

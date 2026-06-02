@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from 'react'
 import type { FileEntry } from '@shared/types'
-import FilePane, { type FsApi } from './FilePane'
+import FilePane from './FilePane'
+import { localFsApi, remoteFsApi, type FsApi } from '../lib/fsapi'
 import TransferQueue, { type TransferItem } from './TransferQueue'
 import Splitter from './Splitter'
 import { useEditors } from '../store/editors'
@@ -12,28 +13,8 @@ const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n
 export default function SftpBrowser({ sessionId }: { sessionId: string }) {
   const localSep = window.devterm.platform === 'win32' ? '\\' : '/'
 
-  const localApi = useMemo<FsApi>(
-    () => ({
-      list: (p) => window.devterm.fs.list(p),
-      home: () => window.devterm.fs.home(),
-      mkdir: (p) => window.devterm.fs.mkdir(p),
-      createFile: (p) => window.devterm.fs.createFile(p),
-      rename: (a, b) => window.devterm.fs.rename(a, b),
-      delete: (p) => window.devterm.fs.delete(p)
-    }),
-    []
-  )
-  const remoteApi = useMemo<FsApi>(
-    () => ({
-      list: (p) => window.devterm.sftp.list(sessionId, p),
-      home: () => window.devterm.sftp.home(sessionId),
-      mkdir: (p) => window.devterm.sftp.mkdir(sessionId, p),
-      createFile: (p) => window.devterm.sftp.createFile(sessionId, p),
-      rename: (a, b) => window.devterm.sftp.rename(sessionId, a, b),
-      delete: (p) => window.devterm.sftp.delete(sessionId, p)
-    }),
-    [sessionId]
-  )
+  const localApi = useMemo<FsApi>(() => localFsApi(), [])
+  const remoteApi = useMemo<FsApi>(() => remoteFsApi(sessionId), [sessionId])
 
   const openEditor = useEditors((s) => s.open)
   // The remote shell's working directory (reported via OSC 7) so the remote pane

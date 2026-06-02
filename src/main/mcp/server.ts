@@ -38,6 +38,30 @@ export class McpBridge {
     await this.mcp.connect(this.transport)
 
     this.http = createServer((req, res) => void this.handle(req, res))
+
+    // This is a localhost-only bridge with exactly ONE trusted client: the
+    // interactive `claude` CLI we spawn. Node's http.Server ships protective
+    // idle timeouts meant for public servers (slowloris / idle-socket
+    // exhaustion); here they only cause harm. The CLI holds a long-lived
+    // standalone GET SSE stream open for server→client messages, and the MCP
+    // SDK puts NO heartbeat on it — so while the operator leaves the agent
+    // idle, that quiet stream is fair game for any of these timers. When one
+    // fires it silently tears the stream down and the agent surfaces it to the
+    // user as "connection dropped". `requestTimeout` (5 min) is the usual
+    // culprit — it matches the "drops after a while of idling" report. Disable
+    // every teardown timer and keep the connection warm at the TCP layer
+    // instead, so the bridge survives any amount of idling.
+    this.http.keepAliveTimeout = 0 // don't reap idle keep-alive sockets (default 5s)
+    this.http.headersTimeout = 0 // no cap on header receipt (default 60s)
+    this.http.requestTimeout = 0 // no cap on request lifetime (default 5min)
+    this.http.timeout = 0 // no socket inactivity timeout
+    this.http.on('connection', (socket) => {
+      // TCP keepalive probes stop the OS/NAT from reaping the idle connection
+      // and let us detect a genuinely dead peer; never time out on inactivity.
+      socket.setKeepAlive(true, 15000)
+      socket.setTimeout(0)
+    })
+
     await new Promise<void>((resolve) => this.http!.listen(0, '127.0.0.1', resolve))
     this.port = (this.http.address() as AddressInfo).port
     return { url: `http://127.0.0.1:${this.port}/mcp`, token: this.token, port: this.port }
