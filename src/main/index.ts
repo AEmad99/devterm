@@ -59,14 +59,11 @@ function createWindow(): void {
     minWidth: 800,
     minHeight: 500,
     show: false,
-    // Frameless + transparent so the Glass theme can let the desktop show through
-    // (a normal window frame forces an opaque background on Windows, which is why
-    // glass looked solid before). A custom titlebar (App.tsx) provides the
-    // min/maximize/close controls. Non-glass themes paint a fully opaque app
-    // surface via the --bg token, so the window looks solid as usual.
-    frame: false,
-    transparent: true,
-    backgroundColor: '#00000000',
+    // Use the normal OS window frame so Windows owns moving, resizing, Snap
+    // Layouts, edge snapping, minimize/maximize/close, and system-menu behavior.
+    frame: true,
+    transparent: false,
+    backgroundColor: '#16161e',
     title: 'DevTerm',
     autoHideMenuBar: true,
     webPreferences: {
@@ -82,13 +79,6 @@ function createWindow(): void {
   })
 
   mainWindow.on('ready-to-show', () => mainWindow?.show())
-
-  // Keep the custom titlebar's maximize/restore button in sync with the OS state
-  // (covers double-click-to-maximize, Win+Up snapping, etc.).
-  const sendMaxState = () =>
-    mainWindow?.webContents.send(IPC.windowMaximizeChanged, !!mainWindow?.isMaximized())
-  mainWindow.on('maximize', sendMaxState)
-  mainWindow.on('unmaximize', sendMaxState)
 
   // Open external links in the OS browser, never in-app.
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {

@@ -41,7 +41,7 @@ export interface AnsiPalette {
 }
 
 export interface ChromeColors {
-  /** App/window background (translucent for the glass theme). */
+  /** App background token (alpha is used by in-app glass surfaces). */
   bg: string
   /** Raised panels: sidebars, tab strips, modals. */
   panel: string
@@ -405,7 +405,7 @@ export const THEMES: Theme[] = [
     dark: true,
     glass: true,
     terminal: {
-      // Translucent so the desktop shows through behind the text (allowTransparency).
+      // Translucent within the app's glass surface treatment (allowTransparency).
       background: 'rgba(18,20,28,0.42)',
       foreground: '#e8ebf5',
       cursor: '#9bbcff',
@@ -477,7 +477,7 @@ export function xtermTheme(theme: Theme, bg: TerminalBg): ITheme {
 
 /** Solid colour painted beneath the terminal (under an image, or as the host bg). */
 export function terminalHostColor(theme: Theme): string {
-  // Glass keeps the host clear so the window's transparency shows through.
+  // Glass keeps the terminal host clear so the in-app glass surface shows through.
   return theme.glass ? 'transparent' : theme.terminal.background
 }
 

@@ -34,11 +34,6 @@ import {
   IconRemote,
   IconBrowser,
   IconEdit,
-  IconWinMin,
-  IconWinMax,
-  IconWinRestore,
-  IconWinSnapLeft,
-  IconWinSnapRight,
   EmptyTerminalArt
 } from './components/Icons'
 import type { HostContext } from '@shared/types'
@@ -63,50 +58,6 @@ function ContextBadge({ ctx }: { ctx?: HostContext }) {
       {ctx.kind === 'local' ? <IconLocal size={12} /> : <IconRemote size={12} />}
       {ctx.kind === 'local' ? 'Local' : 'Remote'} · {osLabel(ctx.os)}
     </span>
-  )
-}
-
-/** Custom titlebar window controls (the window is frameless). */
-function WindowControls() {
-  const [max, setMax] = useState(false)
-  useEffect(() => {
-    window.devterm.window.isMaximized().then(setMax)
-    return window.devterm.window.onMaximizeChange(setMax)
-  }, [])
-  return (
-    <div className="win-controls">
-      <button
-        className="win-btn win-snap"
-        title="Snap left"
-        onClick={() => window.devterm.window.snap('left')}
-      >
-        <IconWinSnapLeft size={14} />
-      </button>
-      <button
-        className="win-btn win-snap"
-        title="Snap right"
-        onClick={() => window.devterm.window.snap('right')}
-      >
-        <IconWinSnapRight size={14} />
-      </button>
-      <button className="win-btn" title="Minimize" onClick={() => window.devterm.window.minimize()}>
-        <IconWinMin size={15} />
-      </button>
-      <button
-        className="win-btn"
-        title={max ? 'Restore' : 'Maximize'}
-        onClick={() => window.devterm.window.toggleMaximize()}
-      >
-        {max ? <IconWinRestore size={14} /> : <IconWinMax size={13} />}
-      </button>
-      <button
-        className="win-btn win-close"
-        title="Close"
-        onClick={() => window.devterm.window.close()}
-      >
-        <IconClose size={15} />
-      </button>
-    </div>
   )
 }
 
@@ -374,7 +325,6 @@ export default function App() {
         <button className="settings-btn" title="Settings" onClick={() => setShowSettings(true)}>
           <IconSettings size={17} />
         </button>
-        <WindowControls />
       </div>
 
       <div className="body">

@@ -166,7 +166,6 @@ export interface DirListing {
 }
 
 export type TransferDirection = 'upload' | 'download'
-export type WindowSnapTarget = 'left' | 'right' | 'maximize'
 
 /** In-memory contents of a file opened for editing. */
 export interface FileContent {
@@ -338,15 +337,7 @@ export const IPC = {
   browserOpenTab: 'browser:open-tab',
 
   // window appearance (glass/translucent material)
-  windowSetGlass: 'window:set-glass',
-
-  // custom window controls (frameless titlebar)
-  windowMinimize: 'window:minimize',
-  windowToggleMaximize: 'window:toggle-maximize',
-  windowSnap: 'window:snap',
-  windowClose: 'window:close',
-  windowIsMaximized: 'window:is-maximized',
-  windowMaximizeChanged: 'window:maximize-changed' // main -> renderer
+  windowSetGlass: 'window:set-glass'
 } as const
 
 /** Typed surface exposed to the renderer via contextBridge (see preload). */
@@ -461,7 +452,7 @@ export interface DevTermApi {
      */
     onOpenTab(cb: (e: { sourceId: number; url: string }) => void): () => void
   }
-  /** Window appearance + custom controls (the window is frameless). */
+  /** Window appearance hooks. Native window controls are owned by the OS frame. */
   window: {
     /**
      * Toggle a translucent window material for the glass theme. Enables native
@@ -469,13 +460,6 @@ export interface DevTermApi {
      * (Electron ≥30); a no-op otherwise, where the CSS glass layer still applies.
      */
     setGlass(enabled: boolean): Promise<void>
-    minimize(): void
-    toggleMaximize(): void
-    snap(target: WindowSnapTarget): void
-    close(): void
-    isMaximized(): Promise<boolean>
-    /** Fires with the new maximized state when the window is maximized/restored. */
-    onMaximizeChange(cb: (maximized: boolean) => void): () => void
   }
   /** Context of the local workstation. */
   localContext(): Promise<HostContext>

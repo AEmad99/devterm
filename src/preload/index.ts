@@ -136,13 +136,7 @@ const api: DevTermApi = {
     onOpenTab: (cb) => subscribe<{ sourceId: number; url: string }>(IPC.browserOpenTab, cb)
   },
   window: {
-    setGlass: (enabled: boolean): Promise<void> => ipcRenderer.invoke(IPC.windowSetGlass, enabled),
-    minimize: () => ipcRenderer.send(IPC.windowMinimize),
-    toggleMaximize: () => ipcRenderer.send(IPC.windowToggleMaximize),
-    snap: (target) => ipcRenderer.send(IPC.windowSnap, target),
-    close: () => ipcRenderer.send(IPC.windowClose),
-    isMaximized: (): Promise<boolean> => ipcRenderer.invoke(IPC.windowIsMaximized),
-    onMaximizeChange: (cb) => subscribe<boolean>(IPC.windowMaximizeChanged, cb)
+    setGlass: (enabled: boolean): Promise<void> => ipcRenderer.invoke(IPC.windowSetGlass, enabled)
   },
   localContext: (): Promise<HostContext> => ipcRenderer.invoke(IPC.localContext),
   platform: process.platform

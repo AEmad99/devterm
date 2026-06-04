@@ -238,38 +238,6 @@ export const IconFocus = (p: IconProps) => (
   </Svg>
 )
 
-/* Window controls (frameless titlebar) — pixel-snapped 10px glyphs. */
-export const IconWinMin = (p: IconProps) => (
-  <Svg viewBox="0 0 24 24" {...p}>
-    <path d="M6 12h12" />
-  </Svg>
-)
-export const IconWinMax = (p: IconProps) => (
-  <Svg {...p}>
-    <rect x="6.5" y="6.5" width="11" height="11" rx="1.5" />
-  </Svg>
-)
-export const IconWinRestore = (p: IconProps) => (
-  <Svg {...p}>
-    <rect x="5.5" y="8.5" width="9" height="9" rx="1.4" />
-    <path d="M8.5 8.5V6.6A1.1 1.1 0 0 1 9.6 5.5h7.9A1 1 0 0 1 18.5 6.5v7.9a1.1 1.1 0 0 1-1.1 1.1H15.5" />
-  </Svg>
-)
-
-export const IconWinSnapLeft = (p: IconProps) => (
-  <Svg {...p}>
-    <rect x="4.5" y="5.5" width="15" height="13" rx="1.8" />
-    <path d="M11 5.5v13M7.5 9h1M7.5 12h1M7.5 15h1" />
-  </Svg>
-)
-
-export const IconWinSnapRight = (p: IconProps) => (
-  <Svg {...p}>
-    <rect x="4.5" y="5.5" width="15" height="13" rx="1.8" />
-    <path d="M13 5.5v13M15.5 9h1M15.5 12h1M15.5 15h1" />
-  </Svg>
-)
-
 /** Empty-state illustration for "no terminals / empty group". */
 export function EmptyTerminalArt({ size = 76 }: { size?: number }) {
   return (

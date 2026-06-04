@@ -1902,7 +1902,6 @@ select option {
   background: var(--accent-quiet);
   border: 1px solid var(--border);
   border-radius: 9px;
-  -webkit-app-region: no-drag;
 }
 .top-nav button {
   background: transparent;
@@ -1929,7 +1928,6 @@ select option {
 .pane-add,
 .pane-merge,
 .pane-focus {
-  -webkit-app-region: no-drag;
   background: transparent;
   color: var(--muted);
   border: none;
@@ -1965,7 +1963,6 @@ select option {
   display: none;
 }
 .tab-nav {
-  -webkit-app-region: no-drag;
   align-self: center;
   flex: 0 0 auto;
   background: var(--panel-2);
@@ -2764,10 +2761,10 @@ textarea:focus {
 
 /* ===========================================================================
    Glass theme — translucent surfaces + backdrop blur. Enabled when the Glass
-   theme is active (applyTheme sets data-glass). The window itself is transparent
-   (main/index.ts), so where a surface is translucent the desktop shows through;
-   the blur frosts whatever app content sits behind a panel. The chrome colour
-   tokens already carry alpha for this theme, so we only add the blur here.
+   theme is active (applyTheme sets data-glass). The app uses a normal native
+   OS window frame so Windows owns snap/maximize/resize behavior; glass is a
+   themed in-app surface treatment unless a future Electron build provides a
+   native Acrylic/Mica material through `window:set-glass`.
    =========================================================================== */
 :root[data-glass='on'] .titlebar,
 :root[data-glass='on'] .statusbar,
@@ -2798,56 +2795,6 @@ textarea:focus {
 :root[data-glass='on'] .tab.active,
 :root[data-glass='on'] .group-tab.active {
   background: color-mix(in srgb, var(--accent) 14%, transparent);
-}
-
-/* ===========================================================================
-   Frameless window — the titlebar is the OS drag handle, with custom controls.
-   =========================================================================== */
-.titlebar {
-  -webkit-app-region: drag;
-}
-/* Everything interactive in the titlebar must opt out of the drag region. */
-.titlebar button,
-.titlebar .top-nav,
-.titlebar .win-controls,
-.titlebar input,
-.titlebar select {
-  -webkit-app-region: no-drag;
-}
-
-.win-controls {
-  display: flex;
-  align-self: stretch;
-  margin: -7px -12px -7px 4px;
-}
-.win-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 46px;
-  background: transparent !important;
-  color: var(--muted) !important;
-  border: none !important;
-  border-radius: 0 !important;
-  cursor: pointer;
-  transition:
-    background 0.12s ease,
-    color 0.12s ease;
-}
-.win-btn:hover {
-  background: var(--hover) !important;
-  color: var(--fg) !important;
-  filter: none !important;
-}
-.win-btn.win-snap {
-  width: 38px;
-}
-.win-btn.win-snap svg {
-  opacity: 0.82;
-}
-.win-btn.win-close:hover {
-  background: #e3413a !important;
-  color: #fff !important;
 }
 
 /* ===========================================================================
