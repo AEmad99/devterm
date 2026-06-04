@@ -1,6 +1,12 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import { randomUUID } from 'crypto'
-import { IPC, type ClaudeOpenOpts, type ClaudeOpenResult, type ConfirmRequest } from '@shared/types'
+import {
+  IPC,
+  type ClaudeBridgeStatus,
+  type ClaudeOpenOpts,
+  type ClaudeOpenResult,
+  type ConfirmRequest
+} from '@shared/types'
 import { McpBridge } from '../mcp/server'
 import type { ConfirmOutcome } from '../mcp/tools'
 import { Policy } from '../mcp/policy'
@@ -63,6 +69,9 @@ export function registerClaudeIpc(
     sessions.delete(sessionId)
   }
 
+  const sendBridgeStatus = (sessionId: string, status: ClaudeBridgeStatus) =>
+    send(`${IPC.claudeBridgeStatus}:${sessionId}`, status)
+
   ipcMain.handle(IPC.claudeOpen, async (_e, opts: ClaudeOpenOpts): Promise<ClaudeOpenResult> => {
     if (sessions.has(opts.sessionId)) closeOne(opts.sessionId)
     const context = ssh.getContext(opts.sessionId)
@@ -70,14 +79,17 @@ export function registerClaudeIpc(
 
     const policy = new Policy(opts.mode)
     const airGapped = opts.airGapped ?? false
-    const bridge = new McpBridge({
-      sessionId: opts.sessionId,
-      ssh,
-      context,
-      airGapped,
-      policy,
-      confirm: (tool, detail) => confirm(opts.sessionId, tool, detail)
-    })
+    const bridge = new McpBridge(
+      {
+        sessionId: opts.sessionId,
+        ssh,
+        context,
+        airGapped,
+        policy,
+        confirm: (tool, detail) => confirm(opts.sessionId, tool, detail)
+      },
+      (status) => sendBridgeStatus(opts.sessionId, status)
+    )
     const info = await bridge.start()
 
     const spec = prepareClaudeLaunch(buildClaudeMd(context, airGapped), info)
@@ -91,6 +103,10 @@ export function registerClaudeIpc(
 
     sessions.set(opts.sessionId, { bridge, ptyId, cleanup: spec.cleanup })
     return { ptyId, mcpUrl: info.url }
+  })
+
+  ipcMain.handle(IPC.claudeStatus, (_e, sessionId: string): ClaudeBridgeStatus | null => {
+    return sessions.get(sessionId)?.bridge.getStatus() ?? null
   })
 
   ipcMain.on(IPC.claudeClose, (_e, sessionId: string) => closeOne(sessionId))

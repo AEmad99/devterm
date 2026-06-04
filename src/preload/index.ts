@@ -14,6 +14,7 @@ import {
   type TransferProgress,
   type ClaudeOpenOpts,
   type ClaudeOpenResult,
+  type ClaudeBridgeStatus,
   type ConfirmRequest,
   type SavedConnection,
   type Workspace,
@@ -99,6 +100,10 @@ const api: DevTermApi = {
     open: (opts: ClaudeOpenOpts): Promise<ClaudeOpenResult> =>
       ipcRenderer.invoke(IPC.claudeOpen, opts),
     close: (sessionId: string) => ipcRenderer.send(IPC.claudeClose, sessionId),
+    status: (sessionId: string): Promise<ClaudeBridgeStatus | null> =>
+      ipcRenderer.invoke(IPC.claudeStatus, sessionId),
+    onBridgeStatus: (sessionId, cb) =>
+      subscribe<ClaudeBridgeStatus>(`${IPC.claudeBridgeStatus}:${sessionId}`, cb),
     onConfirm: (cb) => subscribe<ConfirmRequest>(IPC.claudeConfirm, cb),
     replyConfirm: (reqId: string, approved: boolean) =>
       ipcRenderer.send(IPC.claudeConfirmReply, reqId, approved)

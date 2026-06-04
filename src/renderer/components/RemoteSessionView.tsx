@@ -1,4 +1,4 @@
-import { memo, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import type { PolicyMode } from '@shared/types'
 import type { Session } from '../store/sessions'
 import TerminalView from './TerminalView'
@@ -7,6 +7,20 @@ import ClaudePane from './ClaudePane'
 import Splitter from './Splitter'
 
 const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n))
+const MIN_SHELL_WIDTH = 340
+const MIN_AGENT_WIDTH = 320
+const MAX_AGENT_WIDTH = 1200
+const SPLITTER_WIDTH = 4
+
+function fitAgentWidth(width: number, totalWidth: number): number {
+  if (totalWidth <= 0) return clamp(width, MIN_AGENT_WIDTH, MAX_AGENT_WIDTH)
+  const max = Math.min(
+    MAX_AGENT_WIDTH,
+    Math.max(180, totalWidth - MIN_SHELL_WIDTH - SPLITTER_WIDTH)
+  )
+  const min = Math.min(MIN_AGENT_WIDTH, max)
+  return clamp(width, min, max)
+}
 
 /**
  * A remote session: shell or SFTP browser, with an optional Claude agent pane
@@ -17,8 +31,20 @@ function RemoteSessionView({ session }: { session: Session }) {
   const [view, setView] = useState<'terminal' | 'files'>('terminal')
   const [filesOpened, setFilesOpened] = useState(false)
   const [claudeOpen, setClaudeOpen] = useState(false)
-  const [mode, setMode] = useState<PolicyMode>('confirm')
+  const [mode, setMode] = useState<PolicyMode>('full')
   const [claudeWidth, setClaudeWidth] = useState(480)
+  const splitRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!claudeOpen) return
+    const el = splitRef.current
+    if (!el) return
+    const fit = () => setClaudeWidth((w) => fitAgentWidth(w, el.clientWidth))
+    fit()
+    const ro = new ResizeObserver(fit)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [claudeOpen])
 
   return (
     <div className="remote-view">
@@ -51,7 +77,7 @@ function RemoteSessionView({ session }: { session: Session }) {
           >
             <option value="read_only">Read-only</option>
             <option value="confirm">Ask before changes</option>
-            <option value="full">Full access</option>
+            <option value="full">Bypass permissions</option>
           </select>
         </label>
         <button
@@ -70,12 +96,17 @@ function RemoteSessionView({ session }: { session: Session }) {
 
       <div className="view-body">
         <div className="view-layer" style={{ display: view === 'terminal' ? 'block' : 'none' }}>
-          <div className="term-claude-split">
+          <div className="term-claude-split" ref={splitRef}>
             <div className="tc-term">
               <TerminalView session={session} />
             </div>
             {claudeOpen && (
-              <Splitter direction="horizontal" onDelta={(d) => setClaudeWidth((w) => clamp(w - d, 280, 1200))} />
+              <Splitter
+                direction="horizontal"
+                onDelta={(d) =>
+                  setClaudeWidth((w) => fitAgentWidth(w - d, splitRef.current?.clientWidth ?? 0))
+                }
+              />
             )}
             {claudeOpen && (
               <div className="tc-claude" style={{ width: claudeWidth }}>

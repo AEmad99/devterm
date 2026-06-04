@@ -12,10 +12,10 @@ const TAB_H = 30 // px height of a pane's tab strip
 // Centered, enlarged rect used for the magnified pane in focus mode. It sits
 // above the dimming backdrop (see .term-slot.focused / .focus-backdrop in CSS).
 const FOCUSED_SLOT: React.CSSProperties = {
-  left: '5%',
-  top: '5%',
-  width: '90%',
-  height: '90%',
+  left: 12,
+  top: 12,
+  right: 12,
+  bottom: 12,
   zIndex: 6
 }
 
@@ -123,13 +123,15 @@ export default function TerminalLayout({
     e: React.PointerEvent,
     splitId: string,
     index: number,
-    dir: 'row' | 'col'
+    dir: 'row' | 'col',
+    spanFrac: number
   ) => {
     e.preventDefault()
     const el = e.currentTarget as HTMLElement
     el.setPointerCapture(e.pointerId)
     const box = panesRef.current?.getBoundingClientRect()
-    const span = dir === 'row' ? (box?.width ?? 1) : (box?.height ?? 1)
+    const containerSpan = dir === 'row' ? (box?.width ?? 1) : (box?.height ?? 1)
+    const span = Math.max(1, containerSpan * spanFrac)
     let last = dir === 'row' ? e.clientX : e.clientY
     // Pointer events fire faster than frames (120–1000 Hz). Coalesce them into
     // one store write per animation frame so the layout re-renders at most once
@@ -268,7 +270,7 @@ export default function TerminalLayout({
                 ? { left: pct(h.rect.x), top: pct(h.rect.y), height: pct(h.rect.h) }
                 : { left: pct(h.rect.x), top: pct(h.rect.y), width: pct(h.rect.w) }
             }
-            onPointerDown={(e) => beginResize(e, h.splitId, h.index, h.dir)}
+            onPointerDown={(e) => beginResize(e, h.splitId, h.index, h.dir, h.span)}
           />
         ))}
       </div>

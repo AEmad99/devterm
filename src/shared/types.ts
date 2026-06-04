@@ -205,6 +205,22 @@ export interface ClaudeOpenResult {
   mcpUrl: string
 }
 
+export type ClaudeBridgeState =
+  | 'starting'
+  | 'listening'
+  | 'connected'
+  | 'disconnected'
+  | 'stopped'
+  | 'error'
+
+export interface ClaudeBridgeStatus {
+  state: ClaudeBridgeState
+  mcpUrl?: string
+  message?: string
+  lastActivityAt?: number
+  activeStreams: number
+}
+
 /** A guarded action awaiting operator approval (confirm mode / destructive op). */
 export interface ConfirmRequest {
   reqId: string
@@ -291,6 +307,8 @@ export const IPC = {
   claudeClose: 'claude:close',
   claudeConfirm: 'claude:confirm', // main -> renderer
   claudeConfirmReply: 'claude:confirm:reply', // renderer -> main
+  claudeBridgeStatus: 'claude:bridge-status', // suffixed :<sessionId>
+  claudeStatus: 'claude:status',
 
   // saved connections (persisted in userData)
   connectionsList: 'connections:list',
@@ -398,6 +416,8 @@ export interface DevTermApi {
   claude: {
     open(opts: ClaudeOpenOpts): Promise<ClaudeOpenResult>
     close(sessionId: string): void
+    status(sessionId: string): Promise<ClaudeBridgeStatus | null>
+    onBridgeStatus(sessionId: string, cb: (status: ClaudeBridgeStatus) => void): () => void
     onConfirm(cb: (req: ConfirmRequest) => void): () => void
     replyConfirm(reqId: string, approved: boolean): void
   }

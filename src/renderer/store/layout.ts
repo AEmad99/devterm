@@ -129,10 +129,16 @@ function removeTab(root: LayoutNode | null, sid: string): LayoutNode | null {
 /** Compute pane rects and split-divider handles from the tree (fractions). */
 export function computeLayout(root: LayoutNode | null): {
   leaves: Array<{ leaf: LeafNode; rect: Rect }>
-  handles: Array<{ splitId: string; index: number; dir: SplitDir; rect: Rect }>
+  handles: Array<{ splitId: string; index: number; dir: SplitDir; rect: Rect; span: number }>
 } {
   const leaves: Array<{ leaf: LeafNode; rect: Rect }> = []
-  const handles: Array<{ splitId: string; index: number; dir: SplitDir; rect: Rect }> = []
+  const handles: Array<{
+    splitId: string
+    index: number
+    dir: SplitDir
+    rect: Rect
+    span: number
+  }> = []
   const walk = (n: LayoutNode, r: Rect): void => {
     if (n.type === 'leaf') {
       leaves.push({ leaf: n, rect: r })
@@ -153,6 +159,7 @@ export function computeLayout(root: LayoutNode | null): {
           splitId: n.id,
           index: i,
           dir: n.dir,
+          span: n.dir === 'row' ? r.w : r.h,
           rect:
             n.dir === 'row' ? { x: off, y: r.y, w: 0, h: r.h } : { x: r.x, y: off, w: r.w, h: 0 }
         })
@@ -488,7 +495,7 @@ export const useLayout = create<LayoutState>((set) => ({
     set((s) =>
       patchActive(s, (g) => {
         if (!g.root) return null
-        const min = 0.08
+        const min = 0.18
         const root = updateSplit(g.root, splitId, (sp) => {
           const sizes = [...sp.sizes]
           let a = sizes[index] + delta

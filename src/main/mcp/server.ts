@@ -3,6 +3,7 @@ import { randomBytes, randomUUID } from 'crypto'
 import type { AddressInfo } from 'net'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
+import type { ClaudeBridgeState, ClaudeBridgeStatus } from '@shared/types'
 import { registerTools, type ToolDeps } from './tools'
 
 export interface BridgeInfo {
@@ -20,12 +21,37 @@ export class McpBridge {
   private http?: Server
   private transport?: StreamableHTTPServerTransport
   private mcp?: McpServer
+  private state: ClaudeBridgeState = 'starting'
+  private message: string | undefined
+  private activeStreams = 0
+  private lastActivityAt: number | undefined
+  private stopped = false
   readonly token = randomBytes(24).toString('hex')
   port = 0
 
-  constructor(private deps: ToolDeps) {}
+  constructor(
+    private deps: ToolDeps,
+    private onStatus?: (status: ClaudeBridgeStatus) => void
+  ) {}
+
+  getStatus(): ClaudeBridgeStatus {
+    return {
+      state: this.state,
+      mcpUrl: this.port ? `http://127.0.0.1:${this.port}/mcp` : undefined,
+      message: this.message,
+      lastActivityAt: this.lastActivityAt,
+      activeStreams: this.activeStreams
+    }
+  }
+
+  private emit(state: ClaudeBridgeState = this.state, message = this.message): void {
+    this.state = state
+    this.message = message
+    this.onStatus?.(this.getStatus())
+  }
 
   async start(): Promise<BridgeInfo> {
+    this.emit('starting', 'Starting MCP bridge')
     this.mcp = new McpServer({ name: 'devterm', version: '0.1.0' })
     registerTools(this.mcp, this.deps)
 
@@ -35,6 +61,11 @@ export class McpBridge {
       sessionIdGenerator: () => randomUUID(),
       enableJsonResponse: true
     })
+    this.transport.onerror = (error) => {
+      this.emit('error', error.message)
+      console.error('[mcp] transport error:', error)
+    }
+    this.transport.onclose = () => this.emit('stopped', 'MCP transport closed')
     await this.mcp.connect(this.transport)
 
     this.http = createServer((req, res) => void this.handle(req, res))
@@ -64,7 +95,9 @@ export class McpBridge {
 
     await new Promise<void>((resolve) => this.http!.listen(0, '127.0.0.1', resolve))
     this.port = (this.http.address() as AddressInfo).port
-    return { url: `http://127.0.0.1:${this.port}/mcp`, token: this.token, port: this.port }
+    const info = { url: `http://127.0.0.1:${this.port}/mcp`, token: this.token, port: this.port }
+    this.emit('listening', 'Waiting for agent MCP client')
+    return info
   }
 
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -76,16 +109,44 @@ export class McpBridge {
       res.writeHead(401, { 'content-type': 'text/plain' }).end('unauthorized')
       return
     }
+    this.lastActivityAt = Date.now()
+    const isStandaloneStream = req.method === 'GET'
+    let trackedStream = false
+    if (isStandaloneStream) {
+      trackedStream = true
+      this.activeStreams += 1
+      this.emit('connected', 'Agent MCP stream connected')
+      res.once('close', () => {
+        if (!trackedStream) return
+        trackedStream = false
+        this.activeStreams = Math.max(0, this.activeStreams - 1)
+        if (!this.stopped && this.state !== 'error') {
+          this.emit(
+            this.activeStreams > 0 ? 'connected' : 'disconnected',
+            this.activeStreams > 0 ? 'Agent MCP stream connected' : 'Agent MCP stream closed'
+          )
+        }
+      })
+    } else if (
+      this.state === 'starting' ||
+      this.state === 'listening' ||
+      this.state === 'disconnected'
+    ) {
+      this.emit('connected', 'Agent MCP request received')
+    }
     // Let the transport consume the request body stream itself (don't pre-read).
     try {
       await this.transport!.handleRequest(req, res)
     } catch (err) {
+      this.emit('error', err instanceof Error ? err.message : String(err))
       if (!res.headersSent) res.writeHead(500, { 'content-type': 'text/plain' }).end('bridge error')
       console.error('[mcp] handleRequest error:', err)
     }
   }
 
   async stop(): Promise<void> {
+    this.stopped = true
+    this.emit('stopped', 'MCP bridge stopped')
     try {
       await this.transport?.close()
     } catch {

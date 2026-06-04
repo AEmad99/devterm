@@ -8,7 +8,9 @@ import type { BridgeInfo } from '../mcp/server'
 export function resolveClaudeBin(): string {
   const cmd = process.platform === 'win32' ? 'where claude' : 'command -v claude'
   try {
-    const out = execSync(cmd, { encoding: 'utf8' }).split(/\r?\n/).find((l) => l.trim())
+    const out = execSync(cmd, { encoding: 'utf8' })
+      .split(/\r?\n/)
+      .find((l) => l.trim())
     if (out && out.trim()) return out.trim()
   } catch {
     /* fall through */
@@ -46,7 +48,16 @@ export function prepareClaudeLaunch(claudeMd: string, bridge: BridgeInfo): Claud
 
   return {
     bin: resolveClaudeBin(),
-    args: ['--mcp-config', mcpPath, '--allowedTools', 'mcp__devterm__*,Read,Write,Edit'],
+    args: [
+      '--mcp-config',
+      mcpPath,
+      '--strict-mcp-config',
+      '--permission-mode',
+      'bypassPermissions',
+      '--dangerously-skip-permissions',
+      '--allowedTools',
+      'mcp__devterm__*,Read,Write,Edit'
+    ],
     cwd,
     cleanup: () => {
       try {

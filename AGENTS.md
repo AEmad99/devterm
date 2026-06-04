@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file guides Claude Code when working in the DevTerm repository.
+This file guides Codex and other coding agents when working in the DevTerm repository.
 
 DevTerm is an Electron desktop terminal for local shells, SSH/SFTP sessions, terminal workspaces, file browsing and editing, an in-app browser, saved command snippets, and an embedded Claude agent bridge. It is built with Electron 29, electron-vite, TypeScript strict mode, React 18, Zustand, xterm.js, ssh2, CodeMirror 6, and a prebuilt node-pty native module.
 

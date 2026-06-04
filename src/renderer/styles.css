@@ -171,14 +171,16 @@ body,
 .term-claude-split {
   display: flex;
   height: 100%;
+  min-width: 0;
 }
 .tc-term {
-  flex: 1;
-  min-width: 0;
+  flex: 1 1 380px;
+  min-width: min(340px, 52%);
 }
 .tc-claude {
-  flex: 0 0 auto;
-  min-width: 0;
+  flex: 0 1 auto;
+  min-width: min(320px, 48%);
+  max-width: 70%;
   border-left: 1px solid var(--border);
 }
 .claude-host {
@@ -231,6 +233,23 @@ body,
   background: color-mix(in srgb, var(--accent) 12%, transparent);
   border: 1px solid var(--border);
   border-radius: 999px;
+}
+.agent-restart {
+  flex: 0 0 auto;
+  margin-left: 4px;
+  padding: 2px 8px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--accent-fg);
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  cursor: pointer;
+}
+.agent-restart:hover {
+  filter: brightness(1.1);
 }
 .agent-status--ok .agent-dot {
   background: var(--ok);
@@ -872,6 +891,18 @@ body,
   position: absolute;
   pointer-events: none;
 }
+.pane-group::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 92%, transparent);
+}
+.pane-group.active::after {
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--accent) 42%, var(--border)),
+    inset 0 1px 0 color-mix(in srgb, var(--fg) 5%, transparent);
+}
 /* Active-pane indication is intentionally subtle — only a faint tab-strip tint,
    no bright outline around the pane (that read as a distracting highlight). */
 .pane-group.active > .pane-tabstrip {
@@ -919,18 +950,40 @@ body,
   z-index: 3;
   pointer-events: auto;
 }
+.split-handle::after {
+  content: '';
+  position: absolute;
+  background: color-mix(in srgb, var(--border) 86%, var(--fg));
+  opacity: 0.55;
+}
 .split-handle.row {
   width: 8px;
   margin-left: -4px;
   cursor: col-resize;
+}
+.split-handle.row::after {
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 2px;
 }
 .split-handle.col {
   height: 8px;
   margin-top: -4px;
   cursor: row-resize;
 }
+.split-handle.col::after {
+  left: 0;
+  right: 0;
+  top: 3px;
+  height: 2px;
+}
 .split-handle:hover {
   background: rgba(255, 255, 255, 0.12);
+}
+.split-handle:hover::after {
+  background: var(--accent);
+  opacity: 0.85;
 }
 
 /* ---------------------------------------------------------------------------
@@ -951,11 +1004,19 @@ body,
   /* Drop paint-containment so the card's shadow isn't clipped; layout
      containment still gives it a stacking context + containing block. */
   contain: layout;
+  overflow: visible;
   border: 1px solid color-mix(in srgb, var(--accent) 60%, var(--border));
   border-radius: 10px;
   box-shadow:
     0 18px 60px rgba(0, 0, 0, 0.55),
     0 0 0 1px var(--accent-soft);
+}
+.term-slot.focused > .terminal-wrap,
+.term-slot.focused > .remote-view,
+.term-slot.focused > .browser-pane {
+  height: 100%;
+  overflow: hidden;
+  border-radius: inherit;
 }
 /* Tab strips + split dividers sit in a separate layer that stacks above the
    terminals; hide that chrome while magnified so the card reads as one clean
@@ -965,9 +1026,9 @@ body,
 }
 .focus-exit {
   position: absolute;
-  top: 8px;
-  right: 8px;
-  z-index: 2;
+  top: -11px;
+  right: -11px;
+  z-index: 7;
   display: inline-flex;
   align-items: center;
   justify-content: center;
