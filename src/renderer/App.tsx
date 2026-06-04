@@ -37,6 +37,8 @@ import {
   IconWinMin,
   IconWinMax,
   IconWinRestore,
+  IconWinSnapLeft,
+  IconWinSnapRight,
   EmptyTerminalArt
 } from './components/Icons'
 import type { HostContext } from '@shared/types'
@@ -73,6 +75,20 @@ function WindowControls() {
   }, [])
   return (
     <div className="win-controls">
+      <button
+        className="win-btn win-snap"
+        title="Snap left"
+        onClick={() => window.devterm.window.snap('left')}
+      >
+        <IconWinSnapLeft size={14} />
+      </button>
+      <button
+        className="win-btn win-snap"
+        title="Snap right"
+        onClick={() => window.devterm.window.snap('right')}
+      >
+        <IconWinSnapRight size={14} />
+      </button>
       <button className="win-btn" title="Minimize" onClick={() => window.devterm.window.minimize()}>
         <IconWinMin size={15} />
       </button>

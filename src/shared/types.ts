@@ -166,6 +166,7 @@ export interface DirListing {
 }
 
 export type TransferDirection = 'upload' | 'download'
+export type WindowSnapTarget = 'left' | 'right' | 'maximize'
 
 /** In-memory contents of a file opened for editing. */
 export interface FileContent {
@@ -341,6 +342,7 @@ export const IPC = {
   // custom window controls (frameless titlebar)
   windowMinimize: 'window:minimize',
   windowToggleMaximize: 'window:toggle-maximize',
+  windowSnap: 'window:snap',
   windowClose: 'window:close',
   windowIsMaximized: 'window:is-maximized',
   windowMaximizeChanged: 'window:maximize-changed' // main -> renderer
@@ -468,6 +470,7 @@ export interface DevTermApi {
     setGlass(enabled: boolean): Promise<void>
     minimize(): void
     toggleMaximize(): void
+    snap(target: WindowSnapTarget): void
     close(): void
     isMaximized(): Promise<boolean>
     /** Fires with the new maximized state when the window is maximized/restored. */

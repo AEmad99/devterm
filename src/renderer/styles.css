@@ -2839,6 +2839,12 @@ textarea:focus {
   color: var(--fg) !important;
   filter: none !important;
 }
+.win-btn.win-snap {
+  width: 38px;
+}
+.win-btn.win-snap svg {
+  opacity: 0.82;
+}
 .win-btn.win-close:hover {
   background: #e3413a !important;
   color: #fff !important;

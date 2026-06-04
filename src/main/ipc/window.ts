@@ -1,5 +1,66 @@
-import { ipcMain, BrowserWindow } from 'electron'
-import { IPC } from '@shared/types'
+import { ipcMain, BrowserWindow, screen } from 'electron'
+import { IPC, type WindowSnapTarget } from '@shared/types'
+
+const EDGE_SNAP_PX = 10
+const EDGE_SNAP_SETTLE_MS = 120
+
+let suppressEdgeSnapUntil = 0
+
+function snapWindow(win: BrowserWindow, target: WindowSnapTarget): void {
+  if (win.isDestroyed()) return
+  const display = screen.getDisplayMatching(win.getBounds())
+  const { x, y, width, height } = display.workArea
+  suppressEdgeSnapUntil = Date.now() + 350
+
+  if (target === 'maximize') {
+    win.maximize()
+    return
+  }
+
+  if (win.isMaximized()) win.unmaximize()
+  const half = Math.floor(width / 2)
+  const bounds =
+    target === 'left'
+      ? { x, y, width: half, height }
+      : { x: x + half, y, width: width - half, height }
+  win.setBounds(bounds, true)
+}
+
+function installEdgeSnap(win: BrowserWindow): void {
+  let timer: NodeJS.Timeout | null = null
+  const clear = () => {
+    if (timer) clearTimeout(timer)
+    timer = null
+  }
+  const maybeSnap = () => {
+    timer = null
+    if (
+      win.isDestroyed() ||
+      win.isMaximized() ||
+      win.isMinimized() ||
+      win.isFullScreen() ||
+      Date.now() < suppressEdgeSnapUntil
+    ) {
+      return
+    }
+    const pt = screen.getCursorScreenPoint()
+    const { workArea } = screen.getDisplayNearestPoint(pt)
+    const nearTop = pt.y <= workArea.y + EDGE_SNAP_PX
+    const nearLeft = pt.x <= workArea.x + EDGE_SNAP_PX
+    const nearRight = pt.x >= workArea.x + workArea.width - EDGE_SNAP_PX
+
+    if (nearTop) snapWindow(win, 'maximize')
+    else if (nearLeft) snapWindow(win, 'left')
+    else if (nearRight) snapWindow(win, 'right')
+  }
+
+  win.on('move', () => {
+    if (Date.now() < suppressEdgeSnapUntil) return
+    clear()
+    timer = setTimeout(maybeSnap, EDGE_SNAP_SETTLE_MS)
+  })
+  win.on('closed', clear)
+}
 
 /**
  * Window appearance IPC. The renderer asks for a translucent "glass" material
@@ -11,6 +72,9 @@ import { IPC } from '@shared/types'
  * surfaces). When the Electron floor is raised, glass auto-upgrades to Acrylic.
  */
 export function registerWindowIpc(getWin: () => BrowserWindow | null): void {
+  const initial = getWin()
+  if (initial) installEdgeSnap(initial)
+
   ipcMain.handle(IPC.windowSetGlass, (_e, enabled: boolean) => {
     const win = getWin()
     if (!win || win.isDestroyed()) return
@@ -37,6 +101,11 @@ export function registerWindowIpc(getWin: () => BrowserWindow | null): void {
     if (!win) return
     if (win.isMaximized()) win.unmaximize()
     else win.maximize()
+  })
+  ipcMain.on(IPC.windowSnap, (_e, target: WindowSnapTarget) => {
+    const win = getWin()
+    if (!win) return
+    snapWindow(win, target)
   })
   ipcMain.on(IPC.windowClose, () => getWin()?.close())
   ipcMain.handle(IPC.windowIsMaximized, () => !!getWin()?.isMaximized())

@@ -179,6 +179,15 @@ The Glass theme depends on the BrowserWindow being frameless and transparent. No
 
 Motion is CSS-only near the end of `styles.css`, guarded by reduced-motion media queries. Animate opacity and transform only. Do not animate xterm viewport geometry or use scale on terminal text.
 
+### Window Management Flow
+
+DevTerm uses a frameless transparent BrowserWindow so the Glass theme can show through on Windows. That means native Windows snap-layout affordances are not reliable because there is no OS titlebar/maximize button. DevTerm owns those behaviors:
+
+- `WindowControls` in `App.tsx` exposes minimize, snap-left, snap-right, maximize/restore, and close buttons.
+- `src/main/ipc/window.ts` implements `window:snap` for left/right/maximize using the current display work area.
+- The same main-process IPC module observes window move events and snaps when the cursor settles near the left, right, or top screen edge.
+- Keep `-webkit-app-region: drag` on `.titlebar` and `no-drag` on interactive controls so the custom chrome remains draggable and clickable.
+
 ## Process And IPC Architecture
 
 DevTerm has three layers:
@@ -222,6 +231,7 @@ All renderer-to-main capabilities must be represented in `src/shared/types.ts`, 
 | Snippets | `src/main/ipc/snippets.ts`, `SnippetsManager.tsx`, `SnippetForm.tsx` |
 | Command palette and hotkeys | `CommandPalette.tsx`, `src/renderer/lib/hotkeys.ts` |
 | Themes | `src/renderer/lib/themes.ts`, `src/renderer/styles.css` |
+| Window controls and snap | `src/main/ipc/window.ts`, `src/renderer/App.tsx` |
 | Packaging | `electron-builder.yml`, `package.json`, `scripts/setup-native.mjs` |
 
 ## Persistence
@@ -283,4 +293,5 @@ For release replacement, build locally first, then update the GitHub release/tag
 - Treat agent terminal output as user-facing terminal data, not application state.
 - Use theme CSS variables instead of hardcoded palettes.
 - Keep motion out of xterm viewport and behind reduced-motion guards.
+- Keep custom snap controls and edge snapping in `ipc/window.ts`; native Windows snap UI is not dependable with the frameless transparent window.
 - Commit directly to `main` unless the user asks for a branch or PR.

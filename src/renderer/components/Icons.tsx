@@ -256,6 +256,20 @@ export const IconWinRestore = (p: IconProps) => (
   </Svg>
 )
 
+export const IconWinSnapLeft = (p: IconProps) => (
+  <Svg {...p}>
+    <rect x="4.5" y="5.5" width="15" height="13" rx="1.8" />
+    <path d="M11 5.5v13M7.5 9h1M7.5 12h1M7.5 15h1" />
+  </Svg>
+)
+
+export const IconWinSnapRight = (p: IconProps) => (
+  <Svg {...p}>
+    <rect x="4.5" y="5.5" width="15" height="13" rx="1.8" />
+    <path d="M13 5.5v13M15.5 9h1M15.5 12h1M15.5 15h1" />
+  </Svg>
+)
+
 /** Empty-state illustration for "no terminals / empty group". */
 export function EmptyTerminalArt({ size = 76 }: { size?: number }) {
   return (
