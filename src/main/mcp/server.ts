@@ -6,6 +6,8 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import type { ClaudeBridgeState, ClaudeBridgeStatus } from '@shared/types'
 import { registerTools, type ToolDeps } from './tools'
 
+const BRIDGE_HEARTBEAT_MS = 25000
+
 export interface BridgeInfo {
   url: string
   token: string
@@ -25,6 +27,9 @@ export class McpBridge {
   private message: string | undefined
   private activeStreams = 0
   private lastActivityAt: number | undefined
+  private lastHeartbeatAt: number | undefined
+  private heartbeat?: ReturnType<typeof setInterval>
+  private heartbeatSeq = 0
   private stopped = false
   readonly token = randomBytes(24).toString('hex')
   port = 0
@@ -40,6 +45,7 @@ export class McpBridge {
       mcpUrl: this.port ? `http://127.0.0.1:${this.port}/mcp` : undefined,
       message: this.message,
       lastActivityAt: this.lastActivityAt,
+      lastHeartbeatAt: this.lastHeartbeatAt,
       activeStreams: this.activeStreams
     }
   }
@@ -52,7 +58,10 @@ export class McpBridge {
 
   async start(): Promise<BridgeInfo> {
     this.emit('starting', 'Starting MCP bridge')
-    this.mcp = new McpServer({ name: 'devterm', version: '0.1.0' })
+    this.mcp = new McpServer(
+      { name: 'devterm', version: '0.1.0' },
+      { capabilities: { logging: {} } }
+    )
     registerTools(this.mcp, this.deps)
 
     // One long-lived client (claude) per bridge: a single stateful transport
@@ -96,8 +105,43 @@ export class McpBridge {
     await new Promise<void>((resolve) => this.http!.listen(0, '127.0.0.1', resolve))
     this.port = (this.http.address() as AddressInfo).port
     const info = { url: `http://127.0.0.1:${this.port}/mcp`, token: this.token, port: this.port }
+    this.startHeartbeat()
     this.emit('listening', 'Waiting for agent MCP client')
     return info
+  }
+
+  private startHeartbeat(): void {
+    if (this.heartbeat) return
+    this.heartbeat = setInterval(() => {
+      void this.sendHeartbeat()
+    }, BRIDGE_HEARTBEAT_MS)
+  }
+
+  private async sendHeartbeat(): Promise<void> {
+    if (this.stopped || !this.transport || this.activeStreams < 1) return
+    try {
+      await this.transport.send({
+        jsonrpc: '2.0',
+        method: 'notifications/message',
+        params: {
+          level: 'debug',
+          logger: 'devterm.bridge',
+          data: {
+            type: 'heartbeat',
+            seq: ++this.heartbeatSeq,
+            at: Date.now()
+          }
+        }
+      })
+      this.lastActivityAt = Date.now()
+      this.lastHeartbeatAt = this.lastActivityAt
+    } catch (err) {
+      if (!this.stopped) {
+        const message = err instanceof Error ? err.message : String(err)
+        this.emit('disconnected', `Bridge heartbeat failed: ${message}`)
+        console.error('[mcp] heartbeat failed:', err)
+      }
+    }
   }
 
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -146,6 +190,10 @@ export class McpBridge {
 
   async stop(): Promise<void> {
     this.stopped = true
+    if (this.heartbeat) {
+      clearInterval(this.heartbeat)
+      this.heartbeat = undefined
+    }
     this.emit('stopped', 'MCP bridge stopped')
     try {
       await this.transport?.close()

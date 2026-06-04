@@ -25,6 +25,7 @@ export default function ClaudePane({ sessionId, mode }: { sessionId: string; mod
   const [bridge, setBridge] = useState<BridgeState>('connecting')
   const [bridgeMessage, setBridgeMessage] = useState<string | undefined>()
   const [mcpUrl, setMcpUrl] = useState<string | undefined>()
+  const [lastHeartbeatAt, setLastHeartbeatAt] = useState<number | undefined>()
   const [restartNonce, setRestartNonce] = useState(0)
   const hostClosed = useSessions((s) => s.sessions.find((x) => x.id === sessionId)?.closed ?? false)
 
@@ -33,6 +34,7 @@ export default function ClaudePane({ sessionId, mode }: { sessionId: string; mod
       setBridge(status.state)
       setBridgeMessage(status.message)
       if (status.mcpUrl) setMcpUrl(status.mcpUrl)
+      setLastHeartbeatAt(status.lastHeartbeatAt)
     })
   }, [sessionId])
 
@@ -42,6 +44,7 @@ export default function ClaudePane({ sessionId, mode }: { sessionId: string; mod
     setBridge('connecting')
     setBridgeMessage(undefined)
     setMcpUrl(undefined)
+    setLastHeartbeatAt(undefined)
 
     const term = new Terminal({
       fontFamily: 'Cascadia Code, Consolas, "Courier New", monospace',
@@ -133,12 +136,21 @@ export default function ClaudePane({ sessionId, mode }: { sessionId: string; mod
   const canRestart =
     !hostClosed &&
     (bridge === 'disconnected' || bridge === 'stopped' || bridge === 'exited' || bridge === 'error')
+  const statusTitle = [
+    bridgeMessage,
+    mcpUrl,
+    lastHeartbeatAt
+      ? `Last heartbeat: ${new Date(lastHeartbeatAt).toLocaleTimeString()}`
+      : undefined
+  ]
+    .filter(Boolean)
+    .join('\n')
 
   return (
     <div className="claude-pane">
       <div
         className={`agent-status agent-status--${pill.tone}`}
-        title={bridgeMessage || mcpUrl || 'Live state of the agent bridge to this host'}
+        title={statusTitle || 'Live state of the agent bridge to this host'}
       >
         <span className="agent-dot" />
         <span className="agent-status-text">{pill.text}</span>

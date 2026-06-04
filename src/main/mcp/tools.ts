@@ -29,6 +29,29 @@ export function registerTools(mcp: McpServer, deps: ToolDeps): void {
   const { ssh, sessionId, context, airGapped, policy, confirm } = deps
 
   mcp.registerTool(
+    'ping',
+    {
+      description:
+        'Check whether the DevTerm MCP bridge and remote SSH session are still reachable.',
+      inputSchema: {}
+    },
+    async () =>
+      text(
+        JSON.stringify(
+          {
+            ok: true,
+            sessionId,
+            hostname: context.hostname,
+            policyMode: policy.mode,
+            at: new Date().toISOString()
+          },
+          null,
+          2
+        )
+      )
+  )
+
+  mcp.registerTool(
     'get_host_context',
     {
       description: 'Facts about the connected host: hostname, OS, and whether it is air-gapped.',
@@ -55,7 +78,8 @@ export function registerTools(mcp: McpServer, deps: ToolDeps): void {
   mcp.registerTool(
     'run_command',
     {
-      description: 'Run a shell command on the connected remote host and return stdout/stderr/exit code.',
+      description:
+        'Run a shell command on the connected remote host and return stdout/stderr/exit code.',
       inputSchema: {
         command: z.string().describe('The command line to execute on the remote host.'),
         timeout_ms: z
@@ -63,7 +87,9 @@ export function registerTools(mcp: McpServer, deps: ToolDeps): void {
           .int()
           .positive()
           .optional()
-          .describe('Timeout in ms (default 300000 = 5 min). The command keeps running on the host past this — raise it for long cluster ops rather than assuming a failure.')
+          .describe(
+            'Timeout in ms (default 300000 = 5 min). The command keeps running on the host past this — raise it for long cluster ops rather than assuming a failure.'
+          )
       }
     },
     async ({ command, timeout_ms }) => {
@@ -95,7 +121,9 @@ export function registerTools(mcp: McpServer, deps: ToolDeps): void {
               `progress with a follow-up command.` +
               `${stdout ? `\n--- partial stdout ---\n${stdout}` : ''}${stderr ? `\n--- partial stderr ---\n${stderr}` : ''}`
           )
-        return text(`exit_code: ${code}\n--- stdout ---\n${stdout}${stderr ? `\n--- stderr ---\n${stderr}` : ''}`)
+        return text(
+          `exit_code: ${code}\n--- stdout ---\n${stdout}${stderr ? `\n--- stderr ---\n${stderr}` : ''}`
+        )
       } catch (e) {
         return errorText(`run_command failed: ${(e as Error).message}`)
       }
@@ -128,7 +156,12 @@ export function registerTools(mcp: McpServer, deps: ToolDeps): void {
       description: 'Read a text file from the remote host.',
       inputSchema: {
         path: z.string().describe('Absolute remote file path.'),
-        max_bytes: z.number().int().positive().optional().describe('Cap bytes returned (default 200000).')
+        max_bytes: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe('Cap bytes returned (default 200000).')
       }
     },
     async ({ path, max_bytes }) => {
@@ -139,7 +172,10 @@ export function registerTools(mcp: McpServer, deps: ToolDeps): void {
         )
         const cap = max_bytes ?? 200000
         const truncated = buf.length > cap
-        return text(buf.subarray(0, cap).toString('utf8') + (truncated ? `\n…[truncated at ${cap} bytes]` : ''))
+        return text(
+          buf.subarray(0, cap).toString('utf8') +
+            (truncated ? `\n…[truncated at ${cap} bytes]` : '')
+        )
       } catch (e) {
         return errorText(`read_file failed: ${(e as Error).message}`)
       }

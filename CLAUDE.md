@@ -159,7 +159,7 @@ For each agent session, DevTerm writes a temporary `CLAUDE.md` and `mcp-config.j
 - `--dangerously-skip-permissions`
 - allowed DevTerm MCP tools plus Read/Write/Edit
 
-The bridge is protected by a random bearer token. The agent's terminal output is raw and must not be parsed as state. Bridge state is reported by main over `claude:bridge-status:<sessionId>` based on actual MCP HTTP/SSE activity. The UI shows connecting, waiting, connected, disconnected, stopped, error, and exited states. Recoverable states show a Restart button that recreates the bridge and agent process.
+The bridge is protected by a random bearer token. The agent's terminal output is raw and must not be parsed as state. Bridge state is reported by main over `claude:bridge-status:<sessionId>` based on actual MCP HTTP/SSE activity. The UI shows connecting, waiting, connected, disconnected, stopped, error, and exited states. Recoverable states show a Restart button that recreates the bridge and agent process. The bridge disables Node HTTP idle/request/socket timeouts and sends a standard MCP `notifications/message` heartbeat every 25 seconds while the agent's standalone SSE stream is connected, so a quiet agent session does not look stale to the client or OS.
 
 DevTerm policy modes:
 

@@ -219,6 +219,7 @@ export interface ClaudeBridgeStatus {
   mcpUrl?: string
   message?: string
   lastActivityAt?: number
+  lastHeartbeatAt?: number
   activeStreams: number
 }
 
