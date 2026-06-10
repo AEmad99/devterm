@@ -103,12 +103,19 @@ function TerminalView({ session }: { session: Session }) {
       if (suggest.handleKey(e)) return false
       if (e.ctrlKey && e.shiftKey && !e.altKey) {
         const k = e.key.toLowerCase()
+        // preventDefault is load-bearing: returning false only stops xterm's own
+        // handling, not the browser default. Chromium's default for Ctrl+Shift+V
+        // is "paste as plain text", which fires a second `paste` event into
+        // xterm's textarea — the clipboard text was pasted twice (or more with
+        // key auto-repeat, hence the e.repeat guard).
         if (k === 'c') {
+          e.preventDefault()
           if (term.hasSelection()) window.devterm.clipboard.writeText(term.getSelection())
           return false
         }
         if (k === 'v') {
-          void window.devterm.clipboard.readText().then((t) => t && term.paste(t))
+          e.preventDefault()
+          if (!e.repeat) void window.devterm.clipboard.readText().then((t) => t && term.paste(t))
           return false
         }
       }
@@ -163,8 +170,9 @@ function TerminalView({ session }: { session: Session }) {
       let raf = 0
       let settle = 0
       const schedule = () => {
-        // Hidden panes (other groups/tabs) report 0×0; don't arm rAF/timers for
-        // them when an unrelated pane resizes — fitNow would no-op anyway.
+        // Pre-layout hosts report 0×0 — fitting then computes 0 cols and corrupts
+        // the buffer. (Hidden slots are hidden with `visibility`, not `display`,
+        // exactly so they keep real dimensions and stay fitted while unseen.)
         if (host.clientWidth < 20 || host.clientHeight < 20) return
         if (!raf) {
           raf = requestAnimationFrame(() => {

@@ -95,7 +95,13 @@ function RemoteSessionView({ session }: { session: Session }) {
       </div>
 
       <div className="view-body">
-        <div className="view-layer" style={{ display: view === 'terminal' ? 'block' : 'none' }}>
+        {/* Layers hide with `visibility` (not display:none) so the shell keeps
+            its real dimensions and stays fitted while the SFTP view is open —
+            a display-hidden terminal is 0×0 and garbles on reveal. */}
+        <div
+          className="view-layer"
+          style={{ visibility: view === 'terminal' ? undefined : 'hidden' }}
+        >
           <div className="term-claude-split" ref={splitRef}>
             <div className="tc-term">
               <TerminalView session={session} />
@@ -116,7 +122,10 @@ function RemoteSessionView({ session }: { session: Session }) {
           </div>
         </div>
         {filesOpened && (
-          <div className="view-layer" style={{ display: view === 'files' ? 'block' : 'none' }}>
+          <div
+            className="view-layer"
+            style={{ visibility: view === 'files' ? undefined : 'hidden' }}
+          >
             <SftpBrowser sessionId={session.id} />
           </div>
         )}

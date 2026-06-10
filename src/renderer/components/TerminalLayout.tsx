@@ -11,6 +11,8 @@ const TAB_H = 30 // px height of a pane's tab strip
 
 // Centered, enlarged rect used for the magnified pane in focus mode. It sits
 // above the dimming backdrop (see .term-slot.focused / .focus-backdrop in CSS).
+// No explicit `visibility` here: it must inherit, so hiding the whole Terminals
+// view (visibility on an ancestor) also hides a focused slot.
 const FOCUSED_SLOT: React.CSSProperties = {
   left: 12,
   top: 12,
@@ -58,7 +60,11 @@ export default function TerminalLayout({
 }) {
   // The active group's tree drives the panes/chrome; sessions in other groups
   // still render in the term-layer (hidden) so their PTYs/shells stay alive.
-  const root = useLayout((s) => s.groups.find((g) => g.id === s.activeGroupId)?.root ?? null)
+  // All groups are needed (not just the active one) so hidden sessions can keep
+  // their own group's real pane geometry — see the slots map below.
+  const groups = useLayout((s) => s.groups)
+  const activeGroupId = useLayout((s) => s.activeGroupId)
+  const root = groups.find((g) => g.id === activeGroupId)?.root ?? null
   const activeLeaf = useLayout(
     (s) => s.groups.find((g) => g.id === s.activeGroupId)?.activeLeaf ?? null
   )
@@ -93,8 +99,32 @@ export default function TerminalLayout({
   }, [root])
 
   const byId = useMemo(() => new Map(sessions.map((s) => [s.id, s])), [sessions])
-  const { leaves, handles } = useMemo(() => computeLayout(root), [root])
-  // sessionId -> the leaf that currently owns it (for focus-on-click).
+  // Rects for EVERY group's tree, not just the active one. Hidden slots are
+  // hidden with `visibility` (not `display:none`), so a hidden terminal keeps
+  // its true pane geometry, its ResizeObserver keeps firing, and xterm + the
+  // pty/ssh backend stay fitted while unseen. Switching tabs/groups then needs
+  // no resize at all — resizing-on-reveal is what used to garble the screen
+  // (ConPTY/PSReadLine repaint at mismatched columns, output clipped at stale
+  // widths).
+  const layouts = useMemo(
+    () => groups.map((g) => ({ groupId: g.id, ...computeLayout(g.root) })),
+    [groups]
+  )
+  const { leaves, handles } = useMemo(
+    () => layouts.find((l) => l.groupId === activeGroupId) ?? { leaves: [], handles: [] },
+    [layouts, activeGroupId]
+  )
+  // sessionId -> its slot geometry across all groups (+ whether it's the active
+  // tab of its leaf, and which group owns it — only the active group shows).
+  const slots = useMemo(() => {
+    const m = new Map<string, { rect: Rect; activeTab: boolean; groupId: string }>()
+    for (const gl of layouts)
+      for (const { leaf, rect } of gl.leaves)
+        for (const t of leaf.tabs)
+          m.set(t, { rect, activeTab: leaf.active === t, groupId: gl.groupId })
+    return m
+  }, [layouts])
+  // sessionId -> the active-group leaf that currently owns it (for focus-on-click).
   const leafOfSession = useMemo(() => {
     const m = new Map<string, string>()
     leaves.forEach(({ leaf }) => leaf.tabs.forEach((t) => m.set(t, leaf.id)))
@@ -173,14 +203,19 @@ export default function TerminalLayout({
       {/* Layer 1: terminals — one stable slot per session, never reparented. */}
       <div className="term-layer">
         {sessions.map((s) => {
-          const leafId = leafOfSession.get(s.id)
-          const entry = leaves.find((l) => l.leaf.id === leafId)
+          const slot = slots.get(s.id)
           const isFocused = focusedHere && s.id === focusedId
-          const visible = isFocused || (!!entry && entry.leaf.active === s.id)
-          const rect = entry?.rect ?? { x: 0, y: 0, w: 1, h: 1 }
+          const visible = isFocused || (slot?.groupId === activeGroupId && slot.activeTab)
+          const rect = slot?.rect ?? { x: 0, y: 0, w: 1, h: 1 }
+          // Hide with `visibility`, never `display:none`: a display-hidden slot
+          // collapses to 0×0, so the terminal can't refit until reveal — the
+          // resize storm on reveal is what corrupted/clipped the output. Hidden
+          // slots don't paint and don't take pointer events, but keep geometry.
+          // Visible slots leave `visibility` unset so they inherit from (and can
+          // be hidden by) ancestor view switches.
           const style: React.CSSProperties = isFocused
-            ? { ...FOCUSED_SLOT, display: 'block' }
-            : { ...slotBodyStyle(rect), display: visible ? 'block' : 'none' }
+            ? { ...FOCUSED_SLOT }
+            : { ...slotBodyStyle(rect), visibility: visible ? undefined : 'hidden' }
           return (
             <div
               key={s.id}
