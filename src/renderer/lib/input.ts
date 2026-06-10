@@ -5,6 +5,7 @@
 
 import { useSessions, type Session } from '../store/sessions'
 import { useLayout, groupActiveSession } from '../store/layout'
+import { sendTerminalInput } from './terms'
 
 /** The focused session id: the active tab of the active group's active leaf. */
 export function activeSessionId(): string | null {
@@ -22,14 +23,21 @@ export function activeSession(): Session | null {
 /**
  * Write raw data to one session. Returns false (a no-op) if the session is
  * missing, closed, or a non-shell pane (browser/editor) that can't take input.
+ * Goes through the sender TerminalView registers per session: local PTYs are
+ * keyed by a backend pty id the session id can't address directly.
  */
 export function sendToSession(id: string, data: string): boolean {
   const session = useSessions.getState().sessions.find((s) => s.id === id)
   if (!session || session.closed) return false
-  if (session.kind === 'local') window.devterm.pty.input(id, data)
-  else if (session.kind === 'remote') window.devterm.ssh.input(id, data)
-  else return false
-  return true
+  if (session.kind !== 'local' && session.kind !== 'remote') return false
+  if (sendTerminalInput(id, data)) return true
+  // Remote shells are keyed by session id, so they can be reached even if the
+  // terminal's sender isn't wired yet (e.g. while the shell channel opens).
+  if (session.kind === 'remote') {
+    window.devterm.ssh.input(id, data)
+    return true
+  }
+  return false
 }
 
 /** Write to the focused terminal. Returns false if there's no shell to send to. */

@@ -11,7 +11,7 @@ import { parseOsc7 } from '../lib/osc7'
 import { fitNow, fitSoon } from '../lib/fit'
 import { attachRenderer, attachClipboard } from '../lib/renderer'
 import { matchHotkey } from '../lib/hotkeys'
-import { registerTerminal, unregisterTerminal } from '../lib/terms'
+import { registerTerminal, registerTerminalInput, unregisterTerminal } from '../lib/terms'
 import SearchBar from './SearchBar'
 import Autosuggest from './Autosuggest'
 import { attachAutosuggest, type AutosuggestController, type SuggestView } from '../lib/autosuggest'
@@ -85,7 +85,10 @@ function TerminalView({ session }: { session: Session }) {
 
     // History autocomplete: track the OSC 133 prompt anchor and surface a
     // completion popup. `sendInput` is wired once the pty/ssh backend is known.
+    // Registered so snippets/the palette can write to this shell by session id
+    // (the local pty id is private to this effect).
     let sendInput: (data: string) => void = () => {}
+    registerTerminalInput(session.id, (d) => sendInput(d))
     const suggest = attachAutosuggest(term, host, {
       query:
         session.kind === 'remote' ? { scope: 'remote', sessionId: session.id } : { scope: 'local' },
