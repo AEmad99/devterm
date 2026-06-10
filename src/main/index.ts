@@ -37,6 +37,7 @@ import { registerClaudeIpc, type ClaudeController } from './ipc/claude'
 import { registerConnectionsIpc } from './ipc/connections'
 import { registerWorkspacesIpc } from './ipc/workspaces'
 import { registerSnippetsIpc } from './ipc/snippets'
+import { registerHistoryIpc } from './ipc/history'
 import { registerDialogIpc } from './ipc/dialog'
 import { registerClipboardIpc } from './ipc/clipboard'
 import { registerWindowIpc } from './ipc/window'
@@ -101,6 +102,7 @@ function registerIpc(): void {
   registerConnectionsIpc()
   registerWorkspacesIpc()
   registerSnippetsIpc()
+  registerHistoryIpc(sshManager)
   registerDialogIpc(() => mainWindow)
   registerClipboardIpc()
   registerWindowIpc(() => mainWindow)

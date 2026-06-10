@@ -11,15 +11,20 @@ export interface PtyHandlers {
 
 /**
  * Startup args for the chosen shell. For PowerShell we inject a `prompt`
- * function that emits an OSC 7 sequence (file:// URI of $PWD) on every prompt,
- * so the UI can track the working directory as the user `cd`s around.
+ * function that emits, on every prompt:
+ *  - OSC 7 (file:// URI of $PWD) so the UI can track the working directory, and
+ *  - OSC 133 ;A / ;B "semantic prompt" markers (FinalTerm/iTerm) so the renderer
+ *    knows exactly where the prompt ends and the typed command begins — the
+ *    anchor the history autocomplete popup reads from. ;A and ;B are non-printing
+ *    so the visible prompt is unchanged.
  */
-function shellArgs(shell: string): string[] {
+export function shellArgs(shell: string): string[] {
   if (/powershell|pwsh/i.test(shell)) {
     const promptFn =
       "function prompt { $e=[char]27; $b=[char]7; $p=$PWD.ProviderPath; " +
-      "$u=($p -replace '\\\\','/'); Write-Host -NoNewline ($e + ']7;file:///' + $u + $b); " +
-      "('PS ' + $p + '> ') }"
+      "$u=($p -replace '\\\\','/'); " +
+      "Write-Host -NoNewline ($e + ']133;A' + $b + $e + ']7;file:///' + $u + $b); " +
+      "('PS ' + $p + '> ' + $e + ']133;B' + $b) }"
     return ['-NoLogo', '-NoExit', '-Command', promptFn]
   }
   return []

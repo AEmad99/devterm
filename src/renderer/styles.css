@@ -1327,11 +1327,13 @@ body,
   flex: 0 0 auto;
   min-width: 0;
   display: flex;
+  overflow: hidden;
 }
 .pane-grow {
   flex: 1;
   min-width: 0;
   display: flex;
+  overflow: hidden;
 }
 .filepane {
   flex: 1;
@@ -1360,6 +1362,7 @@ body,
 }
 .filepane-toolbar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 4px;
   padding: 4px 6px;
@@ -1707,6 +1710,75 @@ body,
   margin-top: 14px;
 }
 
+/* Section header inside the palette list (Snippets / <scope> history). */
+.palette-section {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 16px 4px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #6b7280;
+}
+.palette-section .spacer {
+  flex: 1;
+}
+/* Recent / Frequent toggle on the history header. */
+.palette-seg {
+  background: transparent;
+  border: 1px solid #2a2e37;
+  color: #8b93a1;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.palette-seg.on {
+  color: #e6e9ef;
+  background: #232733;
+  border-color: var(--accent, #4c8bf5);
+}
+/* A history row: command (truncates), an optional frequency badge, save button. */
+.palette-histrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.palette-histrow .palette-cmd {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin-top: 0;
+}
+.palette-count {
+  flex: none;
+  font-size: 11px;
+  color: #8b93a1;
+  background: #2a2e37;
+  border-radius: 10px;
+  padding: 1px 7px;
+}
+.palette-save {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  line-height: 1;
+  background: transparent;
+  border: 1px solid #2a2e37;
+  color: #8b93a1;
+  border-radius: 6px;
+  cursor: pointer;
+  opacity: 0;
+}
+.palette-row:hover .palette-save,
+.palette-row.sel .palette-save {
+  opacity: 1;
+}
+.palette-save:hover {
+  color: #e6e9ef;
+  border-color: var(--accent, #4c8bf5);
+}
+
 .shortcuts-list {
   display: flex;
   flex-direction: column;
@@ -1741,6 +1813,51 @@ body,
   width: 100%;
   height: 100%;
 }
+
+/* History autocomplete popup (Autosuggest.tsx), floated at the caret. */
+.autosuggest {
+  position: absolute;
+  z-index: 30;
+  width: 340px;
+  max-width: calc(100% - 8px);
+  background: #1c1f26;
+  border: 1px solid #2a2e37;
+  border-radius: 8px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+  font-size: 12px;
+}
+.as-row {
+  padding: 5px 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  font-family: ui-monospace, monospace;
+}
+.as-row.sel {
+  background: #232733;
+}
+.as-typed {
+  color: var(--accent, #4c8bf5);
+  font-weight: 600;
+}
+.as-rest {
+  color: #cdd3dd;
+}
+.as-hint {
+  padding: 5px 10px;
+  border-top: 1px solid #2a2e37;
+  font-size: 11px;
+  color: #6b7280;
+}
+.as-hint kbd {
+  font-family: ui-monospace, monospace;
+  background: #2a2e37;
+  border-radius: 4px;
+  padding: 0 4px;
+}
+
 .terminal-host.bell-flash {
   animation: dt-bell 0.16s ease;
 }

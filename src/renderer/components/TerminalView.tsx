@@ -13,6 +13,8 @@ import { attachRenderer, attachClipboard } from '../lib/renderer'
 import { matchHotkey } from '../lib/hotkeys'
 import { registerTerminal, unregisterTerminal } from '../lib/terms'
 import SearchBar from './SearchBar'
+import Autosuggest from './Autosuggest'
+import { attachAutosuggest, type AutosuggestController, type SuggestView } from '../lib/autosuggest'
 
 /** Apply the user's background settings to the terminal host element (image + dim + colour). */
 function applyHostBg(host: HTMLElement, bg: TerminalBg, theme: Theme): void {
@@ -43,6 +45,8 @@ function TerminalView({ session }: { session: Session }) {
   // changing the host's pixel size, so the ResizeObserver wouldn't fire).
   const resizeRef = useRef<((cols: number, rows: number) => void) | null>(null)
   const [findOpen, setFindOpen] = useState(false)
+  const [suggestView, setSuggestView] = useState<SuggestView | null>(null)
+  const suggestRef = useRef<AutosuggestController | null>(null)
 
   useEffect(() => {
     const host = hostRef.current
@@ -79,11 +83,24 @@ function TerminalView({ session }: { session: Session }) {
     const disposeRenderer = attachRenderer(term)
     const disposeClipboard = attachClipboard(term, host)
 
+    // History autocomplete: track the OSC 133 prompt anchor and surface a
+    // completion popup. `sendInput` is wired once the pty/ssh backend is known.
+    let sendInput: (data: string) => void = () => {}
+    const suggest = attachAutosuggest(term, host, {
+      query:
+        session.kind === 'remote' ? { scope: 'remote', sessionId: session.id } : { scope: 'local' },
+      send: (d) => sendInput(d),
+      onChange: setSuggestView
+    })
+    suggestRef.current = suggest
+
     // Single custom key handler (xterm allows only one). Handles copy/paste, the
     // find bar, and blocks app hotkeys (Ctrl/Cmd+K …) from reaching the shell as
     // control bytes (e.g. `^K`) — the DOM event still bubbles to App's listener.
     term.attachCustomKeyEventHandler((e) => {
       if (e.type !== 'keydown') return true
+      // The autocomplete popup gets first crack at Tab/→/Esc while it's open.
+      if (suggest.handleKey(e)) return false
       if (e.ctrlKey && e.shiftKey && !e.altKey) {
         const k = e.key.toLowerCase()
         if (k === 'c') {
@@ -185,6 +202,7 @@ function TerminalView({ session }: { session: Session }) {
             term.write(`\r\n\x1b[90m[process exited with code ${exitCode}]\x1b[0m\r\n`)
           )
         )
+        sendInput = (d) => window.devterm.pty.input(id, d)
         term.onData((d) => window.devterm.pty.input(id, d))
         wireResize((c, r) => window.devterm.pty.resize(id, c, r))
         cleanups.push(() => window.devterm.pty.kill(id))
@@ -211,12 +229,15 @@ function TerminalView({ session }: { session: Session }) {
         .catch((e) => {
           term.write(`\r\n\x1b[31m[failed to open shell: ${String(e)}]\x1b[0m\r\n`)
         })
+      sendInput = (d) => window.devterm.ssh.input(sid, d)
       term.onData((d) => window.devterm.ssh.input(sid, d))
       wireResize((c, r) => window.devterm.ssh.resize(sid, c, r))
     }
 
     return () => {
       disposed = true
+      suggest.dispose()
+      suggestRef.current = null
       cleanups.forEach((fn) => fn())
       unregisterTerminal(session.id)
       resizeRef.current = null
@@ -281,6 +302,11 @@ function TerminalView({ session }: { session: Session }) {
   return (
     <div className="terminal-wrap">
       <div className="terminal-host" ref={hostRef} />
+      <Autosuggest
+        view={suggestView}
+        onAccept={(i) => suggestRef.current?.accept(i)}
+        onHover={(i) => suggestRef.current?.hover(i)}
+      />
       {findOpen && (
         <SearchBar
           onSearch={(query, dir) => {

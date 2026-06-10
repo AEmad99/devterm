@@ -18,7 +18,9 @@ import {
   type ConfirmRequest,
   type SavedConnection,
   type Workspace,
-  type Snippet
+  type Snippet,
+  type HistoryQuery,
+  type HistoryResult
 } from '@shared/types'
 
 // Subscribe helper for per-id main->renderer channels.
@@ -124,6 +126,11 @@ const api: DevTermApi = {
     list: (): Promise<Snippet[]> => ipcRenderer.invoke(IPC.snippetsList),
     save: (s: Snippet): Promise<Snippet[]> => ipcRenderer.invoke(IPC.snippetsSave, s),
     delete: (id: string): Promise<Snippet[]> => ipcRenderer.invoke(IPC.snippetsDelete, id)
+  },
+  history: {
+    record: (command: string, scope: 'local' | 'remote'): Promise<void> =>
+      ipcRenderer.invoke(IPC.historyRecord, command, scope),
+    query: (q: HistoryQuery): Promise<HistoryResult> => ipcRenderer.invoke(IPC.historyQuery, q)
   },
   dialog: {
     chooseImage: (): Promise<string | null> => ipcRenderer.invoke(IPC.dialogChooseImage)

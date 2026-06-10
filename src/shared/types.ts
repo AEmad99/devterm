@@ -134,6 +134,31 @@ export interface Snippet {
   tags?: string[]
 }
 
+// ---------------------------------------------------------------------------
+// Command history — recent & most-used commands for the palette
+// ---------------------------------------------------------------------------
+
+/** A command paired with how often it's been seen (for "most used" ranking). */
+export interface CommandStat {
+  command: string
+  count: number
+}
+
+/**
+ * Which history to read. `local` reads the machine's own shell history (and
+ * in-app local runs); `remote` reads a connected SSH session's shell history
+ * (over its existing client) plus in-app remote runs.
+ */
+export type HistoryQuery = { scope: 'local' } | { scope: 'remote'; sessionId: string }
+
+/** Merged command history for a scope: most-recent-first and most-used-first. */
+export interface HistoryResult {
+  /** Distinct commands, most recent first. */
+  recent: string[]
+  /** Distinct commands ranked by frequency, most used first. */
+  frequent: CommandStat[]
+}
+
 /** Non-fatal events surfaced to the renderer during a connection's life. */
 export type SSHStatus =
   | { type: 'hostkey-new'; host: string; fingerprint: string }
@@ -326,6 +351,10 @@ export const IPC = {
   snippetsSave: 'snippets:save',
   snippetsDelete: 'snippets:delete',
 
+  // command history (in-app capture in userData + the host's shell-history files)
+  historyRecord: 'history:record',
+  historyQuery: 'history:query',
+
   // native dialogs
   dialogChooseImage: 'dialog:chooseImage',
 
@@ -432,6 +461,17 @@ export interface DevTermApi {
     list(): Promise<Snippet[]>
     save(s: Snippet): Promise<Snippet[]>
     delete(id: string): Promise<Snippet[]>
+  }
+  /**
+   * Command history for the palette: recent + most-used commands, merged from
+   * commands run through DevTerm (recorded here) and the host's own shell-history
+   * files (PSReadLine locally; ~/.bash_history / ~/.zsh_history on a remote).
+   */
+  history: {
+    /** Record a command actually executed via DevTerm; scope keeps local/remote separate. */
+    record(command: string, scope: 'local' | 'remote'): Promise<void>
+    /** Recent + most-used commands for a scope (the local machine or a remote session). */
+    query(q: HistoryQuery): Promise<HistoryResult>
   }
   /** Native OS dialogs. */
   dialog: {

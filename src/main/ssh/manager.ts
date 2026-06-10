@@ -84,13 +84,21 @@ export class SSHManager {
         // login falls through to the bash branch, which it ignores, so only the
         // initial directory is reported — acceptable for that rare case.)
         if (s.context.os === 'linux' || s.context.os === 'mac') {
+          // __dt7 emits OSC 7 (cwd). __dtA/__dtB are OSC 133 ;A/;B semantic-prompt
+          // markers wrapped into PS1 (bash) / PROMPT (zsh) as non-printing regions
+          // so the renderer knows where the typed command begins — the anchor the
+          // history autocomplete reads from. Each wrap is guarded (case "*133*") so
+          // it's idempotent and only applied to the shell that supports it.
           const setup =
             `stty -echo 2>/dev/null; ` +
             `__dt7() { printf '\\033]7;file://%s%s\\007' "\${HOSTNAME:-h}" "$PWD"; }; ` +
+            `__dtA=$(printf '\\033]133;A\\007'); __dtB=$(printf '\\033]133;B\\007'); ` +
             `if [ -n "$ZSH_VERSION" ]; then ` +
             `case " \${precmd_functions[*]} " in *" __dt7 "*) ;; *) precmd_functions+=(__dt7);; esac; ` +
+            `case "$PROMPT" in *133*) ;; *) PROMPT="%{$__dtA%}$PROMPT%{$__dtB%}";; esac; ` +
             `else ` +
             `case ":$PROMPT_COMMAND:" in *__dt7*) ;; *) PROMPT_COMMAND="__dt7\${PROMPT_COMMAND:+;$PROMPT_COMMAND}";; esac; ` +
+            `if [ -n "$BASH_VERSION" ]; then case "$PS1" in *133*) ;; *) PS1="\\[$__dtA\\]$PS1\\[$__dtB\\]";; esac; fi; ` +
             `fi; ` +
             `stty echo 2>/dev/null; clear; __dt7\n`
           setTimeout(() => s.shell?.write(setup), 700)

@@ -3,13 +3,20 @@
 // input and "insert suggested command". No new IPC is needed: this reuses the
 // existing pty:input / ssh:input channels.
 
-import { useSessions } from '../store/sessions'
+import { useSessions, type Session } from '../store/sessions'
 import { useLayout, groupActiveSession } from '../store/layout'
 
 /** The focused session id: the active tab of the active group's active leaf. */
 export function activeSessionId(): string | null {
   const { groups, activeGroupId } = useLayout.getState()
   return groupActiveSession(groups.find((g) => g.id === activeGroupId))
+}
+
+/** The focused session object (for its kind/context), or null if none. */
+export function activeSession(): Session | null {
+  const id = activeSessionId()
+  if (!id) return null
+  return useSessions.getState().sessions.find((s) => s.id === id) ?? null
 }
 
 /**
@@ -34,8 +41,14 @@ export function sendToActive(data: string): boolean {
 /**
  * Send a command to the focused terminal. When `execute` is true a carriage
  * return is appended so the shell runs it; otherwise it's only typed in, leaving
- * the user to review and press Enter.
+ * the user to review and press Enter. Executed commands are recorded to history
+ * (scoped to the session's kind) so the palette can offer them as recent/most-used.
  */
 export function runInActive(command: string, execute: boolean): boolean {
-  return sendToActive(execute ? command + '\r' : command)
+  const session = activeSession()
+  if (!session || session.closed) return false
+  if (!sendToSession(session.id, execute ? command + '\r' : command)) return false
+  if (execute)
+    void window.devterm.history.record(command, session.kind === 'remote' ? 'remote' : 'local')
+  return true
 }
