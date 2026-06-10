@@ -5,7 +5,7 @@
 
 import { useSessions, type Session } from '../store/sessions'
 import { useLayout, groupActiveSession } from '../store/layout'
-import { sendTerminalInput } from './terms'
+import { focusTerminal, sendTerminalInput } from './terms'
 
 /** The focused session id: the active tab of the active group's active leaf. */
 export function activeSessionId(): string | null {
@@ -58,5 +58,9 @@ export function runInActive(command: string, execute: boolean): boolean {
   if (!sendToSession(session.id, execute ? command + '\r' : command)) return false
   if (execute)
     void window.devterm.history.record(command, session.kind === 'remote' ? 'remote' : 'local')
+  // Refocus the terminal after the palette/snippet UI unmounts — when the modal
+  // holding focus is removed, focus falls to <body> and the user would have to
+  // click the terminal before typing. Deferred so it runs after that unmount.
+  setTimeout(() => focusTerminal(session.id), 0)
   return true
 }

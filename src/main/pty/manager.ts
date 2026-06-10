@@ -21,7 +21,7 @@ export interface PtyHandlers {
 export function shellArgs(shell: string): string[] {
   if (/powershell|pwsh/i.test(shell)) {
     const promptFn =
-      "function prompt { $e=[char]27; $b=[char]7; $p=$PWD.ProviderPath; " +
+      'function prompt { $e=[char]27; $b=[char]7; $p=$PWD.ProviderPath; ' +
       "$u=($p -replace '\\\\','/'); " +
       "Write-Host -NoNewline ($e + ']133;A' + $b + $e + ']7;file:///' + $u + $b); " +
       "('PS ' + $p + '> ' + $e + ']133;B' + $b) }"
@@ -80,13 +80,23 @@ export class PtyManager {
     return { id, shell }
   }
 
+  // write/resize can throw (EPIPE et al.) when the process died but onExit
+  // hasn't cleaned up yet — a no-op is the right outcome, not a crash.
   input(id: string, data: string): void {
-    this.ptys.get(id)?.write(data)
+    try {
+      this.ptys.get(id)?.write(data)
+    } catch {
+      /* pty already dead */
+    }
   }
 
   resize(id: string, cols: number, rows: number): void {
     const p = this.ptys.get(id)
-    if (p && cols > 0 && rows > 0) p.resize(cols, rows)
+    try {
+      if (p && cols > 0 && rows > 0) p.resize(cols, rows)
+    } catch {
+      /* pty already dead */
+    }
   }
 
   kill(id: string): void {

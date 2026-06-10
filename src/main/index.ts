@@ -22,6 +22,14 @@ process.on('uncaughtException', (err) => {
   if (msg.includes('Render frame was disposed before WebFrameMain could be accessed')) {
     return
   }
+  // node-pty/ConPTY: when a TUI app or the shell exits, the conin pipe can close
+  // with a write still in flight; the socket error surfaces here as an async
+  // "write EPIPE" with no stack into our code. The pty is already gone and its
+  // exit path cleans up, so a dialog can't help — log and move on.
+  if ((err as NodeJS.ErrnoException).code === 'EPIPE') {
+    console.warn('Ignored EPIPE from a closed pipe (pty/socket already gone):', msg)
+    return
+  }
   console.error('Uncaught exception in main process:', err)
   try {
     dialog.showErrorBox('A JavaScript error occurred in the main process', msg)
