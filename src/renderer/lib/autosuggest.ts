@@ -79,8 +79,6 @@ export interface AutosuggestController {
   dispose(): void
 }
 
-const POPUP_WIDTH = 340
-
 export function attachAutosuggest(
   term: Terminal,
   host: HTMLElement,
@@ -118,22 +116,29 @@ export function attachAutosuggest(
     }
   }
 
-  // Pixel position of the caret within the host (cell-size approximation; the
-  // popup only needs to land near the caret, not pixel-perfect).
-  const caretPixel = (): { left: number; top: number; above: boolean } => {
+  // Pixel position of the popup. We anchor at the LEFT edge of the pane (under
+  // the prompt, or above it when the caret is near the bottom) rather than at
+  // the caret column. Anchoring at the caret would put the popup box directly
+  // over the typed prefix — visually eating the command the user is typing.
+  // Cell heights are derived from xterm's screen element (cell-size approx —
+  // the popup just needs to land near the prompt line, not pixel-perfect).
+  // When sitting below the prompt, we add a small gap so the popup doesn't
+  // crowd the typed text — without it the popup's first row lands flush with
+  // the prompt line and the suggestion appears to overwrite the command.
+  const POPUP_GAP = 6
+  const popupPixel = (): { left: number; top: number; above: boolean } => {
     const screen = host.querySelector('.xterm-screen') as HTMLElement | null
-    const cw = (screen?.clientWidth ?? host.clientWidth) / Math.max(1, term.cols)
     const ch = (screen?.clientHeight ?? host.clientHeight) / Math.max(1, term.rows)
     const b = term.buffer.active
     const above = b.cursorY > term.rows * 0.6
-    const left = Math.max(4, Math.min(cw * b.cursorX, host.clientWidth - POPUP_WIDTH))
-    const top = above ? ch * b.cursorY : ch * (b.cursorY + 1)
+    const left = 4
+    const top = above ? ch * b.cursorY - POPUP_GAP : ch * (b.cursorY + 1) + POPUP_GAP
     return { left, top, above }
   }
 
   const show = (prefix: string, items: string[]) => {
     index = 0
-    const pos = caretPixel()
+    const pos = popupPixel()
     view = { items, index, prefix, left: pos.left, top: pos.top, above: pos.above }
     opts.onChange(view)
   }
