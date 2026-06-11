@@ -377,7 +377,12 @@ export interface DevTermApi {
     resize(id: string, cols: number, rows: number): void
     kill(id: string): void
     onData(id: string, cb: (data: string) => void): () => void
-    onExit(id: string, cb: (e: { exitCode: number; signal?: number }) => void): () => void
+    // exitCode is undefined when ConPTY tears down without a real process exit
+    // (e.g. the console host died under a misbehaving TUI).
+    onExit(
+      id: string,
+      cb: (e: { exitCode: number | undefined; signal?: number }) => void
+    ): () => void
   }
   ssh: {
     connect(profile: SSHProfile): Promise<SSHConnectResult>

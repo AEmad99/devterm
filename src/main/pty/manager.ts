@@ -1,12 +1,12 @@
 import { randomUUID } from 'crypto'
 import os from 'os'
 import * as pty from 'node-pty'
-import type { IPty } from 'node-pty'
+import type { IPty, IWindowsPtyForkOptions } from 'node-pty'
 import type { PtyCreateOptions, PtyCreated } from '@shared/types'
 
 export interface PtyHandlers {
   onData: (id: string, data: string) => void
-  onExit: (id: string, exitCode: number, signal?: number) => void
+  onExit: (id: string, exitCode: number | undefined, signal?: number) => void
 }
 
 /**
@@ -62,13 +62,20 @@ export class PtyManager {
     const id = randomUUID()
     // Explicit args (e.g. launching `claude`) bypass the default prompt-injection.
     const args = opts.args ?? shellArgs(shell)
-    const proc = pty.spawn(shell, args, {
+    const ptyOpts: IWindowsPtyForkOptions = {
       name: 'xterm-256color',
       cols: opts.cols || 80,
       rows: opts.rows || 24,
       cwd: opts.cwd || os.homedir(),
-      env: { ...(process.env as Record<string, string>), ...(opts.env ?? {}) }
-    })
+      env: { ...(process.env as Record<string, string>), ...(opts.env ?? {}) },
+      // Use the ConPTY bundled with node-pty (the Windows Terminal one) instead
+      // of the in-box conhost ConPTY: the OS copy has known TUI repaint
+      // corruption and teardown bugs, and the bundled-dll path also skips the
+      // console-list agent that crashes when the console is already gone.
+      // Ignored on non-Windows platforms.
+      useConptyDll: process.platform === 'win32'
+    }
+    const proc = pty.spawn(shell, args, ptyOpts)
 
     proc.onData((data) => this.handlers.onData(id, data))
     proc.onExit(({ exitCode, signal }) => {

@@ -16,6 +16,18 @@ import SearchBar from './SearchBar'
 import Autosuggest from './Autosuggest'
 import { attachAutosuggest, type AutosuggestController, type SuggestView } from '../lib/autosuggest'
 
+// A TUI that dies without cleaning up (e.g. opencode killing its whole console
+// on Ctrl+C — sst/opencode#6189) leaves xterm stuck in alternate-screen, mouse
+// reporting, and hidden-cursor modes; an exit notice written then lands
+// overlapped on the stale TUI frame. Restore sane modes before printing it.
+const EXIT_RESET =
+  '\x1b[?1049l' + // leave the alternate screen buffer
+  '\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l' + // mouse reporting off
+  '\x1b[?2004l' + // bracketed paste off
+  '\x1b[?1004l' + // focus reporting off
+  '\x1b[0m' + // reset colors/attributes
+  '\x1b[?25h' // show the cursor
+
 /** Apply the user's background settings to the terminal host element (image + dim + colour). */
 function applyHostBg(host: HTMLElement, bg: TerminalBg, theme: Theme): void {
   host.style.backgroundColor = terminalHostColor(theme)
@@ -209,9 +221,12 @@ function TerminalView({ session }: { session: Session }) {
         if (disposed) return window.devterm.pty.kill(id)
         cleanups.push(window.devterm.pty.onData(id, writeData))
         cleanups.push(
-          window.devterm.pty.onExit(id, ({ exitCode }) =>
-            term.write(`\r\n\x1b[90m[process exited with code ${exitCode}]\x1b[0m\r\n`)
-          )
+          window.devterm.pty.onExit(id, ({ exitCode }) => {
+            // ConPTY can tear down without reporting a code (e.g. the console
+            // host died under a misbehaving TUI) — don't print "code undefined".
+            const code = typeof exitCode === 'number' ? ` with code ${exitCode}` : ''
+            term.write(`${EXIT_RESET}\r\n\x1b[90m[process exited${code}]\x1b[0m\r\n`)
+          })
         )
         sendInput = (d) => window.devterm.pty.input(id, d)
         term.onData((d) => window.devterm.pty.input(id, d))
@@ -224,7 +239,7 @@ function TerminalView({ session }: { session: Session }) {
       cleanups.push(window.devterm.ssh.onData(sid, writeData))
       cleanups.push(
         window.devterm.ssh.onExit(sid, () =>
-          term.write('\r\n\x1b[90m[connection closed]\x1b[0m\r\n')
+          term.write(`${EXIT_RESET}\r\n\x1b[90m[connection closed]\x1b[0m\r\n`)
         )
       )
       window.devterm.ssh

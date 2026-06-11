@@ -7,7 +7,8 @@ declare module 'node-pty' {
     readonly pid: number
     readonly process: string
     onData(cb: (data: string) => void): void
-    onExit(cb: (e: { exitCode: number; signal?: number }) => void): void
+    // exitCode can be undefined at runtime when the console host dies abnormally.
+    onExit(cb: (e: { exitCode: number | undefined; signal?: number }) => void): void
     write(data: string): void
     resize(cols: number, rows: number): void
     kill(signal?: string): void
@@ -22,9 +23,14 @@ declare module 'node-pty' {
     encoding?: string | null
   }
 
+  export interface IWindowsPtyForkOptions extends IPtyForkOptions {
+    /** Use the conpty.dll bundled with node-pty instead of the in-box one. Windows only. */
+    useConptyDll?: boolean
+  }
+
   export function spawn(
     file: string,
     args: string[] | string,
-    options: IPtyForkOptions
+    options: IPtyForkOptions | IWindowsPtyForkOptions
   ): IPty
 }
