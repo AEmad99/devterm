@@ -3,7 +3,7 @@ import { randomBytes, randomUUID } from 'crypto'
 import type { AddressInfo } from 'net'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
-import type { ClaudeBridgeState, ClaudeBridgeStatus } from '@shared/types'
+import type { AgentBridgeState, AgentBridgeStatus } from '@shared/types'
 import { registerTools, type ToolDeps } from './tools'
 
 const BRIDGE_HEARTBEAT_MS = 25000
@@ -23,7 +23,7 @@ export class McpBridge {
   private http?: Server
   private transport?: StreamableHTTPServerTransport
   private mcp?: McpServer
-  private state: ClaudeBridgeState = 'starting'
+  private state: AgentBridgeState = 'starting'
   private message: string | undefined
   private activeStreams = 0
   private lastActivityAt: number | undefined
@@ -36,10 +36,10 @@ export class McpBridge {
 
   constructor(
     private deps: ToolDeps,
-    private onStatus?: (status: ClaudeBridgeStatus) => void
+    private onStatus?: (status: AgentBridgeStatus) => void
   ) {}
 
-  getStatus(): ClaudeBridgeStatus {
+  getStatus(): AgentBridgeStatus {
     return {
       state: this.state,
       mcpUrl: this.port ? `http://127.0.0.1:${this.port}/mcp` : undefined,
@@ -50,7 +50,7 @@ export class McpBridge {
     }
   }
 
-  private emit(state: ClaudeBridgeState = this.state, message = this.message): void {
+  private emit(state: AgentBridgeState = this.state, message = this.message): void {
     this.state = state
     this.message = message
     this.onStatus?.(this.getStatus())
@@ -64,7 +64,7 @@ export class McpBridge {
     )
     registerTools(this.mcp, this.deps)
 
-    // One long-lived client (claude) per bridge: a single stateful transport
+    // One long-lived client (the agent) per bridge: a single stateful transport
     // keeps the session across initialize → listTools → callTool. JSON responses.
     this.transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: () => randomUUID(),
@@ -80,7 +80,7 @@ export class McpBridge {
     this.http = createServer((req, res) => void this.handle(req, res))
 
     // This is a localhost-only bridge with exactly ONE trusted client: the
-    // interactive `claude` CLI we spawn. Node's http.Server ships protective
+    // interactive `pi` CLI we spawn. Node's http.Server ships protective
     // idle timeouts meant for public servers (slowloris / idle-socket
     // exhaustion); here they only cause harm. The CLI holds a long-lived
     // standalone GET SSE stream open for server→client messages, and the MCP

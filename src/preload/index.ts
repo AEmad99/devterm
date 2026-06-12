@@ -12,9 +12,9 @@ import {
   type FileContent,
   type TransferStartOpts,
   type TransferProgress,
-  type ClaudeOpenOpts,
-  type ClaudeOpenResult,
-  type ClaudeBridgeStatus,
+  type AgentOpenOpts,
+  type AgentOpenResult,
+  type AgentBridgeStatus,
   type ConfirmRequest,
   type SavedConnection,
   type Workspace,
@@ -98,17 +98,17 @@ const api: DevTermApi = {
     cancel: (id: string) => ipcRenderer.send(IPC.transferCancel, id),
     onProgress: (id, cb) => subscribe<TransferProgress>(`${IPC.transferProgress}:${id}`, cb)
   },
-  claude: {
-    open: (opts: ClaudeOpenOpts): Promise<ClaudeOpenResult> =>
-      ipcRenderer.invoke(IPC.claudeOpen, opts),
-    close: (sessionId: string) => ipcRenderer.send(IPC.claudeClose, sessionId),
-    status: (sessionId: string): Promise<ClaudeBridgeStatus | null> =>
-      ipcRenderer.invoke(IPC.claudeStatus, sessionId),
+  agent: {
+    open: (opts: AgentOpenOpts): Promise<AgentOpenResult> =>
+      ipcRenderer.invoke(IPC.agentOpen, opts),
+    close: (sessionId: string) => ipcRenderer.send(IPC.agentClose, sessionId),
+    status: (sessionId: string): Promise<AgentBridgeStatus | null> =>
+      ipcRenderer.invoke(IPC.agentStatus, sessionId),
     onBridgeStatus: (sessionId, cb) =>
-      subscribe<ClaudeBridgeStatus>(`${IPC.claudeBridgeStatus}:${sessionId}`, cb),
-    onConfirm: (cb) => subscribe<ConfirmRequest>(IPC.claudeConfirm, cb),
+      subscribe<AgentBridgeStatus>(`${IPC.agentBridgeStatus}:${sessionId}`, cb),
+    onConfirm: (cb) => subscribe<ConfirmRequest>(IPC.agentConfirm, cb),
     replyConfirm: (reqId: string, approved: boolean) =>
-      ipcRenderer.send(IPC.claudeConfirmReply, reqId, approved)
+      ipcRenderer.send(IPC.agentConfirmReply, reqId, approved)
   },
   connections: {
     list: (): Promise<SavedConnection[]> => ipcRenderer.invoke(IPC.connectionsList),

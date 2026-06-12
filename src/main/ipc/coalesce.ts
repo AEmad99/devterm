@@ -1,6 +1,6 @@
 /**
  * Coalesce high-frequency per-id data into batched flushes. node-pty / ssh2 can
- * emit many tiny chunks (fast command output, a TUI like Claude Code redrawing);
+ * emit many tiny chunks (fast command output, a TUI like pi redrawing);
  * one IPC message per chunk churns the renderer. Batching bursts within a few ms
  * into a single message cuts IPC overhead with no perceptible added latency.
  */

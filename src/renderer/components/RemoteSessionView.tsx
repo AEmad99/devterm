@@ -3,7 +3,7 @@ import type { PolicyMode } from '@shared/types'
 import type { Session } from '../store/sessions'
 import TerminalView from './TerminalView'
 import SftpBrowser from './SftpBrowser'
-import ClaudePane from './ClaudePane'
+import AgentPane from './AgentPane'
 import Splitter from './Splitter'
 
 const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n))
@@ -23,28 +23,28 @@ function fitAgentWidth(width: number, totalWidth: number): number {
 }
 
 /**
- * A remote session: shell or SFTP browser, with an optional Claude agent pane
+ * A remote session: shell or SFTP browser, with an optional agent pane
  * docked beside the shell (resizable). The terminal stays mounted so its shell
  * channel survives view switches.
  */
 function RemoteSessionView({ session }: { session: Session }) {
   const [view, setView] = useState<'terminal' | 'files'>('terminal')
   const [filesOpened, setFilesOpened] = useState(false)
-  const [claudeOpen, setClaudeOpen] = useState(false)
+  const [agentOpen, setAgentOpen] = useState(false)
   const [mode, setMode] = useState<PolicyMode>('full')
-  const [claudeWidth, setClaudeWidth] = useState(480)
+  const [agentWidth, setAgentWidth] = useState(480)
   const splitRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    if (!claudeOpen) return
+    if (!agentOpen) return
     const el = splitRef.current
     if (!el) return
-    const fit = () => setClaudeWidth((w) => fitAgentWidth(w, el.clientWidth))
+    const fit = () => setAgentWidth((w) => fitAgentWidth(w, el.clientWidth))
     fit()
     const ro = new ResizeObserver(fit)
     ro.observe(el)
     return () => ro.disconnect()
-  }, [claudeOpen])
+  }, [agentOpen])
 
   return (
     <div className="remote-view">
@@ -66,13 +66,13 @@ function RemoteSessionView({ session }: { session: Session }) {
 
         <label
           className="policy-field"
-          title="What the in-app Claude agent is allowed to do on this host"
+          title="What the in-app Pi agent is allowed to do on this host"
         >
           <span className="policy-label">Agent</span>
           <select
             className="policy-select"
             value={mode}
-            disabled={claudeOpen}
+            disabled={agentOpen}
             onChange={(e) => setMode(e.target.value as PolicyMode)}
           >
             <option value="read_only">Read-only</option>
@@ -81,16 +81,16 @@ function RemoteSessionView({ session }: { session: Session }) {
           </select>
         </label>
         <button
-          className={`claude-btn ${claudeOpen ? 'active' : ''}`}
-          disabled={!claudeOpen && (!session.context || !!session.closed)}
+          className={`agent-btn ${agentOpen ? 'active' : ''}`}
+          disabled={!agentOpen && (!session.context || !!session.closed)}
           title={
             !session.context
               ? 'Connect the SSH session first'
-              : 'Launch the Claude agent for this host'
+              : 'Launch the Pi agent for this host'
           }
-          onClick={() => setClaudeOpen((v) => !v)}
+          onClick={() => setAgentOpen((v) => !v)}
         >
-          {claudeOpen ? '✕ Close Claude' : '🤖 Claude'}
+          {agentOpen ? '✕ Close Pi' : '🤖 Pi'}
         </button>
       </div>
 
@@ -102,21 +102,21 @@ function RemoteSessionView({ session }: { session: Session }) {
           className="view-layer"
           style={{ visibility: view === 'terminal' ? undefined : 'hidden' }}
         >
-          <div className="term-claude-split" ref={splitRef}>
+          <div className="term-agent-split" ref={splitRef}>
             <div className="tc-term">
               <TerminalView session={session} />
             </div>
-            {claudeOpen && (
+            {agentOpen && (
               <Splitter
                 direction="horizontal"
                 onDelta={(d) =>
-                  setClaudeWidth((w) => fitAgentWidth(w - d, splitRef.current?.clientWidth ?? 0))
+                  setAgentWidth((w) => fitAgentWidth(w - d, splitRef.current?.clientWidth ?? 0))
                 }
               />
             )}
-            {claudeOpen && (
-              <div className="tc-claude" style={{ width: claudeWidth }}>
-                <ClaudePane sessionId={session.id} mode={mode} />
+            {agentOpen && (
+              <div className="tc-agent" style={{ width: agentWidth }}>
+                <AgentPane sessionId={session.id} mode={mode} />
               </div>
             )}
           </div>
@@ -135,5 +135,5 @@ function RemoteSessionView({ session }: { session: Session }) {
 }
 
 // Memoized like the other panes so a layout drag/resize tick can't re-render the
-// remote shell + SFTP + Claude subtree; it only depends on its stable session.
+// remote shell + SFTP + agent subtree; it only depends on its stable session.
 export default memo(RemoteSessionView)

@@ -50,7 +50,7 @@ export function defaultShell(): string {
 
 /**
  * Owns local node-pty processes. Phase 1 spawns the local shell; later phases
- * (Claude pane) will spawn the interactive `claude` CLI through this same manager.
+ * (agent pane) spawn the interactive `pi` CLI through this same manager.
  */
 export class PtyManager {
   private ptys = new Map<string, IPty>()
@@ -60,7 +60,7 @@ export class PtyManager {
   create(opts: PtyCreateOptions & { args?: string[]; env?: Record<string, string> }): PtyCreated {
     const shell = opts.shell || defaultShell()
     const id = randomUUID()
-    // Explicit args (e.g. launching `claude`) bypass the default prompt-injection.
+    // Explicit args (e.g. launching `pi`) bypass the default prompt-injection.
     const args = opts.args ?? shellArgs(shell)
     const proc = pty.spawn(shell, args, {
       name: 'xterm-256color',

@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
-import type { ClaudeBridgeStatus, PolicyMode } from '@shared/types'
+import type { AgentBridgeStatus, PolicyMode } from '@shared/types'
 import { useSessions } from '../store/sessions'
 import { fitNow, fitSoon } from '../lib/fit'
 import { attachRenderer, attachClipboard } from '../lib/renderer'
 
 /** Live state of the agent's link to this host (what the status pill reflects). */
-type BridgeState = ClaudeBridgeStatus['state'] | 'connecting' | 'exited'
+type BridgeState = AgentBridgeStatus['state'] | 'connecting' | 'exited'
 
 const MODE_LABEL: Record<PolicyMode, string> = {
   read_only: 'Read-only',
@@ -16,11 +16,12 @@ const MODE_LABEL: Record<PolicyMode, string> = {
 }
 
 /**
- * Runs the real interactive `claude` CLI in a node-pty, wired to the in-process
- * MCP bridge for this session. The pane is a plain terminal; the status pill is
- * driven by the bridge's actual HTTP/SSE connection state.
+ * Runs the real interactive `pi` CLI in a node-pty, wired to the in-process
+ * MCP bridge for this session via a pi extension (loaded with `-e <path>` by
+ * the launch step). The pane is a plain terminal; the status pill is driven
+ * by the bridge's actual HTTP/SSE connection state.
  */
-export default function ClaudePane({ sessionId, mode }: { sessionId: string; mode: PolicyMode }) {
+export default function AgentPane({ sessionId, mode }: { sessionId: string; mode: PolicyMode }) {
   const hostRef = useRef<HTMLDivElement>(null)
   const [bridge, setBridge] = useState<BridgeState>('connecting')
   const [bridgeMessage, setBridgeMessage] = useState<string | undefined>()
@@ -30,7 +31,7 @@ export default function ClaudePane({ sessionId, mode }: { sessionId: string; mod
   const hostClosed = useSessions((s) => s.sessions.find((x) => x.id === sessionId)?.closed ?? false)
 
   useEffect(() => {
-    return window.devterm.claude.onBridgeStatus(sessionId, (status) => {
+    return window.devterm.agent.onBridgeStatus(sessionId, (status) => {
       setBridge(status.state)
       setBridgeMessage(status.message)
       if (status.mcpUrl) setMcpUrl(status.mcpUrl)
@@ -59,31 +60,31 @@ export default function ClaudePane({ sessionId, mode }: { sessionId: string; mod
     const disposeRenderer = attachRenderer(term)
     const disposeClipboard = attachClipboard(term, host)
     fitNow(fit, host)
-    term.write('\x1b[90mStarting Claude agent bridged to this host...\x1b[0m\r\n')
+    term.write('\x1b[90mStarting Pi agent bridged to this host...\x1b[0m\r\n')
 
     let disposed = false
     const cleanups: Array<() => void> = [disposeRenderer, disposeClipboard]
 
     ;(async () => {
       try {
-        const { ptyId, mcpUrl } = await window.devterm.claude.open({
+        const { ptyId, mcpUrl } = await window.devterm.agent.open({
           sessionId,
           mode,
           cols: term.cols,
           rows: term.rows
         })
-        if (disposed) return window.devterm.claude.close(sessionId)
+        if (disposed) return window.devterm.agent.close(sessionId)
         setMcpUrl(mcpUrl)
         setBridge((cur) => (cur === 'connecting' ? 'listening' : cur))
         term.write(
-          `\x1b[90mMCP bridge: ${mcpUrl} | policy: ${mode} | permissions: bypass\x1b[0m\r\n`
+          `\x1b[90mMCP bridge: ${mcpUrl} | policy: ${mode} | agent: pi (built-in tools off)\x1b[0m\r\n`
         )
         cleanups.push(window.devterm.pty.onData(ptyId, (d) => term.write(d)))
         cleanups.push(
           window.devterm.pty.onExit(ptyId, ({ exitCode }) => {
             setBridge('exited')
-            setBridgeMessage(`Claude exited with code ${exitCode}`)
-            term.write(`\r\n\x1b[90m[claude exited with code ${exitCode}]\x1b[0m\r\n`)
+            setBridgeMessage(`Pi exited with code ${exitCode}`)
+            term.write(`\r\n\x1b[90m[pi exited with code ${exitCode}]\x1b[0m\r\n`)
           })
         )
         term.onData((d) => window.devterm.pty.input(ptyId, d))
@@ -103,9 +104,9 @@ export default function ClaudePane({ sessionId, mode }: { sessionId: string; mod
         const msg = String((e as Error).message || e)
         setBridge('error')
         setBridgeMessage(msg)
-        term.write(`\r\n\x1b[31m[failed to start claude: ${msg}]\x1b[0m\r\n`)
+        term.write(`\r\n\x1b[31m[failed to start pi: ${msg}]\x1b[0m\r\n`)
         term.write(
-          '\x1b[90mIs the `claude` CLI installed and on PATH? Is the SSH session connected?\x1b[0m\r\n'
+          '\x1b[90mIs the `pi` CLI installed and on PATH? Authenticated with an API key or /login? Is the SSH session connected?\x1b[0m\r\n'
         )
       }
     })()
@@ -113,7 +114,7 @@ export default function ClaudePane({ sessionId, mode }: { sessionId: string; mod
     return () => {
       disposed = true
       cleanups.forEach((fn) => fn())
-      window.devterm.claude.close(sessionId)
+      window.devterm.agent.close(sessionId)
       term.dispose()
     }
   }, [mode, restartNonce, sessionId])
@@ -147,7 +148,7 @@ export default function ClaudePane({ sessionId, mode }: { sessionId: string; mod
     .join('\n')
 
   return (
-    <div className="claude-pane">
+    <div className="agent-pane">
       <div
         className={`agent-status agent-status--${pill.tone}`}
         title={statusTitle || 'Live state of the agent bridge to this host'}
@@ -167,7 +168,7 @@ export default function ClaudePane({ sessionId, mode }: { sessionId: string; mod
           {MODE_LABEL[mode]}
         </span>
       </div>
-      <div className="terminal-host claude-host" ref={hostRef} />
+      <div className="terminal-host agent-host" ref={hostRef} />
     </div>
   )
 }

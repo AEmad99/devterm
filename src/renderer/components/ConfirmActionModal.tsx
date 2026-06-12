@@ -8,11 +8,11 @@ import type { ConfirmRequest } from '@shared/types'
 export default function ConfirmActionModal() {
   const [req, setReq] = useState<ConfirmRequest | null>(null)
 
-  useEffect(() => window.devterm.claude.onConfirm((r) => setReq(r)), [])
+  useEffect(() => window.devterm.agent.onConfirm((r) => setReq(r)), [])
 
   if (!req) return null
   const reply = (approved: boolean) => {
-    window.devterm.claude.replyConfirm(req.reqId, approved)
+    window.devterm.agent.replyConfirm(req.reqId, approved)
     setReq(null)
   }
 
@@ -20,7 +20,7 @@ export default function ConfirmActionModal() {
     <div className="modal-backdrop">
       <div className="modal confirm-modal">
         <h3>⚠ Approve agent action?</h3>
-        <p>Claude wants to run a guarded operation on the remote host:</p>
+        <p>Pi wants to run a guarded operation on the remote host:</p>
         <div className="confirm-tool">{req.tool}</div>
         <pre className="confirm-detail">{req.detail}</pre>
         <div className="actions">

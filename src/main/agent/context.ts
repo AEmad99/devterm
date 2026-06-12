@@ -1,11 +1,14 @@
 import type { HostContext } from '@shared/types'
 
 /**
- * Per-session CLAUDE.md describing the host so the agent steers itself —
+ * Per-session AGENTS.md describing the host so the agent steers itself —
  * crucially, the air-gapped/local-mirror rules so it never proposes internet
  * installs on disconnected fleet hosts (§2.3).
+ *
+ * pi auto-loads AGENTS.md from the cwd at startup, so the launch step writes
+ * this file into the per-session temp directory.
  */
-export function buildClaudeMd(context: HostContext, airGapped: boolean): string {
+export function buildAgentsMd(context: HostContext, airGapped: boolean): string {
   const osName =
     context.os === 'windows' ? 'Windows' : context.os === 'mac' ? 'macOS' : context.os === 'linux' ? 'Linux' : 'unknown OS'
 
@@ -20,9 +23,22 @@ You are operating on a **remote ${osName}** host through DevTerm's MCP bridge.
 ## How to act on this host
 Use the \`mcp__devterm__*\` tools — they run on THIS host over the existing SSH
 connection. Do not \`ssh\` elsewhere.
-- \`run_command\` — run a shell command here.
-- \`read_file\` / \`write_file\` / \`list_dir\` — files on this host.
-- \`get_host_context\` — re-read these facts.
+- \`mcp__devterm__run_command\` — run a shell command here.
+- \`mcp__devterm__read_file\` / \`mcp__devterm__write_file\` / \`mcp__devterm__list_dir\` — files on this host.
+- \`mcp__devterm__get_host_context\` — re-read these facts.
+- \`mcp__devterm__ping\` — confirm the bridge is still alive.
+
+The DevTerm MCP bridge is a real HTTP server on localhost; its bearer token is
+in the \`DEVTERM_BRIDGE_TOKEN\` env var. The bridge enforces the operator's
+policy (read-only / confirm / full) before running any tool, and destructive
+operations may prompt the operator for approval.
+
+## Built-in tools are disabled in this session
+Read, write, edit, bash, grep, find, and ls are intentionally **off** — there
+is no local checkout here. If you need a file on this host, use
+\`mcp__devterm__read_file\` (or \`mcp__devterm__write_file\`); if you need to run
+a command, use \`mcp__devterm__run_command\`. Anything that looks like a local
+path is a path on the remote host, not on your machine.
 
 ${
   airGapped

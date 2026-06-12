@@ -41,7 +41,7 @@ import { registerPtyIpc } from './ipc/pty'
 import { registerSshIpc } from './ipc/ssh'
 import { registerContextIpc } from './ipc/context'
 import { registerFileIpc } from './ipc/files'
-import { registerClaudeIpc, type ClaudeController } from './ipc/claude'
+import { registerAgentIpc, type AgentController } from './ipc/agent'
 import { registerConnectionsIpc } from './ipc/connections'
 import { registerWorkspacesIpc } from './ipc/workspaces'
 import { registerSnippetsIpc } from './ipc/snippets'
@@ -59,7 +59,7 @@ let mainWindow: BrowserWindow | null = null
 let ptyManager: PtyManager | null = null
 let sshManager: SSHManager | null = null
 let fileController: FileController | null = null
-let claudeController: ClaudeController | null = null
+let agentController: AgentController | null = null
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
@@ -106,7 +106,7 @@ function registerIpc(): void {
   ptyManager = registerPtyIpc(() => mainWindow)
   sshManager = registerSshIpc(() => mainWindow)
   fileController = registerFileIpc(sshManager, () => mainWindow)
-  claudeController = registerClaudeIpc(sshManager, ptyManager, () => mainWindow)
+  agentController = registerAgentIpc(sshManager, ptyManager, () => mainWindow)
   registerConnectionsIpc()
   registerWorkspacesIpc()
   registerSnippetsIpc()
@@ -212,7 +212,7 @@ if (process.argv.includes('--self-test')) {
   })
 
   app.on('window-all-closed', () => {
-    claudeController?.closeAll()
+    agentController?.closeAll()
     fileController?.stopWatches()
     fileController?.transfers.cancelAll()
     ptyManager?.killAll()
@@ -221,7 +221,7 @@ if (process.argv.includes('--self-test')) {
   })
 
   app.on('before-quit', () => {
-    claudeController?.closeAll()
+    agentController?.closeAll()
     fileController?.stopWatches()
     fileController?.transfers.cancelAll()
     ptyManager?.killAll()

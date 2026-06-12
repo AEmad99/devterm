@@ -210,12 +210,15 @@ export interface FileContent {
 export const MAX_EDIT_BYTES = 5 * 1024 * 1024
 
 // ---------------------------------------------------------------------------
-// Claude agent bridge
+// Agent bridge (interactive `pi` CLI wired to the in-process MCP bridge).
+// The MCP bridge, tools, and policy are agent-agnostic — they speak MCP. The
+// renderer-visible contract below is the only place the agent's identity leaks
+// out, and the IPC channel names are pure strings with no agent-specific bits.
 // ---------------------------------------------------------------------------
 
 export type PolicyMode = 'read_only' | 'confirm' | 'full'
 
-export interface ClaudeOpenOpts {
+export interface AgentOpenOpts {
   sessionId: string
   mode: PolicyMode
   /** Tell the agent the host has no internet. Optional; defaults to false. */
@@ -224,13 +227,13 @@ export interface ClaudeOpenOpts {
   rows: number
 }
 
-export interface ClaudeOpenResult {
-  /** PTY id of the spawned interactive `claude` (use the pty.* channels). */
+export interface AgentOpenResult {
+  /** PTY id of the spawned interactive agent (use the pty.* channels). */
   ptyId: string
   mcpUrl: string
 }
 
-export type ClaudeBridgeState =
+export type AgentBridgeState =
   | 'starting'
   | 'listening'
   | 'connected'
@@ -238,8 +241,8 @@ export type ClaudeBridgeState =
   | 'stopped'
   | 'error'
 
-export interface ClaudeBridgeStatus {
-  state: ClaudeBridgeState
+export interface AgentBridgeStatus {
+  state: AgentBridgeState
   mcpUrl?: string
   message?: string
   lastActivityAt?: number
@@ -328,13 +331,13 @@ export const IPC = {
   transferCancel: 'transfer:cancel',
   transferProgress: 'transfer:progress', // suffixed :<transferId>
 
-  // claude agent bridge
-  claudeOpen: 'claude:open',
-  claudeClose: 'claude:close',
-  claudeConfirm: 'claude:confirm', // main -> renderer
-  claudeConfirmReply: 'claude:confirm:reply', // renderer -> main
-  claudeBridgeStatus: 'claude:bridge-status', // suffixed :<sessionId>
-  claudeStatus: 'claude:status',
+  // agent bridge (interactive `pi` wired to the in-process MCP bridge)
+  agentOpen: 'agent:open',
+  agentClose: 'agent:close',
+  agentConfirm: 'agent:confirm', // main -> renderer
+  agentConfirmReply: 'agent:confirm:reply', // renderer -> main
+  agentBridgeStatus: 'agent:bridge-status', // suffixed :<sessionId>
+  agentStatus: 'agent:status',
 
   // saved connections (persisted in userData)
   connectionsList: 'connections:list',
@@ -435,12 +438,12 @@ export interface DevTermApi {
     cancel(id: string): void
     onProgress(id: string, cb: (p: TransferProgress) => void): () => void
   }
-  /** Claude agent bridge: spawn interactive `claude` wired to the MCP bridge. */
-  claude: {
-    open(opts: ClaudeOpenOpts): Promise<ClaudeOpenResult>
+  /** Agent bridge: spawn interactive `pi` wired to the in-process MCP bridge. */
+  agent: {
+    open(opts: AgentOpenOpts): Promise<AgentOpenResult>
     close(sessionId: string): void
-    status(sessionId: string): Promise<ClaudeBridgeStatus | null>
-    onBridgeStatus(sessionId: string, cb: (status: ClaudeBridgeStatus) => void): () => void
+    status(sessionId: string): Promise<AgentBridgeStatus | null>
+    onBridgeStatus(sessionId: string, cb: (status: AgentBridgeStatus) => void): () => void
     onConfirm(cb: (req: ConfirmRequest) => void): () => void
     replyConfirm(reqId: string, approved: boolean): void
   }
