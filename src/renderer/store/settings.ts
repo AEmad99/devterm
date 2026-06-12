@@ -43,6 +43,10 @@ export interface AppSettings {
   prefs: TerminalPrefs
   /** Auto-reconnect policy applied to remote SSH sessions when they drop. */
   autoReconnect: AutoReconnectSettings
+  /** Bottom status bar visibility (Cluster C adds this). */
+  showStatusBar: boolean
+  /** Whether the agent activity panel is collapsed by default (Cluster A). */
+  agentActivityCollapsed: boolean
 }
 
 /**
@@ -90,7 +94,9 @@ const DEFAULTS: AppSettings = {
     baseDelayMs: 1000,
     maxDelayMs: 30000,
     factor: 2
-  }
+  },
+  showStatusBar: true,
+  agentActivityCollapsed: false
 }
 
 const STORAGE_KEY = 'devterm.settings.v1'
@@ -106,7 +112,13 @@ function load(): AppSettings {
       themeId: typeof parsed?.themeId === 'string' ? parsed.themeId : DEFAULTS.themeId,
       terminalBg: { ...DEFAULTS.terminalBg, ...(parsed?.terminalBg ?? {}) },
       prefs: { ...DEFAULTS.prefs, ...(parsed?.prefs ?? {}) },
-      autoReconnect: { ...DEFAULTS.autoReconnect, ...(parsed?.autoReconnect ?? {}) }
+      autoReconnect: { ...DEFAULTS.autoReconnect, ...(parsed?.autoReconnect ?? {}) },
+      showStatusBar:
+        typeof parsed?.showStatusBar === 'boolean' ? parsed.showStatusBar : DEFAULTS.showStatusBar,
+      agentActivityCollapsed:
+        typeof parsed?.agentActivityCollapsed === 'boolean'
+          ? parsed.agentActivityCollapsed
+          : DEFAULTS.agentActivityCollapsed
     }
   } catch {
     return DEFAULTS
@@ -118,6 +130,8 @@ interface SettingsState extends AppSettings {
   setTerminalBg: (patch: Partial<TerminalBg>) => void
   setPrefs: (patch: Partial<TerminalPrefs>) => void
   setAutoReconnect: (patch: Partial<AutoReconnectSettings>) => void
+  setShowStatusBar: (v: boolean) => void
+  setAgentActivityCollapsed: (v: boolean) => void
   reset: () => void
 }
 
@@ -129,7 +143,9 @@ function persist(state: AppSettings): void {
         themeId: state.themeId,
         terminalBg: state.terminalBg,
         prefs: state.prefs,
-        autoReconnect: state.autoReconnect
+        autoReconnect: state.autoReconnect,
+        showStatusBar: state.showStatusBar,
+        agentActivityCollapsed: state.agentActivityCollapsed
       })
     )
   } catch {
@@ -142,27 +158,37 @@ export const useSettings = create<SettingsState>((set, get) => ({
 
   setThemeId: (id) => {
     set({ themeId: id })
-    persist({ themeId: id, terminalBg: get().terminalBg, prefs: get().prefs, autoReconnect: get().autoReconnect })
+    persist({ themeId: id, terminalBg: get().terminalBg, prefs: get().prefs, autoReconnect: get().autoReconnect, showStatusBar: get().showStatusBar, agentActivityCollapsed: get().agentActivityCollapsed })
   },
 
   setTerminalBg: (patch) => {
     const terminalBg = { ...get().terminalBg, ...patch }
     set({ terminalBg })
-    persist({ themeId: get().themeId, terminalBg, prefs: get().prefs, autoReconnect: get().autoReconnect })
+    persist({ themeId: get().themeId, terminalBg, prefs: get().prefs, autoReconnect: get().autoReconnect, showStatusBar: get().showStatusBar, agentActivityCollapsed: get().agentActivityCollapsed })
   },
 
   setPrefs: (patch) => {
     const prefs = { ...get().prefs, ...patch }
     set({ prefs })
-    persist({ themeId: get().themeId, terminalBg: get().terminalBg, prefs, autoReconnect: get().autoReconnect })
+    persist({ themeId: get().themeId, terminalBg: get().terminalBg, prefs, autoReconnect: get().autoReconnect, showStatusBar: get().showStatusBar, agentActivityCollapsed: get().agentActivityCollapsed })
   },
 
   setAutoReconnect: (patch) => {
     const autoReconnect = { ...get().autoReconnect, ...patch }
     set({ autoReconnect })
-    persist({ themeId: get().themeId, terminalBg: get().terminalBg, prefs: get().prefs, autoReconnect })
+    persist({ themeId: get().themeId, terminalBg: get().terminalBg, prefs: get().prefs, autoReconnect, showStatusBar: get().showStatusBar, agentActivityCollapsed: get().agentActivityCollapsed })
     // Push to the main process so the live policy updates immediately.
     void window.devterm.ssh.setReconnectPolicy?.(autoReconnect).catch(() => undefined)
+  },
+
+  setShowStatusBar: (v) => {
+    set({ showStatusBar: v })
+    persist({ themeId: get().themeId, terminalBg: get().terminalBg, prefs: get().prefs, autoReconnect: get().autoReconnect, showStatusBar: v, agentActivityCollapsed: get().agentActivityCollapsed })
+  },
+
+  setAgentActivityCollapsed: (v) => {
+    set({ agentActivityCollapsed: v })
+    persist({ themeId: get().themeId, terminalBg: get().terminalBg, prefs: get().prefs, autoReconnect: get().autoReconnect, showStatusBar: get().showStatusBar, agentActivityCollapsed: v })
   },
 
   reset: () => {
@@ -170,7 +196,9 @@ export const useSettings = create<SettingsState>((set, get) => ({
       themeId: DEFAULTS.themeId,
       terminalBg: DEFAULTS.terminalBg,
       prefs: DEFAULTS.prefs,
-      autoReconnect: DEFAULTS.autoReconnect
+      autoReconnect: DEFAULTS.autoReconnect,
+      showStatusBar: DEFAULTS.showStatusBar,
+      agentActivityCollapsed: DEFAULTS.agentActivityCollapsed
     })
     persist(DEFAULTS)
     void window.devterm.ssh.setReconnectPolicy?.(DEFAULTS.autoReconnect).catch(() => undefined)

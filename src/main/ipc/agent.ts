@@ -10,6 +10,7 @@ import {
 import { McpBridge } from '../mcp/server'
 import type { ConfirmOutcome } from '../mcp/tools'
 import { Policy } from '../mcp/policy'
+import * as approvalRules from '../approval-rules'
 import { buildAgentsMd, prepareAgentLaunch } from '../agent/launch'
 import type { SSHManager } from '../ssh/manager'
 import type { PtyManager } from '../pty/manager'
@@ -76,7 +77,9 @@ export function registerAgentIpc(
     const context = ssh.getContext(opts.sessionId)
     if (!context) throw new Error('Connect the SSH session before opening the agent.')
 
-    const policy = new Policy(opts.mode)
+    const policy = new Policy(opts.mode, (sessionId, command) =>
+      approvalRules.match(sessionId, command).then((r) => (r ? { outcome: r.outcome } : undefined))
+    )
     const airGapped = opts.airGapped ?? false
     const bridge = new McpBridge(
       {

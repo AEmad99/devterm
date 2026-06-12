@@ -4,6 +4,8 @@ import type { HostContext } from '@shared/types'
 import type { SSHManager } from '../ssh/manager'
 import { listRemote } from '../ssh/sftp'
 import { Policy } from './policy'
+import { recordBridgeActivity } from '../foundation-ipc'
+import { sanitizeDetail } from './server'
 
 /** Why a guarded action did/didn't proceed — distinct so the agent can report the real cause. */
 export type ConfirmOutcome = 'approved' | 'denied' | 'timeout'
@@ -23,10 +25,50 @@ export interface ToolDeps {
 const DEFAULT_RUN_TIMEOUT_MS = 300000
 
 const text = (s: string) => ({ content: [{ type: 'text' as const, text: s }] })
-const errorText = (s: string) => ({ content: [{ type: 'text' as const, text: s }], isError: true })
+const errorText = (s: string) => ({
+  content: [{ type: 'text' as const, text: s }],
+  isError: true
+})
+
+/**
+ * Wrap a `confirm(...)` call so it records an `approval_request` entry at
+ * request time and an `approval_outcome` entry on response. The outcome is
+ * mapped to `ok` so a denial/timeout lights up the Errors filter in the
+ * activity panel. The activity entries are emitted even when the bridge log
+ * is the only signal we get from a guarded op (the panel and any
+ * future "audit log" UI consume them uniformly).
+ */
+function wrapConfirm(
+  sessionId: string,
+  tool: string,
+  detail: string,
+  confirm: (tool: string, detail: string) => Promise<ConfirmOutcome>
+): Promise<ConfirmOutcome> {
+  recordBridgeActivity({
+    sessionId,
+    kind: 'approval_request',
+    tool,
+    detail: sanitizeDetail(detail)
+  })
+  return confirm(tool, detail).then((outcome) => {
+    recordBridgeActivity({
+      sessionId,
+      kind: 'approval_outcome',
+      tool,
+      detail: outcome,
+      // `approved` is the only "ok" outcome — denied and timeout light up the
+      // Errors filter in the activity panel.
+      ok: outcome === 'approved'
+    })
+    return outcome
+  })
+}
 
 export function registerTools(mcp: McpServer, deps: ToolDeps): void {
   const { ssh, sessionId, context, airGapped, policy, confirm } = deps
+  // Pre-bound confirm wrapper that records bridge activity around every ask.
+  const confirmWithActivity = (tool: string, detail: string) =>
+    wrapConfirm(sessionId, tool, detail, confirm)
 
   mcp.registerTool(
     'ping',
@@ -93,7 +135,7 @@ export function registerTools(mcp: McpServer, deps: ToolDeps): void {
       }
     },
     async ({ command, timeout_ms }) => {
-      const v = policy.evaluateCommand(command)
+      const v = await policy.evaluateCommandAsync(sessionId, command)
       if (!v.allow)
         return errorText(
           `Blocked by guardrail (policy mode: ${policy.mode}): ${v.reason}. ` +
@@ -101,7 +143,7 @@ export function registerTools(mcp: McpServer, deps: ToolDeps): void {
             `Ask the operator to set this host to 'confirm' or 'full' mode to run: ${command}`
         )
       if (v.needConfirm) {
-        const outcome = await confirm('run_command', command)
+        const outcome = await confirmWithActivity('run_command', command)
         if (outcome === 'timeout')
           return errorText(
             `Approval timed out — the operator did not respond to the confirmation prompt within 2 min for: ${command}. ` +
@@ -200,7 +242,7 @@ export function registerTools(mcp: McpServer, deps: ToolDeps): void {
             `Ask the operator to set it to 'confirm' or 'full' mode.`
         )
       if (v.needConfirm) {
-        const outcome = await confirm('write_file', `${path} (${content.length} bytes)`)
+        const outcome = await confirmWithActivity('write_file', `${path} (${content.length} bytes)`)
         if (outcome === 'timeout')
           return errorText(
             `Approval timed out for write to ${path} — no operator response within 2 min. ` +

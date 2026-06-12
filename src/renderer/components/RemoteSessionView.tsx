@@ -1,9 +1,11 @@
 import { memo, useEffect, useRef, useState } from 'react'
 import type { PolicyMode } from '@shared/types'
 import { useSessions, type Session } from '../store/sessions'
+import { useSettings } from '../store/settings'
 import TerminalView from './TerminalView'
 import SftpBrowser from './SftpBrowser'
 import AgentPane from './AgentPane'
+import AgentActivityPanel from './AgentActivityPanel'
 import Splitter from './Splitter'
 
 const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n))
@@ -35,6 +37,8 @@ function RemoteSessionView({ session }: { session: Session }) {
   const [agentWidth, setAgentWidth] = useState(480)
   const splitRef = useRef<HTMLDivElement>(null)
   const cancelSshReconnect = useSessions((s) => s.cancelSshReconnect)
+  const agentActivityCollapsed = useSettings((s) => s.agentActivityCollapsed)
+  const setAgentActivityCollapsed = useSettings((s) => s.setAgentActivityCollapsed)
   const status = session.status
   // Show a banner only for the transient reconnecting state and the
   // permanent-failure state. A "reconnect cancelled" / "reconnected" status
@@ -137,21 +141,46 @@ function RemoteSessionView({ session }: { session: Session }) {
           className="view-layer"
           style={{ visibility: view === 'terminal' ? undefined : 'hidden' }}
         >
-          <div className="term-agent-split" ref={splitRef}>
-            <div className="tc-term">
-              <TerminalView session={session} />
+          <div className="term-agent-column" ref={splitRef}>
+            <div className="term-agent-split">
+              <div className="tc-term">
+                <TerminalView session={session} />
+              </div>
+              {agentOpen && (
+                <Splitter
+                  direction="horizontal"
+                  onDelta={(d) =>
+                    setAgentWidth((w) => fitAgentWidth(w - d, splitRef.current?.clientWidth ?? 0))
+                  }
+                />
+              )}
+              {agentOpen && (
+                <div className="tc-agent" style={{ width: agentWidth }}>
+                  <AgentPane sessionId={session.id} mode={mode} />
+                </div>
+              )}
             </div>
             {agentOpen && (
-              <Splitter
-                direction="horizontal"
-                onDelta={(d) =>
-                  setAgentWidth((w) => fitAgentWidth(w - d, splitRef.current?.clientWidth ?? 0))
-                }
-              />
-            )}
-            {agentOpen && (
-              <div className="tc-agent" style={{ width: agentWidth }}>
-                <AgentPane sessionId={session.id} mode={mode} />
+              <div className={`agent-activity-wrap ${agentActivityCollapsed ? 'is-collapsed' : ''}`}>
+                <button
+                  className="agent-activity-toggle"
+                  onClick={() => setAgentActivityCollapsed(!agentActivityCollapsed)}
+                  title={agentActivityCollapsed ? 'Show activity panel' : 'Hide activity panel'}
+                  aria-expanded={!agentActivityCollapsed}
+                >
+                  <span className="agent-activity-toggle-glyph">
+                    {agentActivityCollapsed ? '▴' : '▾'}
+                  </span>
+                  <span>
+                    {agentActivityCollapsed ? 'Activity' : 'Hide activity'}
+                  </span>
+                </button>
+                {!agentActivityCollapsed && (
+                  <AgentActivityPanel
+                    sessionId={session.id}
+                    hostLabel={session.context?.hostname ?? session.title}
+                  />
+                )}
               </div>
             )}
           </div>
