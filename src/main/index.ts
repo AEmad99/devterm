@@ -49,6 +49,7 @@ import { registerHistoryIpc } from './ipc/history'
 import { registerDialogIpc } from './ipc/dialog'
 import { registerClipboardIpc } from './ipc/clipboard'
 import { registerWindowIpc } from './ipc/window'
+import { registerFoundationIpc } from './foundation-ipc'
 import { IPC } from '@shared/types'
 import { initAutoUpdater } from './updater'
 import type { PtyManager } from './pty/manager'
@@ -115,6 +116,7 @@ function registerIpc(): void {
   registerClipboardIpc()
   registerWindowIpc(() => mainWindow)
   registerContextIpc()
+  registerFoundationIpc(() => mainWindow)
 }
 
 // Headless self-test entrypoint: `electron . --self-test`.

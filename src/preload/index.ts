@@ -21,7 +21,10 @@ import {
   type Workspace,
   type Snippet,
   type HistoryQuery,
-  type HistoryResult
+  type HistoryResult,
+  type BridgeActivityEntry,
+  type ApprovalRule,
+  type PortForward
 } from '@shared/types'
 
 // Subscribe helper for per-id main->renderer channels.
@@ -151,7 +154,47 @@ const api: DevTermApi = {
     setGlass: (enabled: boolean): Promise<void> => ipcRenderer.invoke(IPC.windowSetGlass, enabled)
   },
   localContext: (): Promise<HostContext> => ipcRenderer.invoke(IPC.localContext),
-  platform: process.platform
+  platform: process.platform,
+
+  // -------------------------------------------------------------------------
+  // Foundation cluster additions (additive — see @shared/types)
+  // -------------------------------------------------------------------------
+  bridgeActivity: {
+    on: (sessionId: string, cb: (entry: BridgeActivityEntry) => void): (() => void) =>
+      subscribe<BridgeActivityEntry>(`${IPC.bridgeActivityEvent}:${sessionId}`, cb),
+    list: (
+      sessionId: string,
+      opts?: { sinceMs?: number; limit?: number }
+    ): Promise<BridgeActivityEntry[]> => ipcRenderer.invoke(IPC.bridgeActivityList, sessionId, opts),
+    clear: (sessionId: string): Promise<void> =>
+      ipcRenderer.invoke(IPC.bridgeActivityClear, sessionId)
+  },
+  settingsIo: {
+    export: (): Promise<void> => ipcRenderer.invoke(IPC.settingsIoExport),
+    import: (): Promise<{
+      ok: boolean
+      counts?: { settings: boolean; snippets: number; workspaces: number; approvalRules: number }
+    }> => ipcRenderer.invoke(IPC.settingsIoImport)
+  },
+  approvalRules: {
+    list: (sessionId?: string): Promise<ApprovalRule[]> =>
+      ipcRenderer.invoke(IPC.approvalRules, { op: 'list', sessionId }),
+    add: (rule: Omit<ApprovalRule, 'id' | 'createdAt'>): Promise<ApprovalRule[]> =>
+      ipcRenderer.invoke(IPC.approvalRules, { op: 'add', rule }),
+    remove: (id: string): Promise<ApprovalRule[]> =>
+      ipcRenderer.invoke(IPC.approvalRules, { op: 'remove', id }),
+    match: (sessionId: string, command: string): Promise<ApprovalRule | null> =>
+      ipcRenderer.invoke(IPC.approvalRules, { op: 'match', sessionId, command })
+  },
+  portForward: {
+    list: (sessionId?: string): Promise<PortForward[]> =>
+      ipcRenderer.invoke(IPC.portForwardList, sessionId),
+    // FOUNDATION: Cluster B will implement
+    add: (req: Omit<PortForward, 'id' | 'createdAt' | 'bytes'>): Promise<PortForward> =>
+      ipcRenderer.invoke(IPC.portForwardAdd, req) as Promise<PortForward>,
+    // FOUNDATION: Cluster B will implement
+    remove: (id: string): Promise<void> => ipcRenderer.invoke(IPC.portForwardRemove, id)
+  }
 }
 
 contextBridge.exposeInMainWorld('devterm', api)

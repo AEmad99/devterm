@@ -411,7 +411,24 @@ export const IPC = {
   browserOpenTab: 'browser:open-tab',
 
   // window appearance (glass/translucent material)
-  windowSetGlass: 'window:set-glass'
+  windowSetGlass: 'window:set-glass',
+
+  // foundation cluster: bridge activity log
+  bridgeActivityList: 'bridge-activity:list',
+  bridgeActivityClear: 'bridge-activity:clear',
+  bridgeActivityEvent: 'bridge-activity:event', // suffixed :<sessionId>
+
+  // foundation cluster: settings export/import
+  settingsIoExport: 'settings-io:export',
+  settingsIoImport: 'settings-io:import',
+
+  // foundation cluster: approval rules (action-style single channel)
+  approvalRules: 'approval-rules',
+
+  // foundation cluster: port forwards (stubs; Cluster B will implement)
+  portForwardList: 'port-forward:list',
+  portForwardAdd: 'port-forward:add',
+  portForwardRemove: 'port-forward:remove'
 } as const
 
 /** Typed surface exposed to the renderer via contextBridge (see preload). */
@@ -552,4 +569,195 @@ export interface DevTermApi {
   /** Context of the local workstation. */
   localContext(): Promise<HostContext>
   platform: NodeJS.Platform
+
+  // -------------------------------------------------------------------------
+  // Foundation cluster additions (additive — do not edit the namespace above)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Bridge activity log (tool calls, approval requests, heartbeats, etc.) per
+   * session. Subscribed via the per-session channel and read on demand.
+   */
+  bridgeActivity: {
+    on(sessionId: string, cb: (entry: BridgeActivityEntry) => void): () => void
+    list(
+      sessionId: string,
+      opts?: { sinceMs?: number; limit?: number }
+    ): Promise<BridgeActivityEntry[]>
+    clear(sessionId: string): Promise<void>
+  }
+  /**
+   * Settings export/import. Pops a native save/open dialog; the bundle is
+   * versioned (see `SettingsExportBundle`) and secrets are stripped on export.
+   */
+  settingsIo: {
+    export(): Promise<void>
+    import(): Promise<{
+      ok: boolean
+      counts?: { settings: boolean; snippets: number; workspaces: number; approvalRules: number }
+    }>
+  }
+  /**
+   * Approval rules for the agent guardrail. Scoped per-session or global
+   * (sessionId omitted). Longest-prefix match on `commandPrefix`.
+   */
+  approvalRules: {
+    list(sessionId?: string): Promise<ApprovalRule[]>
+    add(rule: Omit<ApprovalRule, 'id' | 'createdAt'>): Promise<ApprovalRule[]>
+    remove(id: string): Promise<ApprovalRule[]>
+    match(sessionId: string, command: string): Promise<ApprovalRule | null>
+  }
+  /**
+   * SSH port forwarding. `list` is real; `add` and `remove` are stubbed until
+   * Cluster B wires them through to the existing ssh2 client.
+   */
+  portForward: {
+    list(sessionId?: string): Promise<PortForward[]>
+    add(req: Omit<PortForward, 'id' | 'createdAt' | 'bytes'>): Promise<PortForward>
+    remove(id: string): Promise<void>
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Foundation cluster types (additive — append above the file's original tail)
+// ---------------------------------------------------------------------------
+
+/** Solid background colour for the terminal (also shown beneath an image). */
+export interface TerminalBg {
+  color: string
+  image: string | null
+  /** Darkening overlay over the image, 0 (none) .. 0.85 (heavy), for legibility. */
+  dim: number
+}
+
+export type CursorStyle = 'block' | 'bar' | 'underline'
+export type BellStyle = 'none' | 'visual'
+
+/** Appearance + behavior preferences, applied to xterm options live. */
+export interface TerminalPrefs {
+  fontSize: number
+  fontFamily: string
+  lineHeight: number
+  cursorStyle: CursorStyle
+  cursorBlink: boolean
+  scrollback: number
+  copyOnSelect: boolean
+  rightClickPaste: boolean
+  scrollSensitivity: number
+  bell: BellStyle
+}
+
+/** Auto-reconnect policy for SSH sessions (mirrors the renderer settings store). */
+export interface AutoReconnectPrefs {
+  enabled: boolean
+  maxAttempts: number
+  baseDelayMs: number
+  maxDelayMs: number
+  factor: number
+}
+
+/** A snapshot of the user's settings, suitable for export/import. */
+export interface SettingsSnapshot {
+  themeId: string
+  terminalBg: TerminalBg
+  prefs: TerminalPrefs
+  autoReconnect: AutoReconnectPrefs
+}
+
+/** A persistent approval rule for the agent guardrail. */
+export interface ApprovalRule {
+  id: string
+  /** When set, rule only applies to this session; otherwise global. */
+  sessionId?: string
+  /**
+   * Command-prefix token. Matched at a token boundary at the end so
+   * `kubectl` matches `kubectl get pods` but not `kubectlized`.
+   */
+  commandPrefix: string
+  outcome: 'allow' | 'deny' | 'ask'
+  createdAt: number
+}
+
+/** A single entry in the per-session bridge activity log. */
+export type BridgeActivityKind =
+  | 'tool_call'
+  | 'approval_request'
+  | 'approval_outcome'
+  | 'transport'
+  | 'agent_heartbeat'
+  | 'bridge_state'
+
+export interface BridgeActivityEntry {
+  id: string
+  sessionId: string
+  kind: BridgeActivityKind
+  /** Name of the tool/transport/agent — when applicable. */
+  tool?: string
+  /** Short human-readable detail line. */
+  detail: string
+  /** Epoch millis when the entry was recorded. */
+  ts: number
+  /** Optional elapsed time of the call/heartbeat in milliseconds. */
+  durationMs?: number
+  /** Whether the call succeeded (true) or failed (false). Undefined for non-result events. */
+  ok?: boolean
+}
+
+/** SSH port-forward kind. `local` = -L, `dynamic` = -D. */
+export type PortForwardKind = 'local' | 'dynamic'
+
+export interface PortForward {
+  id: string
+  sessionId: string
+  kind: PortForwardKind
+  localPort: number
+  /** Remote side; for `local` (-L): target host+port. For `dynamic` (-D): unused. */
+  remoteHost?: string
+  remotePort?: number
+  createdAt: number
+  /** Total bytes proxied since start (best-effort, may be undefined). */
+  bytes?: number
+}
+
+/** Status badge for a tab (reconnecting, error, etc.). */
+export type TabStatus =
+  | 'normal'
+  | 'reconnecting'
+  | 'disconnected'
+  | 'agent_pending'
+  | 'error'
+
+/** A single recent host the user quick-connected to (for autocomplete). */
+export interface QuickConnectEntry {
+  host: string
+  port: number
+  username: string
+  lastUsedAt: number
+}
+
+/** A more self-contained transfer row (used by persistence / queue UIs). */
+export interface TransferItemV2 {
+  id: string
+  direction: 'upload' | 'download'
+  localPath: string
+  remotePath: string
+  total: number
+  transferred: number
+  done: boolean
+  error?: string
+  canceled?: boolean
+  enqueuedAt: number
+  finishedAt?: number
+}
+
+/** Versioned bundle for export/import. `version: 1`. */
+export interface SettingsExportBundle {
+  version: 1
+  exportedAt: number
+  settings: SettingsSnapshot
+  snippets: Snippet[]
+  /** Saved connections with secret fields stripped (see settingsIo.exportAll). */
+  connections: SavedConnection[]
+  workspaces: Workspace[]
+  approvalRules: ApprovalRule[]
 }
