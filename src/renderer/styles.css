@@ -3248,3 +3248,37 @@ textarea:focus {
     transform: translateY(-1px);
   }
 }
+
+/* ---------------------------------------------------------------------------
+   Reconnect banner — shown across the top of a remote session when the
+   auto-reconnect loop is in flight or has just given up.
+   --------------------------------------------------------------------------- */
+.reconnect-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 12px;
+  background: color-mix(in oklab, var(--accent) 18%, var(--panel));
+  border-bottom: 1px solid color-mix(in oklab, var(--accent) 40%, var(--border));
+  font-size: 12px;
+  color: var(--fg);
+  animation: reconnect-pulse 2.4s ease-in-out infinite;
+}
+.reconnect-banner.is-failed {
+  background: color-mix(in oklab, #e06c75 18%, var(--panel));
+  border-bottom-color: color-mix(in oklab, #e06c75 50%, var(--border));
+  animation: none;
+}
+.reconnect-banner-text {
+  flex: 1 1 auto;
+  font-variant-numeric: tabular-nums;
+}
+.reconnect-banner button.small {
+  padding: 3px 10px;
+  font-size: 11px;
+  border-radius: 4px;
+}
+@keyframes reconnect-pulse {
+  0%, 100% { opacity: 0.95; }
+  50% { opacity: 0.7; }
+}

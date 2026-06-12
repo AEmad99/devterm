@@ -52,6 +52,24 @@ export interface SSHProfile extends SSHHop {
   jump?: SSHHop
 }
 
+/**
+ * Auto-reconnect policy for SSH sessions. Pushed from the renderer (settings
+ * modal) into the main process; the same struct is returned by the policy
+ * IPC so both ends stay in sync.
+ */
+export interface ReconnectPolicy {
+  /** Master switch — when off, drops are terminal. */
+  enabled: boolean
+  /** Max attempts (including the first retry) before giving up. */
+  maxAttempts: number
+  /** Initial delay before the first retry, in ms. */
+  baseDelayMs: number
+  /** Cap for any single delay, in ms (the backoff is clamped here). */
+  maxDelayMs: number
+  /** Multiplier per attempt. 1 = constant delay, 2 = classic exponential. */
+  factor: number
+}
+
 export interface SSHConnectResult {
   sessionId: string
   context: HostContext
@@ -165,6 +183,27 @@ export type SSHStatus =
   | { type: 'hostkey-mismatch'; host: string; fingerprint: string; expected: string }
   | { type: 'error'; message: string }
   | { type: 'closed' }
+  | {
+      /** Auto-reconnect is in flight; the connection is about to be re-established. */
+      type: 'reconnecting'
+      /** 1-based attempt number (1 = first retry). */
+      attempt: number
+      /** Max attempts the manager will try before giving up. */
+      maxAttempts: number
+      /** Delay (ms) until the next attempt. */
+      delayMs: number
+    }
+  | {
+      /** Auto-reconnect succeeded and a fresh session is up. */
+      type: 'reconnected'
+      attempt: number
+    }
+  | {
+      /** Auto-reconnect gave up after exhausting attempts. */
+      type: 'reconnect-failed'
+      attempts: number
+      reason: string
+    }
 
 // ---------------------------------------------------------------------------
 // Files (SFTP remote + local fs) and transfers
@@ -299,6 +338,9 @@ export const IPC = {
   sshData: 'ssh:data', // suffixed :<sessionId>
   sshExit: 'ssh:exit', // suffixed :<sessionId>
   sshStatus: 'ssh:status', // suffixed :<sessionId>
+  sshCancelReconnect: 'ssh:cancel-reconnect', // <sessionId>
+  sshGetReconnectPolicy: 'ssh:get-reconnect-policy',
+  sshSetReconnectPolicy: 'ssh:set-reconnect-policy',
 
   // local filesystem
   fsList: 'fs:list',
@@ -388,6 +430,9 @@ export interface DevTermApi {
     input(sessionId: string, data: string): void
     resize(sessionId: string, cols: number, rows: number): void
     disconnect(sessionId: string): void
+    cancelReconnect(sessionId: string): void
+    getReconnectPolicy(): Promise<ReconnectPolicy>
+    setReconnectPolicy(patch: Partial<ReconnectPolicy>): Promise<ReconnectPolicy>
     onData(sessionId: string, cb: (data: string) => void): () => void
     onExit(sessionId: string, cb: () => void): () => void
     onStatus(sessionId: string, cb: (s: SSHStatus) => void): () => void

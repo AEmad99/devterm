@@ -1,6 +1,6 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import { IPC, type SSHProfile, type SSHStatus } from '@shared/types'
-import { SSHManager } from '../ssh/manager'
+import { SSHManager, type ReconnectPolicy } from '../ssh/manager'
 import { makeCoalescer } from './coalesce'
 
 export function registerSshIpc(getWindow: () => BrowserWindow | null): SSHManager {
@@ -25,6 +25,15 @@ export function registerSshIpc(getWindow: () => BrowserWindow | null): SSHManage
     manager.resize(id, cols, rows)
   )
   ipcMain.on(IPC.sshDisconnect, (_e, id: string) => manager.disconnect(id))
+  // Cancel an in-flight auto-reconnect loop; safe to call when nothing is scheduled.
+  ipcMain.on(IPC.sshCancelReconnect, (_e, id: string) => manager.cancelReconnect(id))
+  // Set/inspect the auto-reconnect policy. The renderer pushes its settings here
+  // on boot and whenever the user edits them in the Settings modal.
+  ipcMain.handle(IPC.sshGetReconnectPolicy, () => manager.getReconnectPolicy())
+  ipcMain.handle(IPC.sshSetReconnectPolicy, (_e, patch: Partial<ReconnectPolicy>) => {
+    manager.setReconnectPolicy(patch)
+    return manager.getReconnectPolicy()
+  })
 
   return manager
 }

@@ -7,6 +7,7 @@ import {
   type SSHProfile,
   type SSHConnectResult,
   type SSHStatus,
+  type ReconnectPolicy,
   type HostContext,
   type DirListing,
   type FileContent,
@@ -49,6 +50,10 @@ const api: DevTermApi = {
     input: (id, data) => ipcRenderer.send(IPC.sshInput, id, data),
     resize: (id, cols, rows) => ipcRenderer.send(IPC.sshResize, id, cols, rows),
     disconnect: (id) => ipcRenderer.send(IPC.sshDisconnect, id),
+    cancelReconnect: (id: string) => ipcRenderer.send(IPC.sshCancelReconnect, id),
+    getReconnectPolicy: (): Promise<ReconnectPolicy> => ipcRenderer.invoke(IPC.sshGetReconnectPolicy),
+    setReconnectPolicy: (patch: Partial<ReconnectPolicy>): Promise<ReconnectPolicy> =>
+      ipcRenderer.invoke(IPC.sshSetReconnectPolicy, patch),
     onData: (id, cb) => subscribe<string>(`${IPC.sshData}:${id}`, cb),
     onExit: (id, cb) => subscribe<void>(`${IPC.sshExit}:${id}`, () => cb()),
     onStatus: (id, cb) => subscribe<SSHStatus>(`${IPC.sshStatus}:${id}`, cb)

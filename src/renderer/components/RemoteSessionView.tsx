@@ -1,6 +1,6 @@
 import { memo, useEffect, useRef, useState } from 'react'
 import type { PolicyMode } from '@shared/types'
-import type { Session } from '../store/sessions'
+import { useSessions, type Session } from '../store/sessions'
 import TerminalView from './TerminalView'
 import SftpBrowser from './SftpBrowser'
 import AgentPane from './AgentPane'
@@ -34,6 +34,15 @@ function RemoteSessionView({ session }: { session: Session }) {
   const [mode, setMode] = useState<PolicyMode>('full')
   const [agentWidth, setAgentWidth] = useState(480)
   const splitRef = useRef<HTMLDivElement>(null)
+  const cancelSshReconnect = useSessions((s) => s.cancelSshReconnect)
+  const status = session.status
+  // Show a banner only for the transient reconnecting state and the
+  // permanent-failure state. A "reconnect cancelled" / "reconnected" status
+  // is left to clear itself on the next event.
+  const showReconnectBanner =
+    status?.startsWith('reconnecting…') ||
+    status === 'reconnect cancelled' ||
+    status?.startsWith('reconnect failed')
 
   useEffect(() => {
     if (!agentOpen) return
@@ -48,6 +57,32 @@ function RemoteSessionView({ session }: { session: Session }) {
 
   return (
     <div className="remote-view">
+      {showReconnectBanner && (
+        <div
+          className={`reconnect-banner ${
+            status?.startsWith('reconnect failed') ? 'is-failed' : ''
+          }`}
+        >
+          <span className="reconnect-banner-text">{status}</span>
+          {status?.startsWith('reconnecting…') && (
+            <button
+              className="ghost small"
+              onClick={() => cancelSshReconnect(session.id)}
+              title="Stop trying to reconnect"
+            >
+              Cancel
+            </button>
+          )}
+          {status?.startsWith('reconnect failed') && (
+            <span
+              className="reconnect-banner-hint"
+              title="Close this tab and re-open from the saved connection"
+            >
+              Close this tab and re-open from the saved connection.
+            </span>
+          )}
+        </div>
+      )}
       <div className="view-toggle">
         <button className={view === 'terminal' ? 'active' : ''} onClick={() => setView('terminal')}>
           Terminal

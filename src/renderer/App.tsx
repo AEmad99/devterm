@@ -95,6 +95,14 @@ export default function App() {
   useEffect(() => {
     window.devterm.localContext().then(setLocal)
     if (sessions.length === 0) addLocal()
+    // Push the saved auto-reconnect policy into the main process once on
+    // boot so the SSH manager's loop matches what the user has configured.
+    // (The settings store also pushes on every change; this is the initial
+    // sync so the main process doesn't run with its built-in default until
+    // the user touches the toggle.)
+    window.devterm.ssh
+      .setReconnectPolicy(useSettings.getState().autoReconnect)
+      .catch(() => undefined)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 

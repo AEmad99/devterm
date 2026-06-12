@@ -44,6 +44,8 @@ interface SessionState {
     profile: SSHProfile,
     meta?: { connectionId?: string; startCwd?: string; groupId?: string }
   ) => Promise<string | null>
+  /** Cancel any in-flight auto-reconnect loop for the given session. */
+  cancelSshReconnect: (sessionId: string) => void
   /** Open an in-app browser pane; returns the new session id. Spawns no pty/ssh. */
   addBrowser: (opts?: { url?: string; groupId?: string }) => string
   setActive: (id: string) => void
@@ -119,6 +121,15 @@ export const useSessions = create<SessionState>((set, get) => ({
           get().setStatus(sessionId, `⚠ HOST KEY MISMATCH for ${st.host} — possible MITM`)
         else if (st.type === 'error') get().setStatus(sessionId, `error: ${st.message}`)
         else if (st.type === 'closed') get().markClosed(sessionId)
+        else if (st.type === 'reconnecting')
+          get().setStatus(
+            sessionId,
+            `reconnecting… attempt ${st.attempt}/${st.maxAttempts} in ${Math.round(st.delayMs / 100) / 10}s`
+          )
+        else if (st.type === 'reconnected')
+          get().setStatus(sessionId, `reconnected (attempt ${st.attempt})`)
+        else if (st.type === 'reconnect-failed')
+          get().setStatus(sessionId, `reconnect failed after ${st.attempts} attempts: ${st.reason}`)
       })
       set((s) => ({
         sessions: s.sessions.map((x) =>
@@ -158,6 +169,20 @@ export const useSessions = create<SessionState>((set, get) => ({
     // active leaf (same path as addLocal); no pty/ssh is created for it.
     set((s) => ({ sessions: [...s.sessions, session], activeId: id }))
     return id
+  },
+
+  cancelSshReconnect: (sessionId) => {
+    // The main process owns the timer; we just ask it to cancel and clear the
+    // visible status. The session stays in its last-known state (closed if it
+    // had dropped).
+    window.devterm.ssh.cancelReconnect(sessionId)
+    set((s) => ({
+      sessions: s.sessions.map((x) =>
+        x.id === sessionId && x.status?.startsWith('reconnecting')
+          ? { ...x, status: 'reconnect cancelled' }
+          : x
+      )
+    }))
   },
 
   setActive: (id) => set({ activeId: id }),

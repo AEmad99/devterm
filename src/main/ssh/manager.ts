@@ -11,6 +11,50 @@ interface Session {
   shell?: ClientChannel
   sftp?: SFTPWrapper
   context: HostContext
+  /**
+   * The original profile the session was opened with. Kept so the
+   * auto-reconnect loop can re-issue `establish` with the same auth/host
+   * without the renderer having to remember the password.
+   */
+  profile: SSHProfile
+  /** Active reconnect loop, if any. Set by the manager when scheduling a retry. */
+  reconnect?: ReconnectState
+}
+
+interface ReconnectState {
+  /** Timer for the next attempt; cleared when the loop is cancelled. */
+  timer: NodeJS.Timeout
+  /** How many attempts have been made so far. */
+  attempt: number
+  /** Effective max attempts from the policy at loop start. */
+  maxAttempts: number
+  /** Backoff policy in effect for this loop. */
+  policy: ReconnectPolicy
+  /** Last error from a failed attempt; surfaced on permanent failure. */
+  lastError?: string
+  /** True if the user explicitly asked for a retry after permanent failure. */
+  userInitiated?: boolean
+}
+
+export interface ReconnectPolicy {
+  /** Master switch — when off, drops are terminal. */
+  enabled: boolean
+  /** Max attempts (including the first retry) before giving up. */
+  maxAttempts: number
+  /** Initial delay before the first retry, in ms. */
+  baseDelayMs: number
+  /** Cap for any single delay, in ms (the backoff is clamped here). */
+  maxDelayMs: number
+  /** Multiplier per attempt. 1 = constant delay, 2 = classic exponential. */
+  factor: number
+}
+
+export const DEFAULT_RECONNECT_POLICY: ReconnectPolicy = {
+  enabled: true,
+  maxAttempts: 5,
+  baseDelayMs: 1000,
+  maxDelayMs: 30000,
+  factor: 2
 }
 
 export interface SSHHandlers {
@@ -26,8 +70,19 @@ export interface SSHHandlers {
  */
 export class SSHManager {
   private sessions = new Map<string, Session>()
+  /** Active reconnect policy; mutated by the renderer via `setReconnectPolicy`. */
+  private policy: ReconnectPolicy = { ...DEFAULT_RECONNECT_POLICY }
 
   constructor(private handlers: SSHHandlers) {}
+
+  /** Update the auto-reconnect policy in effect for future drops. */
+  setReconnectPolicy(patch: Partial<ReconnectPolicy>): void {
+    this.policy = { ...this.policy, ...patch }
+  }
+
+  getReconnectPolicy(): ReconnectPolicy {
+    return { ...this.policy }
+  }
 
   async connect(profile: SSHProfile): Promise<SSHConnectResult> {
     const id = profile.id || randomUUID()
@@ -49,12 +104,178 @@ export class SSHManager {
     client.on('close', () => {
       onStatus({ type: 'closed' })
       this.handlers.onExit(id)
+      // The session is now gone from our map. If auto-reconnect is in effect
+      // (or the user explicitly retried after a permanent failure), schedule
+      // the next attempt with the saved profile.
+      const reaped = this.sessions.get(id)
+      if (!reaped) return
       this.cleanup(id)
+      if (reaped.reconnect) {
+        // User-initiated retry: timer was already cleared by `reconnect()`.
+        void this.runReconnect(id, reaped.reconnect)
+      } else if (this.policy.enabled) {
+        this.scheduleReconnect(id, reaped.profile)
+      }
     })
 
     const context = await detectRemoteContext(client)
-    this.sessions.set(id, { id, client, jump, context })
+    this.sessions.set(id, { id, client, jump, context, profile })
     return { sessionId: id, context }
+  }
+
+  /**
+   * Cancel any in-flight auto-reconnect loop for the given session. Idempotent
+   * and safe to call when nothing is scheduled.
+   */
+  cancelReconnect(sessionId: string): void {
+    const s = this.sessions.get(sessionId)
+    if (!s?.reconnect) return
+    clearTimeout(s.reconnect.timer)
+    delete s.reconnect
+  }
+
+  /**
+   * Manually trigger a reconnect for a session that has either never been
+   * scheduled one (auto-reconnect disabled) or has just given up. The
+   * renderer calls this from the "Reconnect now" button on a closed tab.
+   */
+  reconnect(sessionId: string, profile?: SSHProfile): void {
+    const s = this.sessions.get(sessionId)
+    const prof = profile ?? s?.profile
+    if (!prof) return
+    if (s?.reconnect) {
+      clearTimeout(s.reconnect.timer)
+      void this.runReconnect(sessionId, s.reconnect)
+      return
+    }
+    this.scheduleReconnect(sessionId, prof, /*userInitiated*/ true)
+  }
+
+  /**
+   * Schedule the first auto-reconnect attempt. The id is the *original* session
+   * id (kept stable across reconnects so the renderer's tabs/SFTP/agent
+   * bookkeeping survives the swap). The actual fresh `connect()` will mint a
+   * new uuid; we then update our internal `Session.id` to match, so callers
+   * that have already obtained the new id can still look it up.
+   */
+  private scheduleReconnect(
+    sessionId: string,
+    profile: SSHProfile,
+    userInitiated = false
+  ): void {
+    const policy = { ...this.policy }
+    if (!policy.enabled && !userInitiated) return
+    const maxAttempts = Math.max(1, policy.maxAttempts)
+    const initialDelay = this.computeDelay(0, policy)
+    const state: ReconnectState = {
+      // Placeholder timer; replaced before the first attempt fires.
+      timer: setTimeout(() => undefined, 0),
+      attempt: 0,
+      maxAttempts,
+      policy,
+      userInitiated
+    }
+    // Persist the state on a sentinel "pre-session" entry so `cancelReconnect`
+    // can find it by id even before the first attempt has been made.
+    this.sessions.set(sessionId, {
+      id: sessionId,
+      client: undefined as unknown as Client, // placeholder; replaced on success
+      context: { kind: 'remote', os: 'unknown', detail: '', hostname: '' },
+      profile,
+      reconnect: state
+    })
+    clearTimeout(state.timer)
+    state.timer = setTimeout(() => void this.runReconnect(sessionId, state), initialDelay)
+    this.handlers.onStatus(sessionId, {
+      type: 'reconnecting',
+      attempt: 1,
+      maxAttempts,
+      delayMs: initialDelay
+    })
+  }
+
+  /**
+   * Run a single reconnect attempt. On success the placeholder session is
+   * replaced with a fresh live one (same id) and a `reconnected` status fires.
+   * On failure we either schedule the next attempt (exponential backoff) or
+   * surface `reconnect-failed` if we have used all attempts.
+   */
+  private async runReconnect(sessionId: string, state: ReconnectState): Promise<void> {
+    const s = this.sessions.get(sessionId)
+    if (!s) return
+    const profile = s.profile
+    state.attempt += 1
+    try {
+      // We don't have a fresh id yet — `connect` mints one if the profile has
+      // no `id` (we strip it so the manager does mint a new uuid) and returns
+      // a new id. To keep the original session id stable across reconnects, we
+      // *override* `profile.id` on the way in.
+      const { client, jump } = await establish(
+        {
+          host: profile.host,
+          port: profile.port,
+          username: profile.username,
+          password: profile.password,
+          privateKeyPath: profile.privateKeyPath,
+          passphrase: profile.passphrase,
+          jump: profile.jump
+        },
+        () => {
+          /* swallow per-attempt status events — surface only the final outcome */
+        }
+      )
+      const context = await detectRemoteContext(client)
+      // The client is now alive; re-wire the close handler to schedule the
+      // next reconnect if it drops again.
+      client.on('close', () => {
+        this.handlers.onStatus(sessionId, { type: 'closed' })
+        this.handlers.onExit(sessionId)
+        const cur = this.sessions.get(sessionId)
+        if (!cur) return
+        this.cleanup(sessionId)
+        if (cur.reconnect) {
+          void this.runReconnect(sessionId, cur.reconnect)
+        } else if (this.policy.enabled) {
+          this.scheduleReconnect(sessionId, cur.profile)
+        }
+      })
+      this.sessions.set(sessionId, {
+        id: sessionId,
+        client,
+        jump,
+        context,
+        profile,
+        reconnect: state
+      })
+      this.handlers.onStatus(sessionId, { type: 'reconnected', attempt: state.attempt })
+    } catch (err) {
+      const reason = (err as Error).message || String(err)
+      state.lastError = reason
+      if (state.attempt >= state.maxAttempts) {
+        delete this.sessions.get(sessionId)?.reconnect
+        this.sessions.delete(sessionId)
+        this.handlers.onStatus(sessionId, {
+          type: 'reconnect-failed',
+          attempts: state.attempt,
+          reason
+        })
+        return
+      }
+      const delay = this.computeDelay(state.attempt, state.policy)
+      this.handlers.onStatus(sessionId, {
+        type: 'reconnecting',
+        attempt: state.attempt + 1,
+        maxAttempts: state.maxAttempts,
+        delayMs: delay
+      })
+      state.timer = setTimeout(() => void this.runReconnect(sessionId, state), delay)
+    }
+  }
+
+  /** Classic exponential backoff: base * factor^attempt, clamped to maxDelayMs. */
+  private computeDelay(attempt: number, policy: ReconnectPolicy): number {
+    const raw = policy.baseDelayMs * Math.pow(policy.factor, Math.max(0, attempt))
+    return Math.min(policy.maxDelayMs, Math.max(0, Math.floor(raw)))
   }
 
   openShell(sessionId: string, cols: number, rows: number): Promise<void> {
@@ -182,12 +403,22 @@ export class SSHManager {
   disconnect(sessionId: string): void {
     const s = this.sessions.get(sessionId)
     if (!s) return
-    try {
-      s.shell?.close()
-      s.client.end()
-      s.jump?.end()
-    } catch {
-      /* ignore */
+    // Cancel any in-flight reconnect loop first so the close handler does
+    // not race a new attempt. Use the same flag the close handler checks
+    // (`s.reconnect`) — clearTimeout + delete it from the session record.
+    if (s.reconnect) {
+      clearTimeout(s.reconnect.timer)
+      delete s.reconnect
+    }
+    // The placeholder session has no live client (`client === undefined`).
+    if (s.client) {
+      try {
+        s.shell?.close()
+        s.client.end()
+        s.jump?.end()
+      } catch {
+        /* ignore */
+      }
     }
     this.cleanup(sessionId)
   }

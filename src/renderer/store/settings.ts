@@ -41,6 +41,26 @@ export interface AppSettings {
   themeId: string
   terminalBg: TerminalBg
   prefs: TerminalPrefs
+  /** Auto-reconnect policy applied to remote SSH sessions when they drop. */
+  autoReconnect: AutoReconnectSettings
+}
+
+/**
+ * User-facing knobs for the SSH auto-reconnect loop. Matches the main-process
+ * `ReconnectPolicy` (kept separate so the renderer never has to import the
+ * main-only types).
+ */
+export interface AutoReconnectSettings {
+  /** Master switch. */
+  enabled: boolean
+  /** Total attempts (1 = single retry, 5 = 1 initial + 4 retries). */
+  maxAttempts: number
+  /** Delay before the first retry, in ms. */
+  baseDelayMs: number
+  /** Cap for any single delay, in ms. */
+  maxDelayMs: number
+  /** Multiplier per attempt. 2 = classic exponential. */
+  factor: number
 }
 
 export const DEFAULT_FONT_FAMILY = 'Cascadia Code, Consolas, "Courier New", monospace'
@@ -63,6 +83,13 @@ const DEFAULTS: AppSettings = {
     rightClickPaste: false,
     scrollSensitivity: 1,
     bell: 'none'
+  },
+  autoReconnect: {
+    enabled: true,
+    maxAttempts: 5,
+    baseDelayMs: 1000,
+    maxDelayMs: 30000,
+    factor: 2
   }
 }
 
@@ -78,7 +105,8 @@ function load(): AppSettings {
     return {
       themeId: typeof parsed?.themeId === 'string' ? parsed.themeId : DEFAULTS.themeId,
       terminalBg: { ...DEFAULTS.terminalBg, ...(parsed?.terminalBg ?? {}) },
-      prefs: { ...DEFAULTS.prefs, ...(parsed?.prefs ?? {}) }
+      prefs: { ...DEFAULTS.prefs, ...(parsed?.prefs ?? {}) },
+      autoReconnect: { ...DEFAULTS.autoReconnect, ...(parsed?.autoReconnect ?? {}) }
     }
   } catch {
     return DEFAULTS
@@ -89,6 +117,7 @@ interface SettingsState extends AppSettings {
   setThemeId: (id: string) => void
   setTerminalBg: (patch: Partial<TerminalBg>) => void
   setPrefs: (patch: Partial<TerminalPrefs>) => void
+  setAutoReconnect: (patch: Partial<AutoReconnectSettings>) => void
   reset: () => void
 }
 
@@ -99,7 +128,8 @@ function persist(state: AppSettings): void {
       JSON.stringify({
         themeId: state.themeId,
         terminalBg: state.terminalBg,
-        prefs: state.prefs
+        prefs: state.prefs,
+        autoReconnect: state.autoReconnect
       })
     )
   } catch {
@@ -112,23 +142,37 @@ export const useSettings = create<SettingsState>((set, get) => ({
 
   setThemeId: (id) => {
     set({ themeId: id })
-    persist({ themeId: id, terminalBg: get().terminalBg, prefs: get().prefs })
+    persist({ themeId: id, terminalBg: get().terminalBg, prefs: get().prefs, autoReconnect: get().autoReconnect })
   },
 
   setTerminalBg: (patch) => {
     const terminalBg = { ...get().terminalBg, ...patch }
     set({ terminalBg })
-    persist({ themeId: get().themeId, terminalBg, prefs: get().prefs })
+    persist({ themeId: get().themeId, terminalBg, prefs: get().prefs, autoReconnect: get().autoReconnect })
   },
 
   setPrefs: (patch) => {
     const prefs = { ...get().prefs, ...patch }
     set({ prefs })
-    persist({ themeId: get().themeId, terminalBg: get().terminalBg, prefs })
+    persist({ themeId: get().themeId, terminalBg: get().terminalBg, prefs, autoReconnect: get().autoReconnect })
+  },
+
+  setAutoReconnect: (patch) => {
+    const autoReconnect = { ...get().autoReconnect, ...patch }
+    set({ autoReconnect })
+    persist({ themeId: get().themeId, terminalBg: get().terminalBg, prefs: get().prefs, autoReconnect })
+    // Push to the main process so the live policy updates immediately.
+    void window.devterm.ssh.setReconnectPolicy?.(autoReconnect).catch(() => undefined)
   },
 
   reset: () => {
-    set({ themeId: DEFAULTS.themeId, terminalBg: DEFAULTS.terminalBg, prefs: DEFAULTS.prefs })
+    set({
+      themeId: DEFAULTS.themeId,
+      terminalBg: DEFAULTS.terminalBg,
+      prefs: DEFAULTS.prefs,
+      autoReconnect: DEFAULTS.autoReconnect
+    })
     persist(DEFAULTS)
+    void window.devterm.ssh.setReconnectPolicy?.(DEFAULTS.autoReconnect).catch(() => undefined)
   }
 }))

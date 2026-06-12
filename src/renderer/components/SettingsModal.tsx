@@ -72,6 +72,8 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
   const setTerminalBg = useSettings((s) => s.setTerminalBg)
   const prefs = useSettings((s) => s.prefs)
   const setPrefs = useSettings((s) => s.setPrefs)
+  const autoReconnect = useSettings((s) => s.autoReconnect)
+  const setAutoReconnect = useSettings((s) => s.setAutoReconnect)
   const reset = useSettings((s) => s.reset)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -266,6 +268,91 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                 <option value="none">None</option>
                 <option value="visual">Visual flash</option>
               </select>
+            </span>
+          </label>
+        </section>
+
+        <section className="settings-section">
+          <h3>Connection</h3>
+          <div className="settings-sub-hint">
+            What to do when an SSH connection drops — DevTerm retries with
+            exponential backoff so a flaky network doesn&apos;t interrupt your work.
+          </div>
+
+          <label className="settings-row">
+            <span className="settings-label">Auto-reconnect on drop</span>
+            <span className="settings-control">
+              <input
+                type="checkbox"
+                checked={autoReconnect.enabled}
+                onChange={(e) => setAutoReconnect({ enabled: e.target.checked })}
+              />
+            </span>
+          </label>
+
+          <label className="settings-row">
+            <span className="settings-label">Max attempts ({autoReconnect.maxAttempts})</span>
+            <span className="settings-control">
+              <input
+                type="range"
+                min={1}
+                max={20}
+                step={1}
+                value={autoReconnect.maxAttempts}
+                disabled={!autoReconnect.enabled}
+                onChange={(e) => setAutoReconnect({ maxAttempts: Number(e.target.value) })}
+              />
+            </span>
+          </label>
+
+          <label className="settings-row">
+            <span className="settings-label">
+              First retry in ({(autoReconnect.baseDelayMs / 1000).toFixed(1)}s)
+            </span>
+            <span className="settings-control">
+              <input
+                type="range"
+                min={250}
+                max={15000}
+                step={250}
+                value={autoReconnect.baseDelayMs}
+                disabled={!autoReconnect.enabled}
+                onChange={(e) => setAutoReconnect({ baseDelayMs: Number(e.target.value) })}
+              />
+            </span>
+          </label>
+
+          <label className="settings-row">
+            <span className="settings-label">
+              Max delay cap ({(autoReconnect.maxDelayMs / 1000).toFixed(0)}s)
+            </span>
+            <span className="settings-control">
+              <input
+                type="range"
+                min={1000}
+                max={120000}
+                step={1000}
+                value={autoReconnect.maxDelayMs}
+                disabled={!autoReconnect.enabled}
+                onChange={(e) => setAutoReconnect({ maxDelayMs: Number(e.target.value) })}
+              />
+            </span>
+          </label>
+
+          <label className="settings-row">
+            <span className="settings-label">
+              Backoff factor ({autoReconnect.factor.toFixed(1)}×)
+            </span>
+            <span className="settings-control">
+              <input
+                type="range"
+                min={1}
+                max={4}
+                step={0.1}
+                value={autoReconnect.factor}
+                disabled={!autoReconnect.enabled}
+                onChange={(e) => setAutoReconnect({ factor: Number(e.target.value) })}
+              />
             </span>
           </label>
         </section>
