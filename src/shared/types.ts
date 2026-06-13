@@ -121,6 +121,8 @@ export interface WorkspaceItem {
 export interface Workspace {
   id: string
   name: string
+  /** Optional free-form description (shown in the manager row). */
+  description?: string
   /** Terminals included, in tab order. */
   items: WorkspaceItem[]
   /** Optional saved split arrangement (leaf tabs are workspace-item ids). */
@@ -130,6 +132,10 @@ export interface Workspace {
    * into `items`. Never written by current code.
    */
   connectionIds?: string[]
+  /** Wall-clock time (ms since epoch) of the most recent launch; undefined if never. */
+  lastLaunchedAt?: number
+  /** Number of times this workspace has been launched (incremented on every launch). */
+  launchCount?: number
 }
 
 // ---------------------------------------------------------------------------
@@ -390,6 +396,12 @@ export const IPC = {
   workspacesList: 'workspaces:list',
   workspacesSave: 'workspaces:save',
   workspacesDelete: 'workspaces:delete',
+  /** Cluster B: rename a workspace in place; returns the full updated list. */
+  workspacesRename: 'workspaces:rename',
+  /** Cluster B: duplicate a workspace with a new id + " (copy)" suffix; returns the full updated list. */
+  workspacesDuplicate: 'workspaces:duplicate',
+  /** Cluster B: record a launch (increments launchCount, sets lastLaunchedAt); returns the full updated list. */
+  workspacesRecordLaunch: 'workspaces:record-launch',
 
   // snippets (persisted in userData)
   snippetsList: 'snippets:list',
@@ -520,6 +532,12 @@ export interface DevTermApi {
     list(): Promise<Workspace[]>
     save(ws: Workspace): Promise<Workspace[]>
     delete(id: string): Promise<Workspace[]>
+    /** Cluster B: rename a workspace in place. */
+    rename(id: string, name: string): Promise<Workspace[]>
+    /** Cluster B: duplicate a workspace; the new copy has " (copy)" appended to the name. */
+    duplicate(id: string): Promise<Workspace[]>
+    /** Cluster B: record that a workspace was launched; bumps launchCount + lastLaunchedAt. */
+    recordLaunch(id: string): Promise<Workspace[]>
   }
   /** Persisted command snippets (CRUD); each call returns the full updated list. */
   snippets: {

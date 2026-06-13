@@ -128,7 +128,13 @@ const api: DevTermApi = {
   workspaces: {
     list: (): Promise<Workspace[]> => ipcRenderer.invoke(IPC.workspacesList),
     save: (ws: Workspace): Promise<Workspace[]> => ipcRenderer.invoke(IPC.workspacesSave, ws),
-    delete: (id: string): Promise<Workspace[]> => ipcRenderer.invoke(IPC.workspacesDelete, id)
+    delete: (id: string): Promise<Workspace[]> => ipcRenderer.invoke(IPC.workspacesDelete, id),
+    rename: (id: string, name: string): Promise<Workspace[]> =>
+      ipcRenderer.invoke(IPC.workspacesRename, id, name),
+    duplicate: (id: string): Promise<Workspace[]> =>
+      ipcRenderer.invoke(IPC.workspacesDuplicate, id),
+    recordLaunch: (id: string): Promise<Workspace[]> =>
+      ipcRenderer.invoke(IPC.workspacesRecordLaunch, id)
   },
   snippets: {
     list: (): Promise<Snippet[]> => ipcRenderer.invoke(IPC.snippetsList),

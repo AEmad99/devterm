@@ -69,6 +69,7 @@ export default function App() {
   const activeGroupId = useLayout((s) => s.activeGroupId)
   const setActiveGroup = useLayout((s) => s.setActiveGroup)
   const createGroup = useLayout((s) => s.createGroup)
+  const groupFlags = useLayout((s) => s.groupFlags)
   const editorDocs = useEditors((s) => s.docs)
   const editorActiveId = useEditors((s) => s.activeId)
   const editorFocused = useEditors((s) => s.focused)
@@ -281,6 +282,31 @@ export default function App() {
     setShowSaveWs(false)
   }
 
+  // Cluster B: when the active group was launched from a saved workspace, offer
+  // a "Save back" action that updates that workspace in place with the current
+  // terminals + layout. The new id, name, and description come from the
+  // existing workspace record (we keep its identity; the new name flows from
+  // the same modal as a brand-new save, so the user can rename in the process).
+  const activeGroupFlag = groupFlags[activeGroupId]
+  const launchedFromId = activeGroupFlag?.launchedFromWorkspaceId
+
+  const saveBackToWorkspace = async () => {
+    if (!launchedFromId) return
+    const list = await window.devterm.workspaces.list()
+    const ws = list.find((w) => w.id === launchedFromId)
+    if (!ws) return
+    const { items, layout } = captureWorkspace(sessions, activeGroupId)
+    if (!items.length) return
+    await window.devterm.workspaces.save({
+      ...ws,
+      items,
+      layout
+    })
+    // The flag stays set so the user can keep editing + saving. We don't clear
+    // it on every save — only if they explicitly "Save as new workspace" or
+    // rename (those change the identity).
+  }
+
   return (
     <div className="app">
       <div className="titlebar">
@@ -476,14 +502,25 @@ export default function App() {
                       <IconPlus size={14} />
                     </div>
                     <span className="spacer" />
+                    {launchedFromId ? (
+                      <button
+                        className="group-save group-save-back"
+                        title="Save changes back to the workspace this group was launched from"
+                        disabled={capturable.length === 0}
+                        onClick={() => void saveBackToWorkspace()}
+                      >
+                        <IconSave size={14} />
+                        <span>Save back to workspace</span>
+                      </button>
+                    ) : null}
                     <button
                       className="group-save"
-                      title="Save this group's terminals as a workspace"
+                      title="Save this group's terminals as a new workspace"
                       disabled={capturable.length === 0}
                       onClick={() => setShowSaveWs(true)}
                     >
                       <IconSave size={14} />
-                      <span>Save group</span>
+                      <span>{launchedFromId ? 'Save as new' : 'Save group'}</span>
                     </button>
                   </div>
                 )}

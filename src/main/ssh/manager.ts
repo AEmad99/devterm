@@ -278,6 +278,17 @@ export class SSHManager {
     return Math.min(policy.maxDelayMs, Math.max(0, Math.floor(raw)))
   }
 
+  /**
+   * Return the session's live ssh2 client (looked up, never instantiated). The
+   * caller MUST NOT cache the result across reconnects — the client object is
+   * replaced by the auto-reconnect loop, and features bound to a session
+   * (SFTP, port forwards, agent tools) re-fetch this each time. Used by
+   * `port-forward.ts` to open `forwardOut` channels on the existing client.
+   */
+  getClient(sessionId: string): Client | undefined {
+    return this.sessions.get(sessionId)?.client
+  }
+
   openShell(sessionId: string, cols: number, rows: number): Promise<void> {
     const s = this.sessions.get(sessionId)
     if (!s) return Promise.reject(new Error('unknown session'))
