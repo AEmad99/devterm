@@ -1,7 +1,20 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { HistoryResult, Snippet } from '@shared/types'
 import { activeSession, runInActive } from '../lib/input'
-import { applyPlaceholders, extractPlaceholders } from '../lib/snippets'
+import {
+  applyPlaceholders,
+  clearCachedPlaceholders,
+  extractPlaceholders,
+  persistValues,
+  prefilledValues
+} from '../lib/snippets'
+import {
+  buildFrecency,
+  filterHistory,
+  normalizeForDedupe,
+  snippetCommandSet,
+  type FrecencyEntry
+} from '../lib/history-frecency'
 
 // Fuzzy-ish filter: every whitespace-separated term must appear (case-insensitive).
 function termsOf(query: string): string[] {
@@ -12,10 +25,10 @@ function matches(s: Snippet, terms: string[]): boolean {
   return terms.every((t) => hay.includes(t))
 }
 
-// One selectable palette entry: a saved snippet, or a command from history.
+// One selectable palette entry: a saved snippet, or a frecency-ranked history row.
 type Item =
   | { kind: 'snippet'; snippet: Snippet }
-  | { kind: 'history'; command: string; count?: number }
+  | { kind: 'history'; command: string; count: number }
 
 export default function CommandPalette({
   onRun,
@@ -27,14 +40,18 @@ export default function CommandPalette({
 }) {
   const [snippets, setSnippets] = useState<Snippet[]>([])
   const [hist, setHist] = useState<HistoryResult | null>(null)
-  const [histSort, setHistSort] = useState<'recent' | 'frequent'>('recent')
   const [scopeLabel, setScopeLabel] = useState('Local')
+  // `saved` tracks history commands the user has promoted to a snippet in
+  // this session — drives the "✓" badge so they don't get re-saved.
   const [saved, setSaved] = useState<Set<string>>(new Set())
   const [query, setQuery] = useState('')
   const [sel, setSel] = useState(0)
   const [chosen, setChosen] = useState<Snippet | null>(null)
   const [values, setValues] = useState<Record<string, string>>({})
   const [error, setError] = useState<string | null>(null)
+  // Bumped when the user clicks "Clear recent values" so the form re-pre-fills
+  // from an (intentionally) empty cache.
+  const [clearNonce, setClearNonce] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
   const firstParamRef = useRef<HTMLInputElement>(null)
 
@@ -58,21 +75,26 @@ export default function CommandPalette({
     return snippets.filter((s) => matches(s, terms))
   }, [snippets, query])
 
-  // History commands that match — excluding any already saved as a snippet (they
-  // show in the Snippets section instead), capped so the list stays scannable.
-  const histMatches = useMemo(() => {
-    if (!hist) return [] as { command: string; count?: number }[]
-    const terms = termsOf(query)
-    const snippetCmds = new Set(snippets.map((s) => s.command))
-    const base =
-      histSort === 'frequent'
-        ? hist.frequent.map((f) => ({ command: f.command, count: f.count }))
-        : hist.recent.map((c) => ({ command: c }) as { command: string; count?: number })
-    return base
-      .filter((h) => !snippetCmds.has(h.command))
-      .filter((h) => terms.every((t) => h.command.toLowerCase().includes(t)))
-      .slice(0, query ? 60 : 12)
-  }, [hist, histSort, snippets, query])
+  // Frecency list = merged + scored, filtered against saved snippets (so the
+  // user doesn't see the same command twice — once as a snippet, once in
+  // history). Capped so the list stays scannable. Whitespace-tolerant dedupe
+  // means a " ssh …" in history hides behind the trimmed snippet version.
+  const histMatches = useMemo<FrecencyEntry[]>(() => {
+    const frec = buildFrecency(hist)
+    const snippetCmds = snippetCommandSet(snippets)
+    return filterHistory(frec, snippetCmds, query, query ? 60 : 12)
+  }, [hist, snippets, query])
+
+  // The union of "commands already saved as a snippet (any name)" — for the
+  // ✓ indicator. This is broader than the local `saved` set, which only
+  // tracks in-session saves; without the cross-name check, a history command
+  // that was previously saved as e.g. "Restart nginx" would re-show the "+"
+  // even though the snippet is right there under a different name.
+  const savedAsSnippetCmds = useMemo(() => {
+    const out = new Set<string>()
+    for (const s of snippets) out.add(normalizeForDedupe(s.command))
+    return out
+  }, [snippets])
 
   // Flat list backing keyboard navigation; rendered with section headers below.
   const items = useMemo<Item[]>(
@@ -102,7 +124,9 @@ export default function CommandPalette({
       return
     }
     setChosen(s)
-    setValues({})
+    // Pre-fill from the sessionStorage cache; clearNonce forces a re-read
+    // after the user explicitly clears the cache.
+    setValues(prefilledValues(s.id, s.command))
     setError(null)
     setTimeout(() => firstParamRef.current?.focus(), 0)
   }
@@ -127,8 +151,20 @@ export default function CommandPalette({
 
   const submitParams = (execute: boolean) => {
     if (!chosen) return
+    // Write the values back to the per-snippet cache so the next open of this
+    // form (in the same tab) pre-fills them again. submitParams is also the
+    // point of no return: anything in `values` is what the user just decided.
+    persistValues(chosen.id, chosen.command, values)
     send(applyPlaceholders(chosen.command, values), execute)
   }
+
+  const clearRecentValues = () => {
+    clearCachedPlaceholders()
+    setValues({})
+    setClearNonce((n) => n + 1)
+  }
+  // Touch clearNonce so the effect re-fires (and re-prefills, finding nothing).
+  void clearNonce
 
   const onListKey = (e: React.KeyboardEvent) => {
     if (e.key === 'ArrowDown') {
@@ -149,6 +185,18 @@ export default function CommandPalette({
   const placeholders = chosen ? extractPlaceholders(chosen.command) : []
   const hasHistory = !!hist && (hist.recent.length > 0 || hist.frequent.length > 0)
 
+  // True when the user has at least one entry in the placeholder cache; only
+  // show the "Clear recent values" button when there's something to clear.
+  // (We don't try to read the cache from React state — the storage layer is
+  // opaque — so we just always render it; the no-op case is a no-op call.)
+  const canClearCache = placeholders.length > 0
+
+  // True when a history row's command has been saved (under any name) as a
+  // snippet. Cross-name match: the local `saved` set only covers saves the
+  // user just did in this palette session.
+  const isSavedHistory = (cmd: string) =>
+    saved.has(cmd) || savedAsSnippetCmds.has(normalizeForDedupe(cmd))
+
   // Row renderer keyed off the global index so selection works across sections.
   const row = (item: Item, idx: number) => {
     const selected = idx === sel
@@ -165,6 +213,7 @@ export default function CommandPalette({
         </div>
       )
     }
+    const savedAlready = isSavedHistory(item.command)
     return (
       <div
         key={`h-${item.command}`}
@@ -174,20 +223,20 @@ export default function CommandPalette({
       >
         <div className="palette-histrow">
           <span className="palette-cmd sn-mono">{item.command}</span>
-          {typeof item.count === 'number' && item.count > 1 && (
+          {item.count > 1 && (
             <span className="palette-count" title={`run ${item.count} times`}>
               {item.count}×
             </span>
           )}
           <button
             className="palette-save"
-            title={saved.has(item.command) ? 'Saved as snippet' : 'Save as snippet'}
+            title={savedAlready ? 'Saved as snippet' : 'Save as snippet'}
             onClick={(e) => {
               e.stopPropagation()
-              if (!saved.has(item.command)) void saveAsSnippet(item.command)
+              if (!savedAlready) void saveAsSnippet(item.command)
             }}
           >
-            {saved.has(item.command) ? '✓' : '+'}
+            {savedAlready ? '✓' : '+'}
           </button>
         </div>
       </div>
@@ -221,19 +270,9 @@ export default function CommandPalette({
                   {histMatches.length > 0 && (
                     <div className="palette-section">
                       <span>{scopeLabel} history</span>
-                      <span className="spacer" />
-                      <button
-                        className={`palette-seg ${histSort === 'recent' ? 'on' : ''}`}
-                        onClick={() => setHistSort('recent')}
-                      >
-                        Recent
-                      </button>
-                      <button
-                        className={`palette-seg ${histSort === 'frequent' ? 'on' : ''}`}
-                        onClick={() => setHistSort('frequent')}
-                      >
-                        Frequent
-                      </button>
+                      <span className="palette-frec-tag" title="Sorted by recency × frequency">
+                        frecency
+                      </span>
                     </div>
                   )}
                   {histMatches.map((h, i) =>
@@ -288,6 +327,15 @@ export default function CommandPalette({
             </div>
             {error && <div className="palette-error">{error}</div>}
             <div className="palette-actions">
+              <button
+                className="ghost"
+                onClick={clearRecentValues}
+                disabled={!canClearCache}
+                title="Erase the cached placeholder values for this palette session"
+              >
+                Clear recent values
+              </button>
+              <span className="spacer" />
               <button onClick={() => setChosen(null)}>Back</button>
               <button onClick={() => submitParams(false)}>Insert</button>
               <button className="primary" onClick={() => submitParams(true)}>

@@ -16,6 +16,12 @@
   --danger: #e0564f;
   --ok: #3fb950;
 
+  /* Tab-dot status colors — used by TabStatusDot (Cluster E). Themes can
+     retint by overriding these; never hardcode a hex in the dot's own rules. */
+  --tab-status-warn: #e0af68;      /* yellow — agent awaiting approval */
+  --tab-status-error: #f48771;     /* red    — error / failed / mismatch */
+  --tab-status-pending: #ff9e64;   /* orange — reconnecting / bridge starting */
+
   /* Derived tokens — resolve against the live core vars, so they re-theme for
      free. color-mix is supported by the bundled Chromium. */
   --accent-quiet: color-mix(in srgb, var(--accent) 16%, var(--panel));
@@ -807,6 +813,7 @@ body,
   height: 8px;
   border-radius: 50%;
   background: var(--muted);
+  display: inline-block;
 }
 .tab .dot[data-kind='local'] {
   background: #4ec9b0;
@@ -816,6 +823,26 @@ body,
 }
 .tab .dot[data-kind='browser'] {
   background: #d7a35e;
+}
+/* Status overlay — the dot shows a kind color by default and a status color
+   when one of the per-session states is active. The status ring uses a
+   thin box-shadow so the kind color is still visible underneath. */
+.tab .dot[data-status='warn'] {
+  box-shadow: 0 0 0 1px var(--tab-status-warn);
+  animation: reconnect-pulse 1.4s ease-in-out infinite;
+}
+.tab .dot[data-status='error'] {
+  box-shadow: 0 0 0 1px var(--tab-status-error);
+}
+.tab .dot[data-status='pending'] {
+  box-shadow: 0 0 0 1px var(--tab-status-pending);
+  animation: reconnect-pulse 1.4s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .tab .dot[data-status='warn'],
+  .tab .dot[data-status='pending'] {
+    animation: none;
+  }
 }
 
 .tab-close {
@@ -1723,6 +1750,19 @@ body,
 }
 .palette-section .spacer {
   flex: 1;
+}
+/* Cluster E: small "frecency" tag on the history section header — replaces
+   the Recent/Frequent toggle now that the list is a single ranked view. */
+.palette-frec-tag {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--muted) 18%, transparent);
+  padding: 1px 6px;
+  border-radius: 8px;
+  cursor: help;
 }
 /* Recent / Frequent toggle on the history header. */
 .palette-seg {

@@ -24,6 +24,8 @@ export type HotkeyId =
   | 'settings'
   | 'nextTerminal'
   | 'prevTerminal'
+  | 'nextTab'
+  | 'prevTab'
   | 'toggleFocus'
   | 'shortcuts'
 
@@ -55,6 +57,12 @@ export const HOTKEYS: Hotkey[] = [
   { id: 'zoomReset', mod: true, key: '0', label: 'Reset font size' },
   { id: 'nextTerminal', mod: true, key: 'PageDown', label: 'Next terminal' },
   { id: 'prevTerminal', mod: true, key: 'PageUp', label: 'Previous terminal' },
+  // Ctrl+Tab / Ctrl+Shift+Tab cycle through tabs in the active group. Skipped
+  // when a text input has focus (see App.tsx focus guard) so it doesn't
+  // hijack form navigation. Devtools and other host shortcuts still get the
+  // chord when focus is elsewhere.
+  { id: 'nextTab', mod: true, key: 'Tab', label: 'Next tab' },
+  { id: 'prevTab', mod: true, shift: true, key: 'Tab', label: 'Previous tab' },
   { id: 'toggleFocus', mod: true, shift: true, key: 'z', label: 'Focus (magnify) terminal' },
   { id: 'settings', mod: true, key: ',', label: 'Settings' },
   { id: 'shortcuts', mod: true, key: '/', label: 'Keyboard shortcuts' }

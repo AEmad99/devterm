@@ -25,6 +25,9 @@ export default function ConfirmActionModal() {
   useEffect(() => {
     return window.devterm.agent.onConfirm((r) => {
       setQueue((q) => (q.some((x) => x.reqId === r.reqId) ? q : [...q, r]))
+      // Flag the originating session so its tab dot can glow yellow until the
+      // operator acts on the request. Cleared in the reply/snooze handlers.
+      useSessions.getState().setAgentPendingApproval(r.sessionId, true)
     })
   }, [])
 
@@ -55,11 +58,19 @@ export default function ConfirmActionModal() {
       }
     }
     setQueue((q) => q.filter((x) => x.reqId !== top.reqId))
+    // The session still has this id pending only if another queued request
+    // targets it; otherwise the dot can go back to its normal color.
+    if (!queue.some((x) => x.sessionId === top.sessionId && x.reqId !== top.reqId)) {
+      useSessions.getState().setAgentPendingApproval(top.sessionId, false)
+    }
     setRemember(false)
   }
 
   const snooze = () => {
     setSnoozed((s) => new Set(s).add(top.reqId))
+    // SNOOZE only hides the modal; the bridge still has the request open. Keep
+    // the tab dot yellow so the operator knows action is still pending; the
+    // flag will clear when the request is resolved via replyConfirm.
   }
 
   const session = sessions.find((x) => x.id === top.sessionId)

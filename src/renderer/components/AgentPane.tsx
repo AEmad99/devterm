@@ -29,6 +29,12 @@ export default function AgentPane({ sessionId, mode }: { sessionId: string; mode
   const [lastHeartbeatAt, setLastHeartbeatAt] = useState<number | undefined>()
   const [restartNonce, setRestartNonce] = useState(0)
   const hostClosed = useSessions((s) => s.sessions.find((x) => x.id === sessionId)?.closed ?? false)
+  // Mirror the bridge state up to the session store so the tab dot can color
+  // on it. The local `bridge` is the source of truth for the in-pane status
+  // pill; the store copy is just a cache for the chrome. We only push the
+  // canonical AgentBridgeState values ('connecting' and 'exited' are
+  // AgentPane-local only).
+  const setAgentBridgeState = useSessions((s) => s.setAgentBridgeState)
 
   useEffect(() => {
     return window.devterm.agent.onBridgeStatus(sessionId, (status) => {
@@ -36,8 +42,9 @@ export default function AgentPane({ sessionId, mode }: { sessionId: string; mode
       setBridgeMessage(status.message)
       if (status.mcpUrl) setMcpUrl(status.mcpUrl)
       setLastHeartbeatAt(status.lastHeartbeatAt)
+      setAgentBridgeState(sessionId, status.state)
     })
-  }, [sessionId])
+  }, [sessionId, setAgentBridgeState])
 
   useEffect(() => {
     const host = hostRef.current
@@ -116,8 +123,12 @@ export default function AgentPane({ sessionId, mode }: { sessionId: string; mode
       cleanups.forEach((fn) => fn())
       window.devterm.agent.close(sessionId)
       term.dispose()
+      // Tab dot shouldn't keep showing the old bridge state once the pane is
+      // gone. A follow-up mount of the same pane will push a fresh state on
+      // its first bridge-status event.
+      setAgentBridgeState(sessionId, 'stopped')
     }
-  }, [mode, restartNonce, sessionId])
+  }, [mode, restartNonce, sessionId, setAgentBridgeState])
 
   const pill = hostClosed
     ? { tone: 'down', text: 'Host disconnected' }

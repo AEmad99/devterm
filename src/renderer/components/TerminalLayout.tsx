@@ -6,6 +6,7 @@ import { useSessions, type Session } from '../store/sessions'
 import { useEditors } from '../store/editors'
 import { useLayout, computeLayout, type DropZone, type LeafNode, type Rect } from '../store/layout'
 import { IconMerge, IconPlus, IconFocus, IconClose } from './Icons'
+import TabStatusDot from './TabStatusDot'
 
 const TAB_H = 30 // px height of a pane's tab strip
 
@@ -456,7 +457,7 @@ function PaneChrome({
                   if (id) onDrop(id, 'center', i)
                 }}
               >
-                <span className="dot" data-kind={s.kind} />
+                <TabStatusDot sessionId={sid} />
                 {editing?.id === sid ? (
                   <input
                     className="tab-rename"
