@@ -19,6 +19,14 @@ interface Session {
   profile: SSHProfile
   /** Active reconnect loop, if any. Set by the manager when scheduling a retry. */
   reconnect?: ReconnectState
+  /**
+   * Cached result of the post-open shell probe for the Windows-PowerShell
+   * branch. The probe is `echo $PSVersionTable`; the response is checked
+   * once and held so we don't re-probe on every prompt (and so the
+   * shell-setup branch in `openShell` can skip straight to injection).
+   * `null` = unknown / not yet probed. `true` = PowerShell detected.
+   */
+  isWindowsPowerShell?: boolean
 }
 
 interface ReconnectState {
@@ -55,6 +63,48 @@ export const DEFAULT_RECONNECT_POLICY: ReconnectPolicy = {
   baseDelayMs: 1000,
   maxDelayMs: 30000,
   factor: 2
+}
+
+/**
+ * Detect whether the open shell on a Windows remote is PowerShell. The probe
+ * is `echo $PSVersionTable` (PowerShell evaluates the variable, cmd.exe
+ * echoes it literally). Wrapped in a timeout so a misbehaving host can't
+ * stall the shell-open path. Result is cached per session so the OSC 7
+ * injection in `openShell` doesn't have to re-probe.
+ *
+ * NOTE: cmd.exe does not support OSC 7 at all (it has no prompt function
+ * hook; `prompt $G` doesn't emit one). We fall back to no-OSC-7 there and
+ * surface a comment in the shell-setup branch explaining the limitation.
+ */
+async function probeWindowsShell(client: Client): Promise<boolean> {
+  return new Promise((resolve) => {
+    let settled = false
+    const done = (v: boolean) => {
+      if (settled) return
+      settled = true
+      resolve(v)
+    }
+    const timer = setTimeout(() => done(false), 5000)
+    client.exec('echo $PSVersionTable', (err, stream) => {
+      if (err) {
+        clearTimeout(timer)
+        return done(false)
+      }
+      let stdout = ''
+      stream
+        .on('close', () => {
+          clearTimeout(timer)
+          // PowerShell renders the table as a multi-line ASCII string starting
+          // with the header line "Name                           Value"; cmd.exe
+          // just prints "$PSVersionTable" verbatim. Match the table header.
+          done(/^\s*Name\s+Value/m.test(stdout))
+        })
+        .on('data', (d: Buffer) => (stdout += d.toString()))
+        .stderr.on('data', () => {
+          /* ignore — probe failure is non-fatal */
+        })
+    })
+  })
 }
 
 export interface SSHHandlers {
@@ -334,6 +384,26 @@ export class SSHManager {
             `fi; ` +
             `stty echo 2>/dev/null; clear; __dt7\n`
           setTimeout(() => s.shell?.write(setup), 700)
+        } else if (s.context.os === 'windows') {
+          // Windows remote: probe whether the open shell is PowerShell (the
+          // OpenSSH server default on Server 2019+ and most modern Windows
+          // boxes). cmd.exe has no prompt hook that can emit OSC 7, so we
+          // intentionally fall through to no-op there — see the limitation
+          // note on `probeWindowsShell`. The setup is identical in shape to
+          // the local PTY's PowerShell branch in `main/pty/manager.ts`
+          // (function `prompt` writes the OSC 7 sequence and the OSC 133 ;A/;B
+          // markers around the visible prompt).
+          void probeWindowsShell(s.client).then((isPS) => {
+            s.isWindowsPowerShell = isPS
+            if (!isPS) return // cmd.exe: known limitation, no OSC 7.
+            const setup =
+              `function prompt { $e=[char]27; $b=[char]7; $p=$PWD.ProviderPath; ` +
+              `$u=($p -replace '\\\\','/'); ` +
+              `Write-Host -NoNewline ($e + ']133;A' + $b + $e + ']7;file:///' + $u + $b); ` +
+              `('PS ' + $p + '> ' + $e + ']133;B' + $b) }; ` +
+              `Clear-Host; prompt\n`
+            setTimeout(() => s.shell?.write(setup), 700)
+          })
         }
         resolve()
       })

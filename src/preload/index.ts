@@ -24,7 +24,8 @@ import {
   type HistoryResult,
   type BridgeActivityEntry,
   type ApprovalRule,
-  type PortForward
+  type PortForward,
+  type GitStatus
 } from '@shared/types'
 
 // Subscribe helper for per-id main->renderer channels.
@@ -200,6 +201,42 @@ const api: DevTermApi = {
       ipcRenderer.invoke(IPC.portForwardAdd, req) as Promise<PortForward>,
     // FOUNDATION: Cluster B will implement
     remove: (id: string): Promise<void> => ipcRenderer.invoke(IPC.portForwardRemove, id)
+  },
+
+  // -------------------------------------------------------------------------
+  // Git awareness (read-only): status snapshot, per-file diff, and live push
+  // notifications. Mutations (add/commit/push/checkout) are NOT exposed.
+  // -------------------------------------------------------------------------
+  git: {
+    status: (target: { sessionId?: string; path: string }): Promise<GitStatus> =>
+      ipcRenderer.invoke(IPC.gitStatus, target),
+    diff: (target: { sessionId?: string; path: string; file: string }): Promise<string> =>
+      ipcRenderer.invoke(IPC.gitDiff, target),
+    /**
+     * Subscribe to live status updates for `path`. The main process polls the
+     * underlying source every 5s and only pushes when the snapshot changed.
+     * Returns an unsubscribe; calling it is safe before the first event.
+     */
+    onChange: (path: string, cb: (status: GitStatus) => void): (() => void) => {
+      // The renderer-side bookkeeping (which session owns the path) is open-
+      // coded here; the main side uses an `add` invoke to start polling and a
+      // `remove` to stop it. Path is the only renderer-side key.
+      const channel = `${IPC.gitOnChange}:${path}`
+      const off = subscribe<GitStatus>(channel, cb)
+      return () => {
+        off()
+        // Best-effort: tell main we no longer care. Failure (e.g. main quit)
+        // is fine — the next GC pass cleans the watch list.
+        ipcRenderer.send(`${IPC.gitOnChange}:remove`, { path })
+      }
+    },
+    /**
+     * Start polling for `path`. Call once when the file tree starts showing
+     * the directory; pair with the unsubscribe returned by `onChange`.
+     */
+    watch: (target: { sessionId?: string; path: string }): void => {
+      ipcRenderer.send(`${IPC.gitOnChange}:add`, target)
+    }
   }
 }
 

@@ -50,6 +50,7 @@ import { registerDialogIpc } from './ipc/dialog'
 import { registerClipboardIpc } from './ipc/clipboard'
 import { registerWindowIpc } from './ipc/window'
 import { registerFoundationIpc } from './foundation-ipc'
+import { registerGitIpc } from './ipc/git'
 import { IPC } from '@shared/types'
 import { initAutoUpdater } from './updater'
 import type { PtyManager } from './pty/manager'
@@ -117,6 +118,7 @@ function registerIpc(): void {
   registerWindowIpc(() => mainWindow)
   registerContextIpc()
   registerFoundationIpc(() => mainWindow)
+  registerGitIpc(sshManager, () => mainWindow)
 }
 
 // Headless self-test entrypoint: `electron . --self-test`.

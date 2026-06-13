@@ -13,6 +13,7 @@ import CommandPalette from './components/CommandPalette'
 import ShortcutsModal from './components/ShortcutsModal'
 import SaveWorkspaceModal from './components/SaveWorkspaceModal'
 import SettingsModal from './components/SettingsModal'
+import StatusBar from './components/StatusBar'
 import { useSessions } from './store/sessions'
 import { useEditors } from './store/editors'
 import { useLayout, DEFAULT_GROUP, groupActiveSession, allLeaves } from './store/layout'
@@ -628,6 +629,11 @@ export default function App() {
               'ready'
             )}
           </div>
+          {/* Cluster C: optional richer status bar. Renders below the
+              inline status indicator above, only when the user has the
+              setting on. Always visible (in terms of vertical slot) is
+              unchanged — the bar is a separate flex row in `.main`. */}
+          <StatusBar />
         </div>
       </div>
 

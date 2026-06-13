@@ -171,6 +171,13 @@ export const IconTrash = (p: IconProps) => (
   </Svg>
 )
 
+export const IconCopy = (p: IconProps) => (
+  <Svg {...p}>
+    <rect x="8.5" y="8.5" width="11" height="11" rx="1.5" />
+    <path d="M5 15.5V5.5A1.5 1.5 0 0 1 6.5 4h9.5" />
+  </Svg>
+)
+
 export const IconRefresh = (p: IconProps) => (
   <Svg {...p}>
     <path d="M20 11a8 8 0 1 0-.8 4.5" />

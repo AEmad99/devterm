@@ -440,7 +440,12 @@ export const IPC = {
   // foundation cluster: port forwards (stubs; Cluster B will implement)
   portForwardList: 'port-forward:list',
   portForwardAdd: 'port-forward:add',
-  portForwardRemove: 'port-forward:remove'
+  portForwardRemove: 'port-forward:remove',
+
+  // git status (read-only) — local and remote (mirrored over the session's exec channel)
+  gitStatus: 'git:status',
+  gitDiff: 'git:diff',
+  gitOnChange: 'git:on-change' // suffixed :<path>
 } as const
 
 /** Typed surface exposed to the renderer via contextBridge (see preload). */
@@ -634,6 +639,36 @@ export interface DevTermApi {
     add(req: Omit<PortForward, 'id' | 'createdAt' | 'bytes'>): Promise<PortForward>
     remove(id: string): Promise<void>
   }
+
+  /**
+   * Read-only git awareness for the file tree. `status` returns the current
+   * branch + a path→status map for the given working dir (local or remote);
+   * `diff` returns the textual diff for one file. `onChange` subscribes to live
+   * updates — the main process polls the source every few seconds and pushes
+   * the latest status to the matching renderer.
+   */
+  git: {
+    /**
+     * Resolve git status. `sessionId` is omitted for local paths; present for
+     * remote ones (the lookup runs over the session's existing exec channel).
+     */
+    status(target: { sessionId?: string; path: string }): Promise<GitStatus>
+    /**
+     * Resolve the textual diff for one tracked file. For unstaged/untracked
+     * paths the diff is best-effort (may be empty for untracked files).
+     */
+    diff(target: { sessionId?: string; path: string; file: string }): Promise<string>
+    /**
+     * Subscribe to status changes for a given working dir. The main process
+     * polls every 5s and pushes an updated `GitStatus` whenever it changes.
+     */
+    onChange(path: string, cb: (status: GitStatus) => void): () => void
+    /**
+     * Explicit "start polling" nudge for `path`. Pair with the unsubscribe
+     * returned by `onChange`. Best-effort: a missing main process is fine.
+     */
+    watch(target: { sessionId?: string; path: string }): void
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -778,4 +813,28 @@ export interface SettingsExportBundle {
   connections: SavedConnection[]
   workspaces: Workspace[]
   approvalRules: ApprovalRule[]
+}
+
+// ---------------------------------------------------------------------------
+// Git awareness (read-only) — populates the file tree with status badges and
+// the "Show changes only" filter. Mutations (add/commit/push/etc.) are not
+// exposed; the agent and the editor are the only writers in DevTerm.
+// ---------------------------------------------------------------------------
+
+/** Per-file git status. `?` = untracked, `U` = conflicted, `R` = renamed. */
+export type GitFileStatus = 'M' | 'A' | 'D' | '?' | 'R' | 'U'
+
+export interface GitStatus {
+  /** False if the path is not inside a working tree. */
+  isRepo: boolean
+  /** Current branch (short, e.g. "main"); empty when detached or not a repo. */
+  branch: string
+  /** Commits ahead of upstream; -1 if unknown / no upstream. */
+  ahead: number
+  /** Commits behind upstream; -1 if unknown / no upstream. */
+  behind: number
+  /** Repo-relative path → file status. Only includes changed paths. */
+  entries: Record<string, GitFileStatus>
+  /** True when the file count was capped at the safety limit. */
+  truncated?: boolean
 }
