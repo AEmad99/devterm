@@ -3,7 +3,7 @@ import type { DirListing, FileEntry, GitStatus } from '@shared/types'
 import { useSessions } from '../store/sessions'
 import { useEditors } from '../store/editors'
 import { localFsApi, remoteFsApi, type FsApi } from '../lib/fsapi'
-import FileTree, { type FileTreeHandle } from './FileTree'
+import FileTree, { type FileTreeHandle, type Selection } from './FileTree'
 import {
   IconLocal,
   IconRemote,
@@ -26,6 +26,10 @@ function parentDir(p: string): string {
   return strip(p)
 }
 const samePath = (a: string, b: string) => strip(a) === strip(b)
+function basename(p: string): string {
+  const i = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'))
+  return i >= 0 ? p.slice(i + 1) : p
+}
 
 /**
  * Persistent left side-panel file explorer for the active session. It follows
@@ -52,6 +56,8 @@ export default function FileExplorer() {
   const openEditor = useEditors((s) => s.open)
   const [listing, setListing] = useState<DirListing | null>(null)
   const [sel, setSel] = useState<FileEntry | null>(null)
+  const [multiSel, setMultiSel] = useState<Selection>(new Set())
+  const [dropActive, setDropActive] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const [pathInput, setPathInput] = useState('')
   const loadedPath = useRef<string | null>(null)
@@ -76,6 +82,7 @@ export default function FileExplorer() {
         loadedPath.current = l.path
         setListing(l)
         setSel(null)
+        setMultiSel(new Set())
       } catch (e) {
         setErr(String((e as Error).message || e))
       }
@@ -87,6 +94,7 @@ export default function FileExplorer() {
   useEffect(() => {
     setListing(null)
     setSel(null)
+    setMultiSel(new Set())
     loadedPath.current = null
     setGitStatus(null)
     if (api) {
@@ -144,6 +152,14 @@ export default function FileExplorer() {
       if (!samePath(fresh.path, loadedPath.current ?? '')) return
       setListing(fresh)
       setSel((cur) => (cur && fresh.entries.some((e) => samePath(e.path, cur.path)) ? cur : null))
+      setMultiSel((cur) => {
+        if (cur.size === 0) return cur
+        const next = new Set<string>()
+        for (const p of cur) {
+          if (fresh.entries.some((e) => samePath(e.path, p))) next.add(p)
+        }
+        return next
+      })
     })
     return off
   }, [api, listing?.path])
@@ -384,7 +400,39 @@ export default function FileExplorer() {
         </form>
       </div>
       {err && <div className="explorer-error">{err}</div>}
-      <div className="explorer-list">
+      <div
+        className={`explorer-list ${dropActive ? 'drop-target' : ''}`}
+        onDragOver={(e) => {
+          if (e.dataTransfer.types.includes('application/x-devterm-path')) {
+            e.preventDefault()
+            e.dataTransfer.dropEffect = 'copy'
+            if (!dropActive) setDropActive(true)
+          }
+        }}
+        onDragLeave={() => setDropActive(false)}
+        onDrop={(e) => {
+          const dropped = e.dataTransfer.getData('application/x-devterm-path')
+          if (!dropped) return
+          e.preventDefault()
+          setDropActive(false)
+          // Drop on the explorer's tree = open the file in the editor. This
+          // gives drag-from-anywhere-into-the-tree a sensible action; a
+          // real transfer target is the SFTP browser (which has both panes).
+          const name = e.dataTransfer.getData('application/x-devterm-name') || basename(dropped)
+          const isDir = e.dataTransfer.getData('application/x-devterm-isdir') === '1'
+          if (isDir) return
+          if (!active) return
+          openEntryEditor({
+            name,
+            path: dropped,
+            isDir: false,
+            isSymlink: false,
+            size: 0,
+            mtimeMs: 0,
+            mode: '-'
+          })
+        }}
+      >
         {listing && api && (
           <FileTree
             ref={treeRef}
@@ -392,7 +440,9 @@ export default function FileExplorer() {
             rootPath={listing.path}
             rootEntries={listing.entries}
             selectedPath={sel?.path ?? null}
+            selectedPaths={multiSel}
             onSelect={setSel}
+            onMultiSelect={setMultiSel}
             onActivateFile={openEntryEditor}
             onActivateDir={(e) => load(e.path)}
           />

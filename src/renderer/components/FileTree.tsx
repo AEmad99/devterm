@@ -3,6 +3,13 @@ import type { FileEntry, GitFileStatus, GitStatus } from '@shared/types'
 import type { FsApi } from '../lib/fsapi'
 import { IconChevron, IconFolder, IconFile, IconLink } from './Icons'
 
+/**
+ * Identity key for a selected file. Paths are absolute within a single pane,
+ * so a path string is unique enough. We compare with `samePath` to stay
+ * separator-tolerant on Windows.
+ */
+export type Selection = Set<string>
+
 /** Imperative handle so a parent can refresh a sub-directory after a mutation. */
 export interface FileTreeHandle {
   /** Refetch the children of an already-expanded directory (no-op otherwise). */
@@ -69,7 +76,9 @@ function FileTreeImpl(
     rootPath,
     rootEntries,
     selectedPath,
+    selectedPaths,
     onSelect,
+    onMultiSelect,
     onActivateFile,
     onActivateDir,
     gitStatus,
@@ -78,8 +87,19 @@ function FileTreeImpl(
     api: FsApi
     rootPath: string
     rootEntries: FileEntry[]
+    /** Legacy single-select; kept for callers that don't multi-select. */
     selectedPath: string | null
+    /**
+     * Multi-select set. Wins over `selectedPath` when provided. Shift+click
+     * extends the range from the anchor; Ctrl/Cmd+click toggles membership.
+     */
+    selectedPaths?: Selection
     onSelect: (entry: FileEntry) => void
+    /**
+     * Optional multi-select callback. Receives the updated set and the
+     * click event so it can interpret modifier keys if it wants to.
+     */
+    onMultiSelect?: (next: Selection, ev: React.MouseEvent) => void
     onActivateFile: (entry: FileEntry) => void
     onActivateDir: (entry: FileEntry) => void
     /**
@@ -240,17 +260,42 @@ function FileTreeImpl(
           onRequestDiff(e).then((text) => setDiffModal({ entry: e, text }))
         }
       }
+      // Multi-select aware click. The parent owns the actual selection
+      // model — we hand it the entry and the event so it can read modifier
+      // keys; we always ALSO call the legacy onSelect so single-select
+      // callers keep working.
+      const isMulti = selectedPaths?.has(e.path) ?? false
+      const isSel = isMulti || selectedPath === e.path
+      const onRowClick = (ev: React.MouseEvent) => {
+        if (onMultiSelect && (ev.shiftKey || ev.ctrlKey || ev.metaKey)) {
+          ev.preventDefault()
+          onMultiSelect(extendSelection(selectedPaths ?? new Set(), entries, e, ev), ev)
+          return
+        }
+        onSelect(e)
+        if (onMultiSelect) onMultiSelect(new Set([e.path]), ev)
+      }
       acc.push(
         <div
           key={e.path}
-          className={`tree-row ${selectedPath === e.path ? 'sel' : ''} ${
+          className={`tree-row ${isSel ? 'sel' : ''} ${
             status ? `git-${status.toLowerCase()}` : ''
           }`}
           style={{ paddingLeft: pad }}
           title={`${e.mode}${e.isDir ? '' : '  ' + e.size + ' B'}`}
-          onClick={() => onSelect(e)}
+          onClick={onRowClick}
           onDoubleClick={() => (e.isDir ? onActivateDir(e) : onActivateFile(e))}
           onContextMenu={onContextMenu}
+          draggable
+          onDragStart={(ev) => {
+            // Allow this entry to be dropped onto a sibling pane to start
+            // a transfer. The setData mime is the contract used by the
+            // drop handler in SftpBrowser / FileExplorer.
+            ev.dataTransfer.setData('application/x-devterm-path', e.path)
+            ev.dataTransfer.setData('application/x-devterm-name', e.name)
+            ev.dataTransfer.setData('application/x-devterm-isdir', e.isDir ? '1' : '0')
+            ev.dataTransfer.effectAllowed = 'copyMove'
+          }}
         >
           {e.isDir ? (
             <button
@@ -353,3 +398,46 @@ function FileTreeImpl(
 
 const FileTree = forwardRef(FileTreeImpl)
 export default FileTree
+
+/**
+ * Compute the next multi-select set after a click on `clicked`.
+ *  - Plain click: replace with { clicked }.
+ *  - Ctrl/Cmd-click: toggle membership.
+ *  - Shift-click: extend the range from the last anchor (or the previous
+ *    selection's last item) to the clicked entry, both inclusive.
+ */
+function extendSelection(
+  prev: Selection,
+  visibleSiblings: FileEntry[],
+  clicked: FileEntry,
+  ev: React.MouseEvent
+): Selection {
+  const next = new Set(prev)
+  if (ev.shiftKey) {
+    // Find the anchor: the last item of the existing selection, or the
+    // clicked entry itself when nothing is selected.
+    const siblingPaths = visibleSiblings.map((s) => s.path)
+    const clickedIdx = siblingPaths.indexOf(clicked.path)
+    if (clickedIdx < 0) return new Set([clicked.path])
+    let anchorIdx = -1
+    for (let i = prev.size; i > 0; i--) {
+      // Find the highest-index sibling in the current selection
+      const last = [...prev].reverse().find((p) => siblingPaths.includes(p))
+      if (last) {
+        anchorIdx = siblingPaths.indexOf(last)
+        break
+      }
+    }
+    if (anchorIdx < 0) anchorIdx = clickedIdx
+    const [from, to] =
+      anchorIdx <= clickedIdx ? [anchorIdx, clickedIdx] : [clickedIdx, anchorIdx]
+    for (let i = from; i <= to; i++) next.add(siblingPaths[i])
+    return next
+  }
+  if (ev.ctrlKey || ev.metaKey) {
+    if (next.has(clicked.path)) next.delete(clicked.path)
+    else next.add(clicked.path)
+    return next
+  }
+  return new Set([clicked.path])
+}

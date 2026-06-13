@@ -3731,6 +3731,331 @@ textarea:focus {
   color: var(--muted);
 }
 
+/* ===========================================================================
+   Cluster D — bottom-dock panels, multi-select, browser enhancements
+   =========================================================================== */
+
+/* ---------------------------------------------------------------------------
+   App toolbar "Activity | Transfers | Off" segmented control. Each segment is
+   a pill; the active one fills with the accent. The trio lives next to the
+   keyboard/settings icons and is the canonical way to flip the bottom dock
+   between the agent activity panel and the transfers panel.
+   --------------------------------------------------------------------------- */
+.bottom-panel-toggle {
+  display: flex;
+  align-items: center;
+  margin: 0 8px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  flex: 0 0 auto;
+}
+.bottom-panel-toggle .seg {
+  background: transparent;
+  border: 0;
+  color: var(--muted);
+  font-size: 11px;
+  padding: 4px 10px;
+  cursor: pointer;
+  border-right: 1px solid var(--border);
+  transition:
+    background 0.12s ease,
+    color 0.12s ease;
+}
+.bottom-panel-toggle .seg:last-child {
+  border-right: 0;
+}
+.bottom-panel-toggle .seg:hover {
+  color: var(--fg);
+}
+.bottom-panel-toggle .seg.active {
+  background: var(--accent);
+  color: #fff;
+}
+
+/* ---------------------------------------------------------------------------
+   Persistent transfers panel (bottom dock). One row per TransferItemV2 with
+   a progress bar, status text, and per-item Cancel / Retry.
+   --------------------------------------------------------------------------- */
+.transfers-panel {
+  flex: 0 0 auto;
+  border-top: 1px solid var(--border);
+  background: var(--input-bg);
+  max-height: 30%;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+.transfers-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 10px;
+  font-size: 11px;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+}
+.transfers-head .spacer {
+  flex: 1;
+}
+.transfers-title {
+  font-weight: 600;
+  color: var(--fg);
+}
+.transfers-count {
+  padding: 0 6px;
+  border-radius: 3px;
+  background: var(--panel-2);
+  color: var(--muted);
+  font-size: 10px;
+}
+.transfers-empty {
+  padding: 12px 16px;
+  color: var(--muted);
+  font-size: 12px;
+  font-style: italic;
+}
+.transfers-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.transfers-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 10px;
+  font-size: 12px;
+}
+.transfers-dir {
+  width: 14px;
+  text-align: center;
+}
+.transfers-name {
+  width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.transfers-bar {
+  flex: 1;
+  height: 8px;
+  background: var(--panel-2);
+  border-radius: 4px;
+  overflow: hidden;
+  min-width: 80px;
+}
+.transfers-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.1s linear;
+}
+.transfers-fill.done {
+  background: #4ec9b0;
+}
+.transfers-fill.err {
+  background: #f48771;
+}
+.transfers-fill.cancel {
+  background: var(--muted);
+}
+.transfers-status {
+  width: 84px;
+  text-align: right;
+  color: var(--muted);
+  text-transform: capitalize;
+}
+.transfers-spacer {
+  width: 64px;
+}
+.transfers-row button.ghost.small {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  border-radius: 3px;
+  font-size: 11px;
+  padding: 1px 8px;
+  cursor: pointer;
+}
+.transfers-row button.ghost.small:hover:not(:disabled) {
+  color: var(--fg);
+  border-color: var(--accent);
+}
+.transfers-row button.ghost.small:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* ---------------------------------------------------------------------------
+   Multi-select in the file tree. The selection chrome is the same as the
+   single-selected one (a left accent + bg tint); the new bit is the
+   .filelist/.explorer-list drop-target outline.
+   --------------------------------------------------------------------------- */
+.filelist.drop-target,
+.explorer-list.drop-target {
+  outline: 2px dashed var(--accent);
+  outline-offset: -2px;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+/* ---------------------------------------------------------------------------
+   In-app browser pane: per-tab mute, zoom controls, find bar, downloads
+   drawer. The persistent `persist:browser` partition string is unchanged.
+   --------------------------------------------------------------------------- */
+.browser-tab-mute {
+  background: transparent;
+  border: 0;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 0 4px;
+  opacity: 0.6;
+}
+.browser-tab-mute:hover {
+  opacity: 1;
+}
+.browser-tab.is-muted {
+  opacity: 0.85;
+}
+.browser-tab.is-muted .browser-tab-mute {
+  opacity: 1;
+  color: var(--accent);
+}
+.browser-zoom-label {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  color: var(--muted);
+  padding: 0 4px;
+  min-width: 38px;
+  justify-content: center;
+}
+.browser-dl-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.browser-dl-btn.has-active {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.browser-dl-count {
+  background: var(--accent);
+  color: #fff;
+  font-size: 10px;
+  padding: 0 5px;
+  border-radius: 8px;
+  min-width: 14px;
+  text-align: center;
+  line-height: 14px;
+}
+.browser-find {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 7px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+.browser-find-input {
+  flex: 1;
+  height: 24px;
+  background: var(--bg-term);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 8px;
+  font-size: 12px;
+  outline: none;
+}
+.browser-find-input:focus {
+  border-color: var(--accent);
+}
+.browser-dl-drawer {
+  position: absolute;
+  right: 0;
+  top: 80px;
+  bottom: 0;
+  width: 360px;
+  max-width: 90%;
+  background: var(--panel);
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  z-index: 5;
+  box-shadow: -4px 0 12px rgba(0, 0, 0, 0.3);
+}
+.browser-dl-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+  border-bottom: 1px solid var(--border);
+  color: var(--fg);
+}
+.browser-dl-head .spacer {
+  flex: 1;
+}
+.browser-dl-empty {
+  padding: 16px;
+  color: var(--muted);
+  font-size: 12px;
+  font-style: italic;
+}
+.browser-dl-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+}
+.browser-dl-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+}
+.browser-dl-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.browser-dl-bar {
+  flex: 0 0 80px;
+  height: 6px;
+  background: var(--panel-2);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.browser-dl-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.15s linear;
+}
+.browser-dl-status {
+  width: 56px;
+  text-align: right;
+  color: var(--muted);
+  font-size: 11px;
+}
+.browser-dl-spacer {
+  width: 56px;
+}
+.browser-dl-row.state-completed .browser-dl-name {
+  color: #4ec9b0;
+}
+.browser-dl-row.state-cancelled .browser-dl-name,
+.browser-dl-row.state-interrupted .browser-dl-name {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+
+
 @keyframes reconnect-pulse {
   0%, 100% { opacity: 0.95; }
   50% { opacity: 0.7; }

@@ -445,7 +445,26 @@ export const IPC = {
   // git status (read-only) — local and remote (mirrored over the session's exec channel)
   gitStatus: 'git:status',
   gitDiff: 'git:diff',
-  gitOnChange: 'git:on-change' // suffixed :<path>
+  gitOnChange: 'git:on-change', // suffixed :<path>
+
+  // Cluster D: persistent transfer queue
+  transfersList: 'transfers:list',
+  transfersEnqueueUpload: 'transfers:enqueue-upload',
+  transfersEnqueueDownload: 'transfers:enqueue-download',
+  transfersCancel: 'transfers:cancel',
+  transfersRetry: 'transfers:retry',
+  transfersClearFinished: 'transfers:clear-finished',
+  transfersEvent: 'transfers:event', // suffixed :<id>
+  transfersStatus: 'transfers:status',
+  // Cluster D: in-app browser enhancements
+  browserDownloadsList: 'browser:downloads:list',
+  browserDownloadsCancel: 'browser:downloads:cancel',
+  browserZoomGet: 'browser:zoom:get',
+  browserZoomSet: 'browser:zoom:set',
+  browserZoomReset: 'browser:zoom:reset',
+  browserDevtoolsOpen: 'browser:devtools:open',
+  browserMute: 'browser:mute',
+  browserDownloadsEvent: 'browser:downloads:event'
 } as const
 
 /** Typed surface exposed to the renderer via contextBridge (see preload). */
@@ -669,6 +688,65 @@ export interface DevTermApi {
      */
     watch(target: { sessionId?: string; path: string }): void
   }
+
+  // -------------------------------------------------------------------------
+  // Cluster D: persistent transfer queue
+  // -------------------------------------------------------------------------
+  /**
+   * Persistent transfer queue. Items survive restarts; in-flight items are
+   * marked canceled with reason "interrupted by restart" on next launch
+   * (we never try to resume bytes mid-flight). `progress` is a per-item live
+   * stream; `status` is the full list (subscribed via `onStatus`, the same
+   * shape every other namespace uses).
+   */
+  transfers: {
+    list(): Promise<TransferListResult>
+    /**
+     * Enqueue a single upload. The main process allocates the id, persists
+     * the item, and starts it through the producer/consumer queue.
+     */
+    enqueueUpload(opts: { sessionId: string; localPath: string; remotePath: string }): Promise<TransferItemV2>
+    enqueueDownload(opts: { sessionId: string; localPath: string; remotePath: string }): Promise<TransferItemV2>
+    /** Mark a queued or running transfer as canceled. */
+    cancel(id: string): Promise<void>
+    /**
+     * Re-enqueue a previously failed/canceled item. The path pair is
+     * preserved; the item gets a new id and is pushed to the back of the
+     * queue. Items that were interrupted by a restart are retryable too.
+     */
+    retry(id: string): Promise<TransferItemV2 | null>
+    /** Drop all items that are done, canceled, or errored out of the list. */
+    clearFinished(): Promise<TransferListResult>
+    /**
+     * Subscribe to live progress + done events for a single transfer.
+     * The main process throttles to 250ms. Pair with the unsubscribe.
+     */
+    onProgress(id: string, cb: (e: TransferEvent) => void): () => void
+    /**
+     * Subscribe to the full queue state (list + add/remove ticks). The
+     * callback fires immediately with the current snapshot, then again
+     * whenever any item is added, removed, or changes state.
+     */
+    onStatus(cb: (items: TransferListResult) => void): () => void
+  }
+
+  // -------------------------------------------------------------------------
+  // Cluster D: in-app browser pane enhancements
+  // -------------------------------------------------------------------------
+  browserDownloads: {
+    list(): Promise<BrowserDownloadItem[]>
+    cancel(id: string): Promise<void>
+    onUpdate(cb: (items: BrowserDownloadItem[]) => void): () => void
+  }
+  browserZoom: {
+    get(origin: string): Promise<number>
+    set(origin: string, level: number): Promise<void>
+    reset(): Promise<void>
+  }
+  /** Open detached DevTools for a <webview> guest identified by webContents id. */
+  openBrowserDevtools(webContentsId: number): Promise<void>
+  /** Mute / unmute a <webview> guest identified by webContents id. */
+  setBrowserMuted(webContentsId: number, muted: boolean): Promise<void>
 }
 
 // ---------------------------------------------------------------------------
@@ -792,6 +870,7 @@ export interface QuickConnectEntry {
 export interface TransferItemV2 {
   id: string
   direction: 'upload' | 'download'
+  sessionId: string
   localPath: string
   remotePath: string
   total: number
@@ -838,3 +917,45 @@ export interface GitStatus {
   /** True when the file count was capped at the safety limit. */
   truncated?: boolean
 }
+
+// ---------------------------------------------------------------------------
+// Cluster D: persistent transfer queue + in-app browser enhancements
+// (additive — appended below the original tail)
+// ---------------------------------------------------------------------------
+
+/** Live status update for a single in-flight transfer item (mirrors TransferItemV2). */
+export type TransferEvent =
+  | { kind: 'progress'; id: string; transferred: number; total: number; done: boolean }
+  | { kind: 'done'; id: string; transferred: number; total: number; canceled?: boolean; error?: string; finishedAt: number }
+
+/** What the user gets back from `transfers.list()`. */
+export type TransferListResult = TransferItemV2[]
+
+/** A single in-app browser download, sourced from the persistent partition's webContents. */
+export type BrowserDownloadState = 'progressing' | 'completed' | 'cancelled' | 'interrupted'
+
+export interface BrowserDownloadItem {
+  /** Electron-assigned id from the `will-download` event. */
+  id: string
+  /** Filename (basename) as Electron reported it. */
+  filename: string
+  /** Original URL the download was triggered from. */
+  url: string
+  /** Local path the bytes are being written to. */
+  path: string
+  /** Bytes received so far. */
+  received: number
+  /** Total bytes (Electron's `getReceivedBytes`/`getTotalBytes`). -1 if unknown. */
+  total: number
+  state: BrowserDownloadState
+  /** Millis since epoch when first observed. */
+  startedAt: number
+  /** Optional MIME type. */
+  mime?: string
+}
+
+/** Per-origin zoom level (1 = 100%, 1.5 = 150%). */
+export interface BrowserZoomMap {
+  [origin: string]: number
+}
+

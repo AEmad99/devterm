@@ -25,7 +25,11 @@ import {
   type BridgeActivityEntry,
   type ApprovalRule,
   type PortForward,
-  type GitStatus
+  type GitStatus,
+  type TransferItemV2,
+  type TransferEvent,
+  type TransferListResult,
+  type BrowserDownloadItem
 } from '@shared/types'
 
 // Subscribe helper for per-id main->renderer channels.
@@ -237,7 +241,57 @@ const api: DevTermApi = {
     watch: (target: { sessionId?: string; path: string }): void => {
       ipcRenderer.send(`${IPC.gitOnChange}:add`, target)
     }
-  }
+  },
+
+  // -------------------------------------------------------------------------
+  // Cluster D: persistent transfer queue + in-app browser enhancements
+  // -------------------------------------------------------------------------
+  transfers: {
+    list: (): Promise<TransferListResult> => ipcRenderer.invoke(IPC.transfersList),
+    enqueueUpload: (opts: { sessionId: string; localPath: string; remotePath: string }) =>
+      ipcRenderer.invoke(IPC.transfersEnqueueUpload, opts) as Promise<TransferItemV2>,
+    enqueueDownload: (opts: { sessionId: string; localPath: string; remotePath: string }) =>
+      ipcRenderer.invoke(IPC.transfersEnqueueDownload, opts) as Promise<TransferItemV2>,
+    cancel: (id: string): Promise<void> => ipcRenderer.invoke(IPC.transfersCancel, id),
+    retry: (id: string): Promise<TransferItemV2 | null> =>
+      ipcRenderer.invoke(IPC.transfersRetry, id) as Promise<TransferItemV2 | null>,
+    clearFinished: (): Promise<TransferListResult> =>
+      ipcRenderer.invoke(IPC.transfersClearFinished) as Promise<TransferListResult>,
+    onProgress: (id: string, cb: (e: TransferEvent) => void): (() => void) =>
+      subscribe<TransferEvent>(`${IPC.transfersEvent}:${id}`, cb),
+    onStatus: (cb: (items: TransferListResult) => void): (() => void) => {
+      // Match the existing namespaces' shape: subscribe to the broadcast
+      // channel, then ask for the initial snapshot.
+      const off = subscribe<void>(IPC.transfersStatus, () => {
+        ipcRenderer.invoke(IPC.transfersList).then(cb).catch(() => undefined)
+      })
+      ipcRenderer.invoke(IPC.transfersList).then(cb).catch(() => undefined)
+      return off
+    }
+  },
+  browserDownloads: {
+    list: (): Promise<BrowserDownloadItem[]> =>
+      ipcRenderer.invoke(IPC.browserDownloadsList) as Promise<BrowserDownloadItem[]>,
+    cancel: (id: string): Promise<void> => ipcRenderer.invoke(IPC.browserDownloadsCancel, id),
+    onUpdate: (cb: (items: BrowserDownloadItem[]) => void): (() => void) => {
+      const off = subscribe<BrowserDownloadItem[]>(IPC.browserDownloadsEvent, cb)
+      ipcRenderer
+        .invoke(IPC.browserDownloadsList)
+        .then(cb)
+        .catch(() => undefined)
+      return off
+    }
+  },
+  browserZoom: {
+    get: (origin: string): Promise<number> => ipcRenderer.invoke(IPC.browserZoomGet, origin),
+    set: (origin: string, level: number): Promise<void> =>
+      ipcRenderer.invoke(IPC.browserZoomSet, origin, level) as Promise<void>,
+    reset: (): Promise<void> => ipcRenderer.invoke(IPC.browserZoomReset)
+  },
+  openBrowserDevtools: (webContentsId: number): Promise<void> =>
+    ipcRenderer.invoke(IPC.browserDevtoolsOpen, webContentsId),
+  setBrowserMuted: (webContentsId: number, muted: boolean): Promise<void> =>
+    ipcRenderer.invoke(IPC.browserMute, webContentsId, muted)
 }
 
 contextBridge.exposeInMainWorld('devterm', api)

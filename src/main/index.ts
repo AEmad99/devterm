@@ -51,6 +51,8 @@ import { registerClipboardIpc } from './ipc/clipboard'
 import { registerWindowIpc } from './ipc/window'
 import { registerFoundationIpc } from './foundation-ipc'
 import { registerGitIpc } from './ipc/git'
+import { registerTransfersIpc } from './ipc/transfers'
+import { registerBrowserIpc } from './ipc/browser'
 import { IPC } from '@shared/types'
 import { initAutoUpdater } from './updater'
 import type { PtyManager } from './pty/manager'
@@ -62,6 +64,8 @@ let ptyManager: PtyManager | null = null
 let sshManager: SSHManager | null = null
 let fileController: FileController | null = null
 let agentController: AgentController | null = null
+let transfersController: { shutdown: () => Promise<void> } | null = null
+let browserController: { shutdown: () => Promise<void> } | null = null
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
@@ -119,6 +123,9 @@ function registerIpc(): void {
   registerContextIpc()
   registerFoundationIpc(() => mainWindow)
   registerGitIpc(sshManager, () => mainWindow)
+  // Cluster D: persistent transfer queue + in-app browser enhancements.
+  transfersController = registerTransfersIpc(sshManager, () => mainWindow)
+  browserController = registerBrowserIpc(() => mainWindow)
 }
 
 // Headless self-test entrypoint: `electron . --self-test`.
@@ -230,5 +237,8 @@ if (process.argv.includes('--self-test')) {
     fileController?.transfers.cancelAll()
     ptyManager?.killAll()
     sshManager?.disconnectAll()
+    // Cluster D: persist the transfer queue and the browser zoom map.
+    void transfersController?.shutdown()
+    void browserController?.shutdown()
   })
 }
