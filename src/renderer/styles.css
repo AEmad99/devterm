@@ -3972,6 +3972,22 @@ textarea:focus {
 .browser-find-input:focus {
   border-color: var(--accent);
 }
+.browser-find-count {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  color: var(--muted);
+  min-width: 64px;
+  justify-content: center;
+  font-variant-numeric: tabular-nums;
+}
+.browser-find-count.is-empty {
+  color: #f48771;
+}
+.browser-find button.browser-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
 .browser-dl-drawer {
   position: absolute;
   right: 0;

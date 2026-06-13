@@ -56,6 +56,18 @@ interface TabState {
   muted: boolean
   /** webContents id once the guest has been attached. */
   webContentsId: number | null
+  /**
+   * Number of matches from the most recent `findInPage` call on this tab.
+   * Updated by the `found-in-page` webview event. The find bar reads this
+   * to render "n / m" / "No results" next to the input.
+   */
+  findMatches: number
+  /**
+   * 1-based index of the currently-highlighted match (matches Electron's
+   * `activeMatchOrdinal` in the `found-in-page` event payload). 0 means
+   * "no match" / "not yet known".
+   */
+  findActive: number
 }
 
 function makeTab(url: string, zoom = 1): TabState {
@@ -69,7 +81,9 @@ function makeTab(url: string, zoom = 1): TabState {
     canFwd: false,
     zoom,
     muted: false,
-    webContentsId: null
+    webContentsId: null,
+    findMatches: 0,
+    findActive: 0
   }
 }
 
@@ -84,7 +98,10 @@ interface TabHandle {
   zoomReset(): void
   openDevtools(): void
   toggleMute(): void
+  /** Kick off a fresh find (or re-find) for `text` in the active direction. */
   find(text: string, forward?: boolean): void
+  /** Step to the next/previous match in the same query. */
+  findNext(forward?: boolean): void
   stopFind(): void
 }
 
@@ -122,6 +139,12 @@ const BrowserTab = memo(
     tabRef.current = tab
     const onStateRef = useRef(onState)
     onStateRef.current = onState
+    // The most recent find query on this tab, so the up/down step buttons
+    // can re-run the same search with a different direction. The query is
+    // intentionally kept in a ref (not React state) because it lives in
+    // parallel to the input the user typed into the find bar; the input is
+    // the source of truth, the ref just mirrors it for the imperative API.
+    const lastFindRef = useRef<{ text: string; forward: boolean }>({ text: '', forward: true })
 
     const adjustZoom = (delta: number | null): void => {
       const t = tabRef.current
@@ -166,8 +189,20 @@ const BrowserTab = memo(
           if (!el.current) return
           if (!text) {
             el.current.stopFindInPage('clearSelection')
+            lastFindRef.current = { text: '', forward: true }
             return
           }
+          lastFindRef.current = { text, forward }
+          el.current.findInPage(text, { forward })
+        },
+        findNext: (forward = true) => {
+          if (!el.current) return
+          const { text } = lastFindRef.current
+          if (!text) return
+          // Electron's findInPage re-uses the previous query when called
+          // with the same string; passing a different `forward` direction
+          // steps to the next/previous match. No need to re-issue the
+          // text — just flip the direction.
           el.current.findInPage(text, { forward })
         },
         stopFind: () => el.current?.stopFindInPage('clearSelection')
@@ -187,13 +222,34 @@ const BrowserTab = memo(
       // No manual removeEventListener: the <webview> is destroyed when the tab
       // unmounts, so its listeners die with it (the app has no StrictMode, and
       // tab.id is stable for the tab's lifetime).
-      wv.addEventListener('did-start-loading', () => setLoading(true))
+      wv.addEventListener('did-start-loading', () => {
+        setLoading(true)
+        // A new page wipes the previous page's matches; clear the find bar
+        // result so the count doesn't read stale from the prior page.
+        onState(id, { findMatches: 0, findActive: 0 })
+      })
       wv.addEventListener('did-stop-loading', () => {
         setLoading(false)
         refreshNav()
       })
+      // The `found-in-page` event fires for every `findInPage(...)` call
+      // (and once at the end of an incremental search with `finalUpdate`).
+      // We surface both the total count and the 1-based active match
+      // ordinal so the find bar can render "n / m" and step through
+      // matches with up/down.
+      wv.addEventListener('found-in-page', (e: Event) => {
+        const detail = (e as unknown as {
+          result: { matches: number; activeMatchOrdinal: number; finalUpdate?: boolean }
+        }).result
+        if (!detail) return
+        // Only the final update is authoritative; intermediate events can
+        // report partial matches. Stash on every fire so the bar can show
+        // "searching…" between ticks if it wants, but commit the final
+        // count when the last event arrives.
+        onState(id, { findMatches: detail.matches, findActive: detail.activeMatchOrdinal })
+      })
       wv.addEventListener('did-navigate', async (e) => {
-        onState(id, { current: e.url })
+        onState(id, { current: e.url, findMatches: 0, findActive: 0 })
         refreshNav()
         const origin = originOf(e.url)
         if (origin) {
@@ -553,11 +609,57 @@ function BrowserPane({ session }: { session: Session }) {
             onKeyDown={(e) => {
               if (e.key === 'Enter') {
                 e.preventDefault()
-                submitFind(e.currentTarget.value)
+                // Plain Enter steps forward; Shift+Enter steps back.
+                if (e.shiftKey) handles.current.get(activeId)?.findNext(false)
+                else handles.current.get(activeId)?.findNext(true)
               }
             }}
           />
-          <button type="button" className="browser-btn" onClick={() => setFind({ open: false, text: '' })}>
+          <span
+            className={`browser-find-count ${
+              find.text && activeTab?.findMatches === 0 ? 'is-empty' : ''
+            }`}
+            title={
+              !find.text
+                ? 'Type to search'
+                : activeTab?.findMatches === 0
+                  ? 'No matches'
+                  : `${activeTab?.findActive} of ${activeTab?.findMatches}`
+            }
+          >
+            {!find.text
+              ? ''
+              : activeTab?.findMatches === 0
+                ? 'No results'
+                : `${activeTab?.findActive ?? 0} / ${activeTab?.findMatches}`}
+          </span>
+          <button
+            type="button"
+            className="browser-btn"
+            title="Previous match (Shift+Enter)"
+            disabled={!activeTab || activeTab.findMatches === 0}
+            onClick={() => handles.current.get(activeId)?.findNext(false)}
+          >
+            ↑
+          </button>
+          <button
+            type="button"
+            className="browser-btn"
+            title="Next match (Enter)"
+            disabled={!activeTab || activeTab.findMatches === 0}
+            onClick={() => handles.current.get(activeId)?.findNext(true)}
+          >
+            ↓
+          </button>
+          <button
+            type="button"
+            className="browser-btn"
+            title="Close find bar"
+            onClick={() => {
+              setFind({ open: false, text: '' })
+              handles.current.get(activeId)?.stopFind()
+            }}
+          >
             ✕
           </button>
         </form>
