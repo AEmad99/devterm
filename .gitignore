@@ -14,3 +14,8 @@ dist/
 
 # local Claude Code overrides (per-user)
 .claude/settings.local.json
+
+# local Mavis / MiniMax / OpenCode tool state (per-user)
+.mavis/
+.minimax/
+.opencode/
