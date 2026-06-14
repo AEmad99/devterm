@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import type { Snippet } from '@shared/types'
 
 interface FormState {
@@ -17,6 +17,31 @@ function fromSnippet(s: Snippet): FormState {
     description: s.description ?? '',
     tags: (s.tags ?? []).join(', ')
   }
+}
+
+/**
+ * Render the command with its `{{placeholder}}` tokens highlighted so the
+ * author can see at a glance which fields will be prompted for at run time.
+ * The visible text still contains the original tokens — we use spans only
+ * for color, not for replacing characters.
+ */
+function PreviewCommand({ command }: { command: string }) {
+  if (!command) return <span className="sn-preview-empty">—</span>
+  // Split on `{{...}}` so each placeholder is wrapped in a span.
+  const parts = command.split(/(\{\{[^}]+\}\})/g)
+  return (
+    <span className="sn-preview-cmd">
+      {parts.map((p, i) =>
+        p.startsWith('{{') ? (
+          <span key={i} className="sn-preview-token">
+            {p}
+          </span>
+        ) : (
+          <span key={i}>{p}</span>
+        )
+      )}
+    </span>
+  )
 }
 
 export default function SnippetForm({
@@ -52,6 +77,15 @@ export default function SnippetForm({
     onClose()
   }
 
+  // The preview is the live command + the (trimmed) name. Placeholders are
+  // highlighted; everything else is plain text. A short note under it tells
+  // the author which tokens will prompt at run time.
+  const placeholderCount = useMemo(
+    () => (f.command.match(/\{\{[^}]+\}\}/g) ?? []).length,
+    [f.command]
+  )
+  const previewName = f.name.trim() || (f.command.trim() ? f.command.trim().split(/\s+/, 1)[0] : '')
+
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <form className="modal" onClick={(e) => e.stopPropagation()} onSubmit={submit}>
@@ -72,8 +106,20 @@ export default function SnippetForm({
           />
         </label>
         <div className="sn-hint">
-          Use <code>{'{{token}}'}</code> placeholders — you’ll be prompted for them when the snippet
-          runs from the palette.
+          Use <code>{'{{placeholders}}'}</code> like <code>{'{{host}}'}</code> for parameters.
+        </div>
+        <div className="sn-preview" aria-label="Live preview">
+          <div className="sn-preview-label">Preview</div>
+          <div className="sn-preview-name">{previewName || <span className="sn-preview-empty">—</span>}</div>
+          <pre className="sn-preview-body">
+            <PreviewCommand command={f.command} />
+          </pre>
+          {placeholderCount > 0 && (
+            <div className="sn-preview-note">
+              {placeholderCount} placeholder{placeholderCount === 1 ? '' : 's'} will be prompted
+              when this snippet runs.
+            </div>
+          )}
         </div>
         <label>
           Description <span className="sn-opt">(optional)</span>

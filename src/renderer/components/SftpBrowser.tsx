@@ -1,15 +1,20 @@
 import { useMemo, useRef, useState } from 'react'
 import type { FileEntry } from '@shared/types'
 import FilePane from './FilePane'
-import { localFsApi, remoteFsApi, type FsApi } from '../lib/fsapi'
-import TransferQueue, { type TransferItem } from './TransferQueue'
 import Splitter from './Splitter'
+import { localFsApi, remoteFsApi, type FsApi } from '../lib/fsapi'
 import { useEditors } from '../store/editors'
 import { useSessions } from '../store/sessions'
 
 const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n))
 
-/** Dual-pane local ↔ remote browser bound to one SSH session's SFTP channel. */
+/**
+ * Dual-pane local ↔ remote browser bound to one SSH session's SFTP channel.
+ * Cluster D replaces the inline TransferQueue with the persistent queue
+ * (see `useTransfersSync` mounted at the App level) and adds multi-select +
+ * drag-and-drop transfers. Each file in the multi-selection becomes one
+ * `TransferItemV2` enqueued through `window.devterm.transfers.*`.
+ */
 export default function SftpBrowser({ sessionId }: { sessionId: string }) {
   const localSep = window.devterm.platform === 'win32' ? '\\' : '/'
 
@@ -22,47 +27,83 @@ export default function SftpBrowser({ sessionId }: { sessionId: string }) {
   const followCwd = useSessions((s) => s.sessions.find((x) => x.id === sessionId)?.cwd)
   const localCwd = useRef('')
   const remoteCwd = useRef('')
-  const [localReload, setLocalReload] = useState(0)
-  const [remoteReload, setRemoteReload] = useState(0)
-  const [items, setItems] = useState<TransferItem[]>([])
   const [localWidth, setLocalWidth] = useState(420)
 
-  const track = (
-    id: string,
-    direction: 'upload' | 'download',
-    name: string,
-    onLand: () => void
-  ) => {
-    setItems((prev) => [{ id, direction, name, transferred: 0, total: 0, done: false }, ...prev])
-    const off = window.devterm.transfer.onProgress(id, (p) => {
-      setItems((prev) => prev.map((it) => (it.id === id ? { ...it, ...p } : it)))
-      if (p.done) {
-        off()
-        if (!p.error && !p.canceled) onLand()
-      }
-    })
+  /**
+   * Join a directory and a child name using the pane's separator. The
+   * drop handler uses this to resolve a dragged path into the target
+   * pane's destination.
+   */
+  const joinPath = (dir: string, name: string, sep: string) => {
+    const stripped = dir.replace(/[/\\]+$/, '')
+    return stripped + sep + name
   }
 
-  const upload = async (entry: FileEntry) => {
-    const remotePath = remoteCwd.current.replace(/\/$/, '') + '/' + entry.name
-    const id = await window.devterm.transfer.start({
-      direction: 'upload',
+  /**
+   * Enqueue a single upload from the LOCAL pane to the REMOTE cwd. The
+   * `localPath` is on the host filesystem; the queue puts it at
+   * `remoteCwd/<basename>` on the SSH server.
+   */
+  const enqueueOneUpload = async (entry: FileEntry) => {
+    const remotePath = joinPath(remoteCwd.current, entry.name, '/')
+    await window.devterm.transfers.enqueueUpload({
       sessionId,
       localPath: entry.path,
       remotePath
     })
-    track(id, 'upload', entry.name, () => setRemoteReload((x) => x + 1))
   }
 
-  const download = async (entry: FileEntry) => {
-    const localPath = localCwd.current.replace(/[/\\]$/, '') + localSep + entry.name
-    const id = await window.devterm.transfer.start({
-      direction: 'download',
+  const enqueueOneDownload = async (entry: FileEntry) => {
+    const localPath = joinPath(localCwd.current, entry.name, localSep)
+    await window.devterm.transfers.enqueueDownload({
       sessionId,
       localPath,
       remotePath: entry.path
     })
-    track(id, 'download', entry.name, () => setLocalReload((x) => x + 1))
+  }
+
+  /**
+   * Batch: the LOCAL pane's "Upload N" button calls this with the user's
+   * full selection. Each file becomes one persistent queue item.
+   */
+  const uploadMany = (entries: FileEntry[]) => {
+    for (const e of entries) {
+      // Skip folders — uploads of directories are out of scope for v1
+      // (SFTP supports them, but the existing streaming code is per-file).
+      if (e.isDir) continue
+      void enqueueOneUpload(e)
+    }
+  }
+  const downloadMany = (entries: FileEntry[]) => {
+    for (const e of entries) {
+      if (e.isDir) continue
+      void enqueueOneDownload(e)
+    }
+  }
+
+  /**
+   * Drop handler. A drag from the LOCAL pane to the REMOTE pane is an
+   * upload; a drag from REMOTE to LOCAL is a download. We only know the
+   * dragged absolute path + name + isDir — the drop side picks the
+   * direction. The target pane is whichever fires this callback.
+   */
+  const onLocalDrop = (droppedPath: string, droppedName: string, isDir: boolean) => {
+    if (isDir) return
+    const localPath = joinPath(localCwd.current, droppedName, localSep)
+    void window.devterm.transfers.enqueueDownload({
+      sessionId,
+      localPath,
+      remotePath: droppedPath
+    })
+  }
+  const onRemoteDrop = (droppedPath: string, droppedName: string, isDir: boolean) => {
+    if (isDir) return
+    const remotePath = joinPath(remoteCwd.current, droppedName, '/')
+    void window.devterm.transfers.enqueueUpload({
+      sessionId,
+      localPath: droppedPath,
+      remotePath
+    })
   }
 
   return (
@@ -74,9 +115,11 @@ export default function SftpBrowser({ sessionId }: { sessionId: string }) {
             sep={localSep}
             title="💻 Local"
             transferLabel="Upload →"
-            reloadSignal={localReload}
+            reloadSignal={0}
             onCwd={(p) => (localCwd.current = p)}
-            onTransfer={upload}
+            onTransfer={enqueueOneUpload}
+            onTransferMany={uploadMany}
+            onDropPath={onLocalDrop}
             onEdit={(e) => openEditor({ scope: 'local', path: e.path })}
           />
         </div>
@@ -90,19 +133,16 @@ export default function SftpBrowser({ sessionId }: { sessionId: string }) {
             sep="/"
             title="🌐 Remote"
             transferLabel="← Download"
-            reloadSignal={remoteReload}
+            reloadSignal={0}
             followPath={followCwd}
             onCwd={(p) => (remoteCwd.current = p)}
-            onTransfer={download}
+            onTransfer={enqueueOneDownload}
+            onTransferMany={downloadMany}
+            onDropPath={onRemoteDrop}
             onEdit={(e) => openEditor({ scope: 'remote', sessionId, path: e.path })}
           />
         </div>
       </div>
-      <TransferQueue
-        items={items}
-        onCancel={(id) => window.devterm.transfer.cancel(id)}
-        onClear={() => setItems((prev) => prev.filter((i) => !i.done))}
-      />
     </div>
   )
 }

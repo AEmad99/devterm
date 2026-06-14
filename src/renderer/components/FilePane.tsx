@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { DirListing, FileEntry } from '@shared/types'
 import type { FsApi } from '../lib/fsapi'
-import FileTree, { type FileTreeHandle } from './FileTree'
+import FileTree, { type FileTreeHandle, type Selection } from './FileTree'
 import { IconArrowUp, IconHome, IconPlus, IconFile, IconEdit } from './Icons'
 
 // Re-exported for existing importers (e.g. SftpBrowser).
 export type { FsApi } from '../lib/fsapi'
+export type { Selection } from './FileTree'
 
 /** Strip a trailing path separator. */
 const strip = (p: string) => p.replace(/[/\\]+$/, '')
@@ -29,7 +30,9 @@ export default function FilePane({
   followPath,
   onCwd,
   onTransfer,
-  onEdit
+  onTransferMany,
+  onEdit,
+  onDropPath
 }: {
   api: FsApi
   sep: string
@@ -40,10 +43,25 @@ export default function FilePane({
   followPath?: string
   onCwd: (path: string) => void
   onTransfer: (entry: FileEntry) => void
+  /**
+   * Optional batch transfer hook. When provided, the per-row "Upload →" /
+   * "← Download" button is replaced with a primary button that operates
+   * on the full multi-selection (Upload N / Download N). When only a
+   * single file is selected it falls back to `onTransfer`.
+   */
+  onTransferMany?: (entries: FileEntry[]) => void
   onEdit?: (entry: FileEntry) => void
+  /**
+   * Optional drop hook. The pane fires this when a `application/x-devterm-path`
+   * item is dropped onto the file list. The parent decides the direction
+   * (upload vs download) and enqueues a transfer.
+   */
+  onDropPath?: (droppedPath: string, droppedName: string, isDir: boolean) => void
 }) {
   const [listing, setListing] = useState<DirListing | null>(null)
   const [sel, setSel] = useState<FileEntry | null>(null)
+  const [multiSel, setMultiSel] = useState<Selection>(new Set())
+  const [dropActive, setDropActive] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const [pathInput, setPathInput] = useState('')
   // Tracks the directory actually shown, so follow/edit effects don't loop.
@@ -58,6 +76,7 @@ export default function FilePane({
         currentPath.current = l.path
         setListing(l)
         setSel(null)
+        setMultiSel(new Set())
         onCwd(l.path)
       } catch (e) {
         setErr(String((e as Error).message || e))
@@ -100,6 +119,14 @@ export default function FilePane({
       if (!samePath(fresh.path, currentPath.current ?? '')) return
       setListing(fresh)
       setSel((cur) => (cur && fresh.entries.some((e) => samePath(e.path, cur.path)) ? cur : null))
+      setMultiSel((cur) => {
+        if (cur.size === 0) return cur
+        const next = new Set<string>()
+        for (const p of cur) {
+          if (fresh.entries.some((e) => samePath(e.path, p))) next.add(p)
+        }
+        return next
+      })
     })
     return off
   }, [api, listing?.path])
@@ -221,15 +248,50 @@ export default function FilePane({
         )}
         <span className="spacer" />
         <button
-          disabled={!sel || sel.isDir}
-          onClick={() => sel && onTransfer(sel)}
+          disabled={!sel || (sel.isDir && !onTransferMany)}
+          onClick={() => {
+            if (onTransferMany) {
+              const items = collectSelected(listing, sel, multiSel)
+              onTransferMany(items)
+            } else if (sel) {
+              onTransfer(sel)
+            }
+          }}
           className="primary"
+          title={
+            onTransferMany && multiSel.size > 1
+              ? `Transfer ${multiSel.size} selected items`
+              : 'Transfer the selected item'
+          }
         >
-          {transferLabel}
+          {onTransferMany && multiSel.size > 1
+            ? `${transferLabel} ${multiSel.size}`
+            : transferLabel}
         </button>
       </div>
       {err && <div className="fp-error">{err}</div>}
-      <div className="filelist">
+      <div
+        className={`filelist ${dropActive ? 'drop-target' : ''}`}
+        onDragOver={(e) => {
+          if (!onDropPath) return
+          if (e.dataTransfer.types.includes('application/x-devterm-path')) {
+            e.preventDefault()
+            e.dataTransfer.dropEffect = 'copy'
+            if (!dropActive) setDropActive(true)
+          }
+        }}
+        onDragLeave={() => setDropActive(false)}
+        onDrop={(e) => {
+          if (!onDropPath) return
+          const dropped = e.dataTransfer.getData('application/x-devterm-path')
+          if (!dropped) return
+          e.preventDefault()
+          setDropActive(false)
+          const name = e.dataTransfer.getData('application/x-devterm-name') || basename(dropped)
+          const isDir = e.dataTransfer.getData('application/x-devterm-isdir') === '1'
+          onDropPath(dropped, name, isDir)
+        }}
+      >
         {listing && (
           <FileTree
             ref={treeRef}
@@ -237,7 +299,9 @@ export default function FilePane({
             rootPath={listing.path}
             rootEntries={listing.entries}
             selectedPath={sel?.path ?? null}
+            selectedPaths={multiSel}
             onSelect={setSel}
+            onMultiSelect={setMultiSel}
             onActivateFile={onTransfer}
             onActivateDir={(e) => load(e.path)}
           />
@@ -318,4 +382,26 @@ export default function FilePane({
       )}
     </div>
   )
+}
+
+/**
+ * Resolve the user's "what to transfer" set. Order: explicit multi-selection
+ * wins; if the user clicked only one entry we fall back to that single
+ * entry. Hidden when there's neither (returns []).
+ */
+function collectSelected(
+  listing: DirListing | null,
+  sel: FileEntry | null,
+  multiSel: Selection
+): FileEntry[] {
+  if (!listing) return []
+  if (multiSel.size > 0) {
+    return listing.entries.filter((e) => multiSel.has(e.path))
+  }
+  return sel ? [sel] : []
+}
+
+function basename(p: string): string {
+  const i = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'))
+  return i >= 0 ? p.slice(i + 1) : p
 }

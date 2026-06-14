@@ -2,35 +2,35 @@ import { ipcMain, BrowserWindow } from 'electron'
 import { randomUUID } from 'crypto'
 import {
   IPC,
-  type ClaudeBridgeStatus,
-  type ClaudeOpenOpts,
-  type ClaudeOpenResult,
+  type AgentBridgeStatus,
+  type AgentOpenOpts,
+  type AgentOpenResult,
   type ConfirmRequest
 } from '@shared/types'
 import { McpBridge } from '../mcp/server'
 import type { ConfirmOutcome } from '../mcp/tools'
 import { Policy } from '../mcp/policy'
-import { buildClaudeMd } from '../claude/context'
-import { prepareClaudeLaunch } from '../claude/launch'
+import * as approvalRules from '../approval-rules'
+import { buildAgentsMd, prepareAgentLaunch } from '../agent/launch'
 import type { SSHManager } from '../ssh/manager'
 import type { PtyManager } from '../pty/manager'
 
-interface ClaudeSession {
+interface AgentSession {
   bridge: McpBridge
   ptyId: string
   cleanup: () => void
 }
 
-export interface ClaudeController {
+export interface AgentController {
   closeAll: () => void
 }
 
-export function registerClaudeIpc(
+export function registerAgentIpc(
   ssh: SSHManager,
   pty: PtyManager,
   getWindow: () => BrowserWindow | null
-): ClaudeController {
-  const sessions = new Map<string, ClaudeSession>()
+): AgentController {
+  const sessions = new Map<string, AgentSession>()
   const pendingConfirms = new Map<string, (outcome: ConfirmOutcome) => void>()
 
   const send = (channel: string, ...args: unknown[]) => {
@@ -46,13 +46,13 @@ export function registerClaudeIpc(
       const reqId = randomUUID()
       pendingConfirms.set(reqId, resolve)
       const req: ConfirmRequest = { reqId, sessionId, tool, detail }
-      send(IPC.claudeConfirm, req)
+      send(IPC.agentConfirm, req)
       setTimeout(() => {
         if (pendingConfirms.delete(reqId)) resolve('timeout')
       }, 120000)
     })
 
-  ipcMain.on(IPC.claudeConfirmReply, (_e, reqId: string, approved: boolean) => {
+  ipcMain.on(IPC.agentConfirmReply, (_e, reqId: string, approved: boolean) => {
     const r = pendingConfirms.get(reqId)
     if (r) {
       pendingConfirms.delete(reqId)
@@ -69,15 +69,17 @@ export function registerClaudeIpc(
     sessions.delete(sessionId)
   }
 
-  const sendBridgeStatus = (sessionId: string, status: ClaudeBridgeStatus) =>
-    send(`${IPC.claudeBridgeStatus}:${sessionId}`, status)
+  const sendBridgeStatus = (sessionId: string, status: AgentBridgeStatus) =>
+    send(`${IPC.agentBridgeStatus}:${sessionId}`, status)
 
-  ipcMain.handle(IPC.claudeOpen, async (_e, opts: ClaudeOpenOpts): Promise<ClaudeOpenResult> => {
+  ipcMain.handle(IPC.agentOpen, async (_e, opts: AgentOpenOpts): Promise<AgentOpenResult> => {
     if (sessions.has(opts.sessionId)) closeOne(opts.sessionId)
     const context = ssh.getContext(opts.sessionId)
-    if (!context) throw new Error('Connect the SSH session before opening Claude.')
+    if (!context) throw new Error('Connect the SSH session before opening the agent.')
 
-    const policy = new Policy(opts.mode)
+    const policy = new Policy(opts.mode, (sessionId, command) =>
+      approvalRules.match(sessionId, command).then((r) => (r ? { outcome: r.outcome } : undefined))
+    )
     const airGapped = opts.airGapped ?? false
     const bridge = new McpBridge(
       {
@@ -92,11 +94,12 @@ export function registerClaudeIpc(
     )
     const info = await bridge.start()
 
-    const spec = prepareClaudeLaunch(buildClaudeMd(context, airGapped), info)
+    const spec = prepareAgentLaunch(buildAgentsMd(context, airGapped), info)
     const { id: ptyId } = pty.create({
       shell: spec.bin,
       args: spec.args,
       cwd: spec.cwd,
+      env: spec.env,
       cols: opts.cols,
       rows: opts.rows
     })
@@ -105,11 +108,11 @@ export function registerClaudeIpc(
     return { ptyId, mcpUrl: info.url }
   })
 
-  ipcMain.handle(IPC.claudeStatus, (_e, sessionId: string): ClaudeBridgeStatus | null => {
+  ipcMain.handle(IPC.agentStatus, (_e, sessionId: string): AgentBridgeStatus | null => {
     return sessions.get(sessionId)?.bridge.getStatus() ?? null
   })
 
-  ipcMain.on(IPC.claudeClose, (_e, sessionId: string) => closeOne(sessionId))
+  ipcMain.on(IPC.agentClose, (_e, sessionId: string) => closeOne(sessionId))
 
   return {
     closeAll: () => {

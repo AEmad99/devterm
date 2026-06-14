@@ -3,8 +3,9 @@ import { randomBytes, randomUUID } from 'crypto'
 import type { AddressInfo } from 'net'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
-import type { ClaudeBridgeState, ClaudeBridgeStatus } from '@shared/types'
+import type { AgentBridgeState, AgentBridgeStatus } from '@shared/types'
 import { registerTools, type ToolDeps } from './tools'
+import { recordBridgeActivity } from '../foundation-ipc'
 
 const BRIDGE_HEARTBEAT_MS = 25000
 
@@ -23,7 +24,7 @@ export class McpBridge {
   private http?: Server
   private transport?: StreamableHTTPServerTransport
   private mcp?: McpServer
-  private state: ClaudeBridgeState = 'starting'
+  private state: AgentBridgeState = 'starting'
   private message: string | undefined
   private activeStreams = 0
   private lastActivityAt: number | undefined
@@ -36,10 +37,10 @@ export class McpBridge {
 
   constructor(
     private deps: ToolDeps,
-    private onStatus?: (status: ClaudeBridgeStatus) => void
+    private onStatus?: (status: AgentBridgeStatus) => void
   ) {}
 
-  getStatus(): ClaudeBridgeStatus {
+  getStatus(): AgentBridgeStatus {
     return {
       state: this.state,
       mcpUrl: this.port ? `http://127.0.0.1:${this.port}/mcp` : undefined,
@@ -50,10 +51,21 @@ export class McpBridge {
     }
   }
 
-  private emit(state: ClaudeBridgeState = this.state, message = this.message): void {
+  private emit(state: AgentBridgeState = this.state, message = this.message): void {
+    const stateBefore = this.state
     this.state = state
     this.message = message
     this.onStatus?.(this.getStatus())
+    // Mirror every state transition into the bridge activity log so the
+    // renderer's activity panel sees the same view the status pill shows.
+    if (stateBefore !== state) {
+      recordBridgeActivity({
+        sessionId: this.deps.sessionId,
+        kind: 'bridge_state',
+        detail: state,
+        ok: state !== 'error'
+      })
+    }
   }
 
   async start(): Promise<BridgeInfo> {
@@ -62,9 +74,10 @@ export class McpBridge {
       { name: 'devterm', version: '0.1.0' },
       { capabilities: { logging: {} } }
     )
+    this.wrapRegisterTool(this.mcp)
     registerTools(this.mcp, this.deps)
 
-    // One long-lived client (claude) per bridge: a single stateful transport
+    // One long-lived client (the agent) per bridge: a single stateful transport
     // keeps the session across initialize → listTools → callTool. JSON responses.
     this.transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: () => randomUUID(),
@@ -80,7 +93,7 @@ export class McpBridge {
     this.http = createServer((req, res) => void this.handle(req, res))
 
     // This is a localhost-only bridge with exactly ONE trusted client: the
-    // interactive `claude` CLI we spawn. Node's http.Server ships protective
+    // interactive `pi` CLI we spawn. Node's http.Server ships protective
     // idle timeouts meant for public servers (slowloris / idle-socket
     // exhaustion); here they only cause harm. The CLI holds a long-lived
     // standalone GET SSE stream open for server→client messages, and the MCP
@@ -108,6 +121,50 @@ export class McpBridge {
     this.startHeartbeat()
     this.emit('listening', 'Waiting for agent MCP client')
     return info
+  }
+
+  /**
+   * Patch `mcp.registerTool` so every tool callback is wrapped in a bridge
+   * activity entry. We can't replace the McpServer's CallToolRequestSchema
+   * handler cleanly (the SDK does its own validation + error wrapping there),
+   * so we hook the registration point: the wrapped callback is what the SDK
+   * stores as `tool.handler` and ultimately calls.
+   *
+   * The detail field is sanitized: newlines escaped and capped at 200 chars so
+   * a noisy command (e.g. a multi-line shell script) never floods the log.
+   */
+  private wrapRegisterTool(mcp: McpServer): void {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const orig = mcp.registerTool.bind(mcp) as any
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(mcp as any).registerTool = (name: string, config: any, cb: any) => {
+      const wrapped = async (args: unknown, extra: unknown) => {
+        const t0 = Date.now()
+        try {
+          const result = await cb(args, extra)
+          recordBridgeActivity({
+            sessionId: this.deps.sessionId,
+            kind: 'tool_call',
+            tool: name,
+            detail: sanitizeDetail(flattenArgs(args)),
+            durationMs: Date.now() - t0,
+            ok: true
+          })
+          return result
+        } catch (err) {
+          recordBridgeActivity({
+            sessionId: this.deps.sessionId,
+            kind: 'tool_call',
+            tool: name,
+            detail: sanitizeDetail(flattenArgs(args)),
+            durationMs: Date.now() - t0,
+            ok: false
+          })
+          throw err
+        }
+      }
+      return orig(name, config, wrapped)
+    }
   }
 
   private startHeartbeat(): void {
@@ -207,4 +264,35 @@ export class McpBridge {
     }
     this.http?.close()
   }
+}
+
+/**
+ * Sanitize a detail string before it goes into the bridge activity log.
+ * Newlines are escaped (the panel is one line per row), and the string is
+ * capped at 200 chars so a noisy command (e.g. a multi-line shell script)
+ * never floods the log or the renderer's row layout.
+ */
+export function sanitizeDetail(s: string): string {
+  const flat = s.replace(/[\r\n]+/g, ' ⏎ ').replace(/\s+/g, ' ').trim()
+  if (flat.length <= 200) return flat
+  return flat.slice(0, 197) + '…'
+}
+
+/**
+ * Best-effort flatten of tool args for the detail line. We only need a short
+ * human-readable hint of what was asked; full args are available in the
+ * renderer's expanded view via the original entry if needed.
+ */
+function flattenArgs(args: unknown): string {
+  if (args == null) return ''
+  if (typeof args === 'string') return args
+  if (typeof args !== 'object') return String(args)
+  const parts: string[] = []
+  for (const [k, v] of Object.entries(args as Record<string, unknown>)) {
+    if (v == null) continue
+    if (typeof v === 'string') parts.push(`${k}=${v}`)
+    else if (typeof v === 'number' || typeof v === 'boolean') parts.push(`${k}=${String(v)}`)
+    else parts.push(`${k}=${JSON.stringify(v).slice(0, 60)}`)
+  }
+  return parts.join(' ')
 }

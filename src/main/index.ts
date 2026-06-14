@@ -41,7 +41,7 @@ import { registerPtyIpc } from './ipc/pty'
 import { registerSshIpc } from './ipc/ssh'
 import { registerContextIpc } from './ipc/context'
 import { registerFileIpc } from './ipc/files'
-import { registerClaudeIpc, type ClaudeController } from './ipc/claude'
+import { registerAgentIpc, type AgentController } from './ipc/agent'
 import { registerConnectionsIpc } from './ipc/connections'
 import { registerWorkspacesIpc } from './ipc/workspaces'
 import { registerSnippetsIpc } from './ipc/snippets'
@@ -49,6 +49,10 @@ import { registerHistoryIpc } from './ipc/history'
 import { registerDialogIpc } from './ipc/dialog'
 import { registerClipboardIpc } from './ipc/clipboard'
 import { registerWindowIpc } from './ipc/window'
+import { registerFoundationIpc } from './foundation-ipc'
+import { registerGitIpc } from './ipc/git'
+import { registerTransfersIpc } from './ipc/transfers'
+import { registerBrowserIpc } from './ipc/browser'
 import { IPC } from '@shared/types'
 import { initAutoUpdater } from './updater'
 import type { PtyManager } from './pty/manager'
@@ -59,7 +63,9 @@ let mainWindow: BrowserWindow | null = null
 let ptyManager: PtyManager | null = null
 let sshManager: SSHManager | null = null
 let fileController: FileController | null = null
-let claudeController: ClaudeController | null = null
+let agentController: AgentController | null = null
+let transfersController: { shutdown: () => Promise<void> } | null = null
+let browserController: { shutdown: () => Promise<void> } | null = null
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
@@ -106,7 +112,7 @@ function registerIpc(): void {
   ptyManager = registerPtyIpc(() => mainWindow)
   sshManager = registerSshIpc(() => mainWindow)
   fileController = registerFileIpc(sshManager, () => mainWindow)
-  claudeController = registerClaudeIpc(sshManager, ptyManager, () => mainWindow)
+  agentController = registerAgentIpc(sshManager, ptyManager, () => mainWindow)
   registerConnectionsIpc()
   registerWorkspacesIpc()
   registerSnippetsIpc()
@@ -115,6 +121,11 @@ function registerIpc(): void {
   registerClipboardIpc()
   registerWindowIpc(() => mainWindow)
   registerContextIpc()
+  registerFoundationIpc(() => mainWindow)
+  registerGitIpc(sshManager, () => mainWindow)
+  // Cluster D: persistent transfer queue + in-app browser enhancements.
+  transfersController = registerTransfersIpc(sshManager, () => mainWindow)
+  browserController = registerBrowserIpc(() => mainWindow)
 }
 
 // Headless self-test entrypoint: `electron . --self-test`.
@@ -212,7 +223,7 @@ if (process.argv.includes('--self-test')) {
   })
 
   app.on('window-all-closed', () => {
-    claudeController?.closeAll()
+    agentController?.closeAll()
     fileController?.stopWatches()
     fileController?.transfers.cancelAll()
     ptyManager?.killAll()
@@ -221,10 +232,13 @@ if (process.argv.includes('--self-test')) {
   })
 
   app.on('before-quit', () => {
-    claudeController?.closeAll()
+    agentController?.closeAll()
     fileController?.stopWatches()
     fileController?.transfers.cancelAll()
     ptyManager?.killAll()
     sshManager?.disconnectAll()
+    // Cluster D: persist the transfer queue and the browser zoom map.
+    void transfersController?.shutdown()
+    void browserController?.shutdown()
   })
 }

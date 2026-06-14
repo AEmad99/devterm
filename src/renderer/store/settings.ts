@@ -41,6 +41,37 @@ export interface AppSettings {
   themeId: string
   terminalBg: TerminalBg
   prefs: TerminalPrefs
+  /** Auto-reconnect policy applied to remote SSH sessions when they drop. */
+  autoReconnect: AutoReconnectSettings
+  /** Bottom status bar visibility (Cluster C adds this). */
+  showStatusBar: boolean
+  /** Whether the agent activity panel is collapsed by default (Cluster A). */
+  agentActivityCollapsed: boolean
+  /**
+   * Whether the transfers panel is open in the bottom dock. Cluster D adds
+   * this. App toolbar's segmented "Activity | Transfers | Off" toggle is the
+   * canonical control; this flag mirrors its chosen value so the panel can
+   * also re-hide itself on session close.
+   */
+  transfersPanelOpen: boolean
+}
+
+/**
+ * User-facing knobs for the SSH auto-reconnect loop. Matches the main-process
+ * `ReconnectPolicy` (kept separate so the renderer never has to import the
+ * main-only types).
+ */
+export interface AutoReconnectSettings {
+  /** Master switch. */
+  enabled: boolean
+  /** Total attempts (1 = single retry, 5 = 1 initial + 4 retries). */
+  maxAttempts: number
+  /** Delay before the first retry, in ms. */
+  baseDelayMs: number
+  /** Cap for any single delay, in ms. */
+  maxDelayMs: number
+  /** Multiplier per attempt. 2 = classic exponential. */
+  factor: number
 }
 
 export const DEFAULT_FONT_FAMILY = 'Cascadia Code, Consolas, "Courier New", monospace'
@@ -63,7 +94,17 @@ const DEFAULTS: AppSettings = {
     rightClickPaste: false,
     scrollSensitivity: 1,
     bell: 'none'
-  }
+  },
+  autoReconnect: {
+    enabled: true,
+    maxAttempts: 5,
+    baseDelayMs: 1000,
+    maxDelayMs: 30000,
+    factor: 2
+  },
+  showStatusBar: true,
+  agentActivityCollapsed: false,
+  transfersPanelOpen: false
 }
 
 const STORAGE_KEY = 'devterm.settings.v1'
@@ -78,7 +119,18 @@ function load(): AppSettings {
     return {
       themeId: typeof parsed?.themeId === 'string' ? parsed.themeId : DEFAULTS.themeId,
       terminalBg: { ...DEFAULTS.terminalBg, ...(parsed?.terminalBg ?? {}) },
-      prefs: { ...DEFAULTS.prefs, ...(parsed?.prefs ?? {}) }
+      prefs: { ...DEFAULTS.prefs, ...(parsed?.prefs ?? {}) },
+      autoReconnect: { ...DEFAULTS.autoReconnect, ...(parsed?.autoReconnect ?? {}) },
+      showStatusBar:
+        typeof parsed?.showStatusBar === 'boolean' ? parsed.showStatusBar : DEFAULTS.showStatusBar,
+      agentActivityCollapsed:
+        typeof parsed?.agentActivityCollapsed === 'boolean'
+          ? parsed.agentActivityCollapsed
+          : DEFAULTS.agentActivityCollapsed,
+      transfersPanelOpen:
+        typeof parsed?.transfersPanelOpen === 'boolean'
+          ? parsed.transfersPanelOpen
+          : DEFAULTS.transfersPanelOpen
     }
   } catch {
     return DEFAULTS
@@ -89,6 +141,10 @@ interface SettingsState extends AppSettings {
   setThemeId: (id: string) => void
   setTerminalBg: (patch: Partial<TerminalBg>) => void
   setPrefs: (patch: Partial<TerminalPrefs>) => void
+  setAutoReconnect: (patch: Partial<AutoReconnectSettings>) => void
+  setShowStatusBar: (v: boolean) => void
+  setAgentActivityCollapsed: (v: boolean) => void
+  setTransfersPanelOpen: (v: boolean) => void
   reset: () => void
 }
 
@@ -99,7 +155,11 @@ function persist(state: AppSettings): void {
       JSON.stringify({
         themeId: state.themeId,
         terminalBg: state.terminalBg,
-        prefs: state.prefs
+        prefs: state.prefs,
+        autoReconnect: state.autoReconnect,
+        showStatusBar: state.showStatusBar,
+        agentActivityCollapsed: state.agentActivityCollapsed,
+        transfersPanelOpen: state.transfersPanelOpen
       })
     )
   } catch {
@@ -112,23 +172,69 @@ export const useSettings = create<SettingsState>((set, get) => ({
 
   setThemeId: (id) => {
     set({ themeId: id })
-    persist({ themeId: id, terminalBg: get().terminalBg, prefs: get().prefs })
+    persist(snapshot(get()))
   },
 
   setTerminalBg: (patch) => {
     const terminalBg = { ...get().terminalBg, ...patch }
     set({ terminalBg })
-    persist({ themeId: get().themeId, terminalBg, prefs: get().prefs })
+    persist(snapshot(get()))
   },
 
   setPrefs: (patch) => {
     const prefs = { ...get().prefs, ...patch }
     set({ prefs })
-    persist({ themeId: get().themeId, terminalBg: get().terminalBg, prefs })
+    persist(snapshot(get()))
+  },
+
+  setAutoReconnect: (patch) => {
+    const autoReconnect = { ...get().autoReconnect, ...patch }
+    set({ autoReconnect })
+    persist(snapshot(get()))
+    // Push to the main process so the live policy updates immediately.
+    void window.devterm.ssh.setReconnectPolicy?.(autoReconnect).catch(() => undefined)
+  },
+
+  setShowStatusBar: (v) => {
+    set({ showStatusBar: v })
+    persist(snapshot(get()))
+  },
+
+  setAgentActivityCollapsed: (v) => {
+    set({ agentActivityCollapsed: v })
+    persist(snapshot(get()))
+  },
+
+  setTransfersPanelOpen: (v) => {
+    set({ transfersPanelOpen: v })
+    persist(snapshot(get()))
   },
 
   reset: () => {
-    set({ themeId: DEFAULTS.themeId, terminalBg: DEFAULTS.terminalBg, prefs: DEFAULTS.prefs })
+    set({
+      themeId: DEFAULTS.themeId,
+      terminalBg: DEFAULTS.terminalBg,
+      prefs: DEFAULTS.prefs,
+      autoReconnect: DEFAULTS.autoReconnect,
+      showStatusBar: DEFAULTS.showStatusBar,
+      agentActivityCollapsed: DEFAULTS.agentActivityCollapsed,
+      transfersPanelOpen: DEFAULTS.transfersPanelOpen
+    })
     persist(DEFAULTS)
+    void window.devterm.ssh.setReconnectPolicy?.(DEFAULTS.autoReconnect).catch(() => undefined)
   }
 }))
+
+/** Build a plain `AppSettings` snapshot from the live store (used by every
+ * setter so we don't have to repeat the same set of fields on every call). */
+function snapshot(s: SettingsState): AppSettings {
+  return {
+    themeId: s.themeId,
+    terminalBg: s.terminalBg,
+    prefs: s.prefs,
+    autoReconnect: s.autoReconnect,
+    showStatusBar: s.showStatusBar,
+    agentActivityCollapsed: s.agentActivityCollapsed,
+    transfersPanelOpen: s.transfersPanelOpen
+  }
+}

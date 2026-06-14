@@ -52,6 +52,24 @@ export interface SSHProfile extends SSHHop {
   jump?: SSHHop
 }
 
+/**
+ * Auto-reconnect policy for SSH sessions. Pushed from the renderer (settings
+ * modal) into the main process; the same struct is returned by the policy
+ * IPC so both ends stay in sync.
+ */
+export interface ReconnectPolicy {
+  /** Master switch — when off, drops are terminal. */
+  enabled: boolean
+  /** Max attempts (including the first retry) before giving up. */
+  maxAttempts: number
+  /** Initial delay before the first retry, in ms. */
+  baseDelayMs: number
+  /** Cap for any single delay, in ms (the backoff is clamped here). */
+  maxDelayMs: number
+  /** Multiplier per attempt. 1 = constant delay, 2 = classic exponential. */
+  factor: number
+}
+
 export interface SSHConnectResult {
   sessionId: string
   context: HostContext
@@ -103,6 +121,8 @@ export interface WorkspaceItem {
 export interface Workspace {
   id: string
   name: string
+  /** Optional free-form description (shown in the manager row). */
+  description?: string
   /** Terminals included, in tab order. */
   items: WorkspaceItem[]
   /** Optional saved split arrangement (leaf tabs are workspace-item ids). */
@@ -112,6 +132,10 @@ export interface Workspace {
    * into `items`. Never written by current code.
    */
   connectionIds?: string[]
+  /** Wall-clock time (ms since epoch) of the most recent launch; undefined if never. */
+  lastLaunchedAt?: number
+  /** Number of times this workspace has been launched (incremented on every launch). */
+  launchCount?: number
 }
 
 // ---------------------------------------------------------------------------
@@ -165,6 +189,27 @@ export type SSHStatus =
   | { type: 'hostkey-mismatch'; host: string; fingerprint: string; expected: string }
   | { type: 'error'; message: string }
   | { type: 'closed' }
+  | {
+      /** Auto-reconnect is in flight; the connection is about to be re-established. */
+      type: 'reconnecting'
+      /** 1-based attempt number (1 = first retry). */
+      attempt: number
+      /** Max attempts the manager will try before giving up. */
+      maxAttempts: number
+      /** Delay (ms) until the next attempt. */
+      delayMs: number
+    }
+  | {
+      /** Auto-reconnect succeeded and a fresh session is up. */
+      type: 'reconnected'
+      attempt: number
+    }
+  | {
+      /** Auto-reconnect gave up after exhausting attempts. */
+      type: 'reconnect-failed'
+      attempts: number
+      reason: string
+    }
 
 // ---------------------------------------------------------------------------
 // Files (SFTP remote + local fs) and transfers
@@ -210,12 +255,15 @@ export interface FileContent {
 export const MAX_EDIT_BYTES = 5 * 1024 * 1024
 
 // ---------------------------------------------------------------------------
-// Claude agent bridge
+// Agent bridge (interactive `pi` CLI wired to the in-process MCP bridge).
+// The MCP bridge, tools, and policy are agent-agnostic — they speak MCP. The
+// renderer-visible contract below is the only place the agent's identity leaks
+// out, and the IPC channel names are pure strings with no agent-specific bits.
 // ---------------------------------------------------------------------------
 
 export type PolicyMode = 'read_only' | 'confirm' | 'full'
 
-export interface ClaudeOpenOpts {
+export interface AgentOpenOpts {
   sessionId: string
   mode: PolicyMode
   /** Tell the agent the host has no internet. Optional; defaults to false. */
@@ -224,13 +272,13 @@ export interface ClaudeOpenOpts {
   rows: number
 }
 
-export interface ClaudeOpenResult {
-  /** PTY id of the spawned interactive `claude` (use the pty.* channels). */
+export interface AgentOpenResult {
+  /** PTY id of the spawned interactive agent (use the pty.* channels). */
   ptyId: string
   mcpUrl: string
 }
 
-export type ClaudeBridgeState =
+export type AgentBridgeState =
   | 'starting'
   | 'listening'
   | 'connected'
@@ -238,8 +286,8 @@ export type ClaudeBridgeState =
   | 'stopped'
   | 'error'
 
-export interface ClaudeBridgeStatus {
-  state: ClaudeBridgeState
+export interface AgentBridgeStatus {
+  state: AgentBridgeState
   mcpUrl?: string
   message?: string
   lastActivityAt?: number
@@ -296,6 +344,9 @@ export const IPC = {
   sshData: 'ssh:data', // suffixed :<sessionId>
   sshExit: 'ssh:exit', // suffixed :<sessionId>
   sshStatus: 'ssh:status', // suffixed :<sessionId>
+  sshCancelReconnect: 'ssh:cancel-reconnect', // <sessionId>
+  sshGetReconnectPolicy: 'ssh:get-reconnect-policy',
+  sshSetReconnectPolicy: 'ssh:set-reconnect-policy',
 
   // local filesystem
   fsList: 'fs:list',
@@ -328,13 +379,13 @@ export const IPC = {
   transferCancel: 'transfer:cancel',
   transferProgress: 'transfer:progress', // suffixed :<transferId>
 
-  // claude agent bridge
-  claudeOpen: 'claude:open',
-  claudeClose: 'claude:close',
-  claudeConfirm: 'claude:confirm', // main -> renderer
-  claudeConfirmReply: 'claude:confirm:reply', // renderer -> main
-  claudeBridgeStatus: 'claude:bridge-status', // suffixed :<sessionId>
-  claudeStatus: 'claude:status',
+  // agent bridge (interactive `pi` wired to the in-process MCP bridge)
+  agentOpen: 'agent:open',
+  agentClose: 'agent:close',
+  agentConfirm: 'agent:confirm', // main -> renderer
+  agentConfirmReply: 'agent:confirm:reply', // renderer -> main
+  agentBridgeStatus: 'agent:bridge-status', // suffixed :<sessionId>
+  agentStatus: 'agent:status',
 
   // saved connections (persisted in userData)
   connectionsList: 'connections:list',
@@ -345,6 +396,12 @@ export const IPC = {
   workspacesList: 'workspaces:list',
   workspacesSave: 'workspaces:save',
   workspacesDelete: 'workspaces:delete',
+  /** Cluster B: rename a workspace in place; returns the full updated list. */
+  workspacesRename: 'workspaces:rename',
+  /** Cluster B: duplicate a workspace with a new id + " (copy)" suffix; returns the full updated list. */
+  workspacesDuplicate: 'workspaces:duplicate',
+  /** Cluster B: record a launch (increments launchCount, sets lastLaunchedAt); returns the full updated list. */
+  workspacesRecordLaunch: 'workspaces:record-launch',
 
   // snippets (persisted in userData)
   snippetsList: 'snippets:list',
@@ -366,7 +423,48 @@ export const IPC = {
   browserOpenTab: 'browser:open-tab',
 
   // window appearance (glass/translucent material)
-  windowSetGlass: 'window:set-glass'
+  windowSetGlass: 'window:set-glass',
+
+  // foundation cluster: bridge activity log
+  bridgeActivityList: 'bridge-activity:list',
+  bridgeActivityClear: 'bridge-activity:clear',
+  bridgeActivityEvent: 'bridge-activity:event', // suffixed :<sessionId>
+
+  // foundation cluster: settings export/import
+  settingsIoExport: 'settings-io:export',
+  settingsIoImport: 'settings-io:import',
+
+  // foundation cluster: approval rules (action-style single channel)
+  approvalRules: 'approval-rules',
+
+  // foundation cluster: port forwards (stubs; Cluster B will implement)
+  portForwardList: 'port-forward:list',
+  portForwardAdd: 'port-forward:add',
+  portForwardRemove: 'port-forward:remove',
+
+  // git status (read-only) — local and remote (mirrored over the session's exec channel)
+  gitStatus: 'git:status',
+  gitDiff: 'git:diff',
+  gitOnChange: 'git:on-change', // suffixed :<path>
+
+  // Cluster D: persistent transfer queue
+  transfersList: 'transfers:list',
+  transfersEnqueueUpload: 'transfers:enqueue-upload',
+  transfersEnqueueDownload: 'transfers:enqueue-download',
+  transfersCancel: 'transfers:cancel',
+  transfersRetry: 'transfers:retry',
+  transfersClearFinished: 'transfers:clear-finished',
+  transfersEvent: 'transfers:event', // suffixed :<id>
+  transfersStatus: 'transfers:status',
+  // Cluster D: in-app browser enhancements
+  browserDownloadsList: 'browser:downloads:list',
+  browserDownloadsCancel: 'browser:downloads:cancel',
+  browserZoomGet: 'browser:zoom:get',
+  browserZoomSet: 'browser:zoom:set',
+  browserZoomReset: 'browser:zoom:reset',
+  browserDevtoolsOpen: 'browser:devtools:open',
+  browserMute: 'browser:mute',
+  browserDownloadsEvent: 'browser:downloads:event'
 } as const
 
 /** Typed surface exposed to the renderer via contextBridge (see preload). */
@@ -390,6 +488,9 @@ export interface DevTermApi {
     input(sessionId: string, data: string): void
     resize(sessionId: string, cols: number, rows: number): void
     disconnect(sessionId: string): void
+    cancelReconnect(sessionId: string): void
+    getReconnectPolicy(): Promise<ReconnectPolicy>
+    setReconnectPolicy(patch: Partial<ReconnectPolicy>): Promise<ReconnectPolicy>
     onData(sessionId: string, cb: (data: string) => void): () => void
     onExit(sessionId: string, cb: () => void): () => void
     onStatus(sessionId: string, cb: (s: SSHStatus) => void): () => void
@@ -440,12 +541,12 @@ export interface DevTermApi {
     cancel(id: string): void
     onProgress(id: string, cb: (p: TransferProgress) => void): () => void
   }
-  /** Claude agent bridge: spawn interactive `claude` wired to the MCP bridge. */
-  claude: {
-    open(opts: ClaudeOpenOpts): Promise<ClaudeOpenResult>
+  /** Agent bridge: spawn interactive `pi` wired to the in-process MCP bridge. */
+  agent: {
+    open(opts: AgentOpenOpts): Promise<AgentOpenResult>
     close(sessionId: string): void
-    status(sessionId: string): Promise<ClaudeBridgeStatus | null>
-    onBridgeStatus(sessionId: string, cb: (status: ClaudeBridgeStatus) => void): () => void
+    status(sessionId: string): Promise<AgentBridgeStatus | null>
+    onBridgeStatus(sessionId: string, cb: (status: AgentBridgeStatus) => void): () => void
     onConfirm(cb: (req: ConfirmRequest) => void): () => void
     replyConfirm(reqId: string, approved: boolean): void
   }
@@ -460,6 +561,12 @@ export interface DevTermApi {
     list(): Promise<Workspace[]>
     save(ws: Workspace): Promise<Workspace[]>
     delete(id: string): Promise<Workspace[]>
+    /** Cluster B: rename a workspace in place. */
+    rename(id: string, name: string): Promise<Workspace[]>
+    /** Cluster B: duplicate a workspace; the new copy has " (copy)" appended to the name. */
+    duplicate(id: string): Promise<Workspace[]>
+    /** Cluster B: record that a workspace was launched; bumps launchCount + lastLaunchedAt. */
+    recordLaunch(id: string): Promise<Workspace[]>
   }
   /** Persisted command snippets (CRUD); each call returns the full updated list. */
   snippets: {
@@ -509,4 +616,351 @@ export interface DevTermApi {
   /** Context of the local workstation. */
   localContext(): Promise<HostContext>
   platform: NodeJS.Platform
+
+  // -------------------------------------------------------------------------
+  // Foundation cluster additions (additive — do not edit the namespace above)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Bridge activity log (tool calls, approval requests, heartbeats, etc.) per
+   * session. Subscribed via the per-session channel and read on demand.
+   */
+  bridgeActivity: {
+    on(sessionId: string, cb: (entry: BridgeActivityEntry) => void): () => void
+    list(
+      sessionId: string,
+      opts?: { sinceMs?: number; limit?: number }
+    ): Promise<BridgeActivityEntry[]>
+    clear(sessionId: string): Promise<void>
+  }
+  /**
+   * Settings export/import. Pops a native save/open dialog; the bundle is
+   * versioned (see `SettingsExportBundle`) and secrets are stripped on export.
+   */
+  settingsIo: {
+    export(): Promise<void>
+    import(): Promise<{
+      ok: boolean
+      counts?: { settings: boolean; snippets: number; workspaces: number; approvalRules: number }
+    }>
+  }
+  /**
+   * Approval rules for the agent guardrail. Scoped per-session or global
+   * (sessionId omitted). Longest-prefix match on `commandPrefix`.
+   */
+  approvalRules: {
+    list(sessionId?: string): Promise<ApprovalRule[]>
+    add(rule: Omit<ApprovalRule, 'id' | 'createdAt'>): Promise<ApprovalRule[]>
+    remove(id: string): Promise<ApprovalRule[]>
+    match(sessionId: string, command: string): Promise<ApprovalRule | null>
+  }
+  /**
+   * SSH port forwarding. `list` is real; `add` and `remove` are stubbed until
+   * Cluster B wires them through to the existing ssh2 client.
+   */
+  portForward: {
+    list(sessionId?: string): Promise<PortForward[]>
+    add(req: Omit<PortForward, 'id' | 'createdAt' | 'bytes'>): Promise<PortForward>
+    remove(id: string): Promise<void>
+  }
+
+  /**
+   * Read-only git awareness for the file tree. `status` returns the current
+   * branch + a path→status map for the given working dir (local or remote);
+   * `diff` returns the textual diff for one file. `onChange` subscribes to live
+   * updates — the main process polls the source every few seconds and pushes
+   * the latest status to the matching renderer.
+   */
+  git: {
+    /**
+     * Resolve git status. `sessionId` is omitted for local paths; present for
+     * remote ones (the lookup runs over the session's existing exec channel).
+     */
+    status(target: { sessionId?: string; path: string }): Promise<GitStatus>
+    /**
+     * Resolve the textual diff for one tracked file. For unstaged/untracked
+     * paths the diff is best-effort (may be empty for untracked files).
+     */
+    diff(target: { sessionId?: string; path: string; file: string }): Promise<string>
+    /**
+     * Subscribe to status changes for a given working dir. The main process
+     * polls every 5s and pushes an updated `GitStatus` whenever it changes.
+     */
+    onChange(path: string, cb: (status: GitStatus) => void): () => void
+    /**
+     * Explicit "start polling" nudge for `path`. Pair with the unsubscribe
+     * returned by `onChange`. Best-effort: a missing main process is fine.
+     */
+    watch(target: { sessionId?: string; path: string }): void
+  }
+
+  // -------------------------------------------------------------------------
+  // Cluster D: persistent transfer queue
+  // -------------------------------------------------------------------------
+  /**
+   * Persistent transfer queue. Items survive restarts; in-flight items are
+   * marked canceled with reason "interrupted by restart" on next launch
+   * (we never try to resume bytes mid-flight). `progress` is a per-item live
+   * stream; `status` is the full list (subscribed via `onStatus`, the same
+   * shape every other namespace uses).
+   */
+  transfers: {
+    list(): Promise<TransferListResult>
+    /**
+     * Enqueue a single upload. The main process allocates the id, persists
+     * the item, and starts it through the producer/consumer queue.
+     */
+    enqueueUpload(opts: { sessionId: string; localPath: string; remotePath: string }): Promise<TransferItemV2>
+    enqueueDownload(opts: { sessionId: string; localPath: string; remotePath: string }): Promise<TransferItemV2>
+    /** Mark a queued or running transfer as canceled. */
+    cancel(id: string): Promise<void>
+    /**
+     * Re-enqueue a previously failed/canceled item. The path pair is
+     * preserved; the item gets a new id and is pushed to the back of the
+     * queue. Items that were interrupted by a restart are retryable too.
+     */
+    retry(id: string): Promise<TransferItemV2 | null>
+    /** Drop all items that are done, canceled, or errored out of the list. */
+    clearFinished(): Promise<TransferListResult>
+    /**
+     * Subscribe to live progress + done events for a single transfer.
+     * The main process throttles to 250ms. Pair with the unsubscribe.
+     */
+    onProgress(id: string, cb: (e: TransferEvent) => void): () => void
+    /**
+     * Subscribe to the full queue state (list + add/remove ticks). The
+     * callback fires immediately with the current snapshot, then again
+     * whenever any item is added, removed, or changes state.
+     */
+    onStatus(cb: (items: TransferListResult) => void): () => void
+  }
+
+  // -------------------------------------------------------------------------
+  // Cluster D: in-app browser pane enhancements
+  // -------------------------------------------------------------------------
+  browserDownloads: {
+    list(): Promise<BrowserDownloadItem[]>
+    cancel(id: string): Promise<void>
+    onUpdate(cb: (items: BrowserDownloadItem[]) => void): () => void
+  }
+  browserZoom: {
+    get(origin: string): Promise<number>
+    set(origin: string, level: number): Promise<void>
+    reset(): Promise<void>
+  }
+  /** Open detached DevTools for a <webview> guest identified by webContents id. */
+  openBrowserDevtools(webContentsId: number): Promise<void>
+  /** Mute / unmute a <webview> guest identified by webContents id. */
+  setBrowserMuted(webContentsId: number, muted: boolean): Promise<void>
 }
+
+// ---------------------------------------------------------------------------
+// Foundation cluster types (additive — append above the file's original tail)
+// ---------------------------------------------------------------------------
+
+/** Solid background colour for the terminal (also shown beneath an image). */
+export interface TerminalBg {
+  color: string
+  image: string | null
+  /** Darkening overlay over the image, 0 (none) .. 0.85 (heavy), for legibility. */
+  dim: number
+}
+
+export type CursorStyle = 'block' | 'bar' | 'underline'
+export type BellStyle = 'none' | 'visual'
+
+/** Appearance + behavior preferences, applied to xterm options live. */
+export interface TerminalPrefs {
+  fontSize: number
+  fontFamily: string
+  lineHeight: number
+  cursorStyle: CursorStyle
+  cursorBlink: boolean
+  scrollback: number
+  copyOnSelect: boolean
+  rightClickPaste: boolean
+  scrollSensitivity: number
+  bell: BellStyle
+}
+
+/** Auto-reconnect policy for SSH sessions (mirrors the renderer settings store). */
+export interface AutoReconnectPrefs {
+  enabled: boolean
+  maxAttempts: number
+  baseDelayMs: number
+  maxDelayMs: number
+  factor: number
+}
+
+/** A snapshot of the user's settings, suitable for export/import. */
+export interface SettingsSnapshot {
+  themeId: string
+  terminalBg: TerminalBg
+  prefs: TerminalPrefs
+  autoReconnect: AutoReconnectPrefs
+}
+
+/** A persistent approval rule for the agent guardrail. */
+export interface ApprovalRule {
+  id: string
+  /** When set, rule only applies to this session; otherwise global. */
+  sessionId?: string
+  /**
+   * Command-prefix token. Matched at a token boundary at the end so
+   * `kubectl` matches `kubectl get pods` but not `kubectlized`.
+   */
+  commandPrefix: string
+  outcome: 'allow' | 'deny' | 'ask'
+  createdAt: number
+}
+
+/** A single entry in the per-session bridge activity log. */
+export type BridgeActivityKind =
+  | 'tool_call'
+  | 'approval_request'
+  | 'approval_outcome'
+  | 'transport'
+  | 'agent_heartbeat'
+  | 'bridge_state'
+
+export interface BridgeActivityEntry {
+  id: string
+  sessionId: string
+  kind: BridgeActivityKind
+  /** Name of the tool/transport/agent — when applicable. */
+  tool?: string
+  /** Short human-readable detail line. */
+  detail: string
+  /** Epoch millis when the entry was recorded. */
+  ts: number
+  /** Optional elapsed time of the call/heartbeat in milliseconds. */
+  durationMs?: number
+  /** Whether the call succeeded (true) or failed (false). Undefined for non-result events. */
+  ok?: boolean
+}
+
+/** SSH port-forward kind. `local` = -L, `dynamic` = -D. */
+export type PortForwardKind = 'local' | 'dynamic'
+
+export interface PortForward {
+  id: string
+  sessionId: string
+  kind: PortForwardKind
+  localPort: number
+  /** Remote side; for `local` (-L): target host+port. For `dynamic` (-D): unused. */
+  remoteHost?: string
+  remotePort?: number
+  createdAt: number
+  /** Total bytes proxied since start (best-effort, may be undefined). */
+  bytes?: number
+}
+
+/** Status badge for a tab (reconnecting, error, etc.). */
+export type TabStatus =
+  | 'normal'
+  | 'reconnecting'
+  | 'disconnected'
+  | 'agent_pending'
+  | 'error'
+
+/** A single recent host the user quick-connected to (for autocomplete). */
+export interface QuickConnectEntry {
+  host: string
+  port: number
+  username: string
+  lastUsedAt: number
+}
+
+/** A more self-contained transfer row (used by persistence / queue UIs). */
+export interface TransferItemV2 {
+  id: string
+  direction: 'upload' | 'download'
+  sessionId: string
+  localPath: string
+  remotePath: string
+  total: number
+  transferred: number
+  done: boolean
+  error?: string
+  canceled?: boolean
+  enqueuedAt: number
+  finishedAt?: number
+}
+
+/** Versioned bundle for export/import. `version: 1`. */
+export interface SettingsExportBundle {
+  version: 1
+  exportedAt: number
+  settings: SettingsSnapshot
+  snippets: Snippet[]
+  /** Saved connections with secret fields stripped (see settingsIo.exportAll). */
+  connections: SavedConnection[]
+  workspaces: Workspace[]
+  approvalRules: ApprovalRule[]
+}
+
+// ---------------------------------------------------------------------------
+// Git awareness (read-only) — populates the file tree with status badges and
+// the "Show changes only" filter. Mutations (add/commit/push/etc.) are not
+// exposed; the agent and the editor are the only writers in DevTerm.
+// ---------------------------------------------------------------------------
+
+/** Per-file git status. `?` = untracked, `U` = conflicted, `R` = renamed. */
+export type GitFileStatus = 'M' | 'A' | 'D' | '?' | 'R' | 'U'
+
+export interface GitStatus {
+  /** False if the path is not inside a working tree. */
+  isRepo: boolean
+  /** Current branch (short, e.g. "main"); empty when detached or not a repo. */
+  branch: string
+  /** Commits ahead of upstream; -1 if unknown / no upstream. */
+  ahead: number
+  /** Commits behind upstream; -1 if unknown / no upstream. */
+  behind: number
+  /** Repo-relative path → file status. Only includes changed paths. */
+  entries: Record<string, GitFileStatus>
+  /** True when the file count was capped at the safety limit. */
+  truncated?: boolean
+}
+
+// ---------------------------------------------------------------------------
+// Cluster D: persistent transfer queue + in-app browser enhancements
+// (additive — appended below the original tail)
+// ---------------------------------------------------------------------------
+
+/** Live status update for a single in-flight transfer item (mirrors TransferItemV2). */
+export type TransferEvent =
+  | { kind: 'progress'; id: string; transferred: number; total: number; done: boolean }
+  | { kind: 'done'; id: string; transferred: number; total: number; canceled?: boolean; error?: string; finishedAt: number }
+
+/** What the user gets back from `transfers.list()`. */
+export type TransferListResult = TransferItemV2[]
+
+/** A single in-app browser download, sourced from the persistent partition's webContents. */
+export type BrowserDownloadState = 'progressing' | 'completed' | 'cancelled' | 'interrupted'
+
+export interface BrowserDownloadItem {
+  /** Electron-assigned id from the `will-download` event. */
+  id: string
+  /** Filename (basename) as Electron reported it. */
+  filename: string
+  /** Original URL the download was triggered from. */
+  url: string
+  /** Local path the bytes are being written to. */
+  path: string
+  /** Bytes received so far. */
+  received: number
+  /** Total bytes (Electron's `getReceivedBytes`/`getTotalBytes`). -1 if unknown. */
+  total: number
+  state: BrowserDownloadState
+  /** Millis since epoch when first observed. */
+  startedAt: number
+  /** Optional MIME type. */
+  mime?: string
+}
+
+/** Per-origin zoom level (1 = 100%, 1.5 = 150%). */
+export interface BrowserZoomMap {
+  [origin: string]: number
+}
+

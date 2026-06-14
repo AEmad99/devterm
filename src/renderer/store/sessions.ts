@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { HostContext, SSHProfile } from '@shared/types'
+import type { AgentBridgeState, HostContext, SSHProfile } from '@shared/types'
 import { useLayout } from './layout'
 
 export interface Session {
@@ -29,6 +29,20 @@ export interface Session {
   groupId?: string
   /** Browser panes only: initial URL to load on mount (consumed once, like startCwd). */
   url?: string
+  /**
+   * Live state of the MCP bridge for this session's agent (the `pi` CLI wired
+   * to a per-session MCP server). Pushed by AgentPane from the bridge-status
+   * channel; the tab dot uses it to color the indicator when the bridge is
+   * starting / errored. Absent for sessions that have never had an agent.
+   */
+  agentBridgeState?: AgentBridgeState
+  /**
+   * True when the agent is waiting on an operator approval for a guarded
+   * action (confirm mode, destructive op). Pushed by the confirm-queue
+   * subscriber; cleared when the queue reports the request is resolved. Drives
+   * the yellow "agent needs your attention" dot.
+   */
+  agentPendingApproval?: boolean
 }
 
 interface SessionState {
@@ -44,6 +58,8 @@ interface SessionState {
     profile: SSHProfile,
     meta?: { connectionId?: string; startCwd?: string; groupId?: string }
   ) => Promise<string | null>
+  /** Cancel any in-flight auto-reconnect loop for the given session. */
+  cancelSshReconnect: (sessionId: string) => void
   /** Open an in-app browser pane; returns the new session id. Spawns no pty/ssh. */
   addBrowser: (opts?: { url?: string; groupId?: string }) => string
   setActive: (id: string) => void
@@ -55,6 +71,18 @@ interface SessionState {
   setCwd: (id: string, cwd: string) => void
   markClosed: (id: string) => void
   close: (id: string) => void
+  /**
+   * Update the session's agent-bridge state. Pushed from AgentPane whenever
+   * the bridge-status channel fires; no-op when the value is unchanged.
+   */
+  setAgentBridgeState: (id: string, state: AgentBridgeState) => void
+  /**
+   * Mark / clear the session's "an agent approval is awaiting the operator"
+   * flag. Called by the confirm-queue subscriber; the actual request lives in
+   * ConfirmActionModal's local state, this is just a fast lookup for the
+   * tab dot to color on.
+   */
+  setAgentPendingApproval: (id: string, pending: boolean) => void
 }
 
 export const useSessions = create<SessionState>((set, get) => ({
@@ -119,6 +147,15 @@ export const useSessions = create<SessionState>((set, get) => ({
           get().setStatus(sessionId, `⚠ HOST KEY MISMATCH for ${st.host} — possible MITM`)
         else if (st.type === 'error') get().setStatus(sessionId, `error: ${st.message}`)
         else if (st.type === 'closed') get().markClosed(sessionId)
+        else if (st.type === 'reconnecting')
+          get().setStatus(
+            sessionId,
+            `reconnecting… attempt ${st.attempt}/${st.maxAttempts} in ${Math.round(st.delayMs / 100) / 10}s`
+          )
+        else if (st.type === 'reconnected')
+          get().setStatus(sessionId, `reconnected (attempt ${st.attempt})`)
+        else if (st.type === 'reconnect-failed')
+          get().setStatus(sessionId, `reconnect failed after ${st.attempts} attempts: ${st.reason}`)
       })
       set((s) => ({
         sessions: s.sessions.map((x) =>
@@ -160,6 +197,20 @@ export const useSessions = create<SessionState>((set, get) => ({
     return id
   },
 
+  cancelSshReconnect: (sessionId) => {
+    // The main process owns the timer; we just ask it to cancel and clear the
+    // visible status. The session stays in its last-known state (closed if it
+    // had dropped).
+    window.devterm.ssh.cancelReconnect(sessionId)
+    set((s) => ({
+      sessions: s.sessions.map((x) =>
+        x.id === sessionId && x.status?.startsWith('reconnecting')
+          ? { ...x, status: 'reconnect cancelled' }
+          : x
+      )
+    }))
+  },
+
   setActive: (id) => set({ activeId: id }),
   setGroup: (id, groupId) =>
     set((s) => {
@@ -192,6 +243,29 @@ export const useSessions = create<SessionState>((set, get) => ({
     set((s) => ({
       sessions: s.sessions.map((x) => (x.id === id ? { ...x, closed: true, status: 'closed' } : x))
     })),
+
+  setAgentBridgeState: (id, state) =>
+    set((s) => {
+      const cur = s.sessions.find((x) => x.id === id)
+      // Skip the update if the value is unchanged — the bridge status pushes
+      // every state transition, and a no-op write would still re-render the
+      // tab strip and any consumer of the session record.
+      if (!cur || cur.agentBridgeState === state) return s
+      return {
+        sessions: s.sessions.map((x) => (x.id === id ? { ...x, agentBridgeState: state } : x))
+      }
+    }),
+
+  setAgentPendingApproval: (id, pending) =>
+    set((s) => {
+      const cur = s.sessions.find((x) => x.id === id)
+      if (!cur || cur.agentPendingApproval === pending) return s
+      return {
+        sessions: s.sessions.map((x) =>
+          x.id === id ? { ...x, agentPendingApproval: pending } : x
+        )
+      }
+    }),
 
   close: (id) => {
     const s = get().sessions.find((x) => x.id === id)

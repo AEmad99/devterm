@@ -7,20 +7,29 @@ import {
   type SSHProfile,
   type SSHConnectResult,
   type SSHStatus,
+  type ReconnectPolicy,
   type HostContext,
   type DirListing,
   type FileContent,
   type TransferStartOpts,
   type TransferProgress,
-  type ClaudeOpenOpts,
-  type ClaudeOpenResult,
-  type ClaudeBridgeStatus,
+  type AgentOpenOpts,
+  type AgentOpenResult,
+  type AgentBridgeStatus,
   type ConfirmRequest,
   type SavedConnection,
   type Workspace,
   type Snippet,
   type HistoryQuery,
-  type HistoryResult
+  type HistoryResult,
+  type BridgeActivityEntry,
+  type ApprovalRule,
+  type PortForward,
+  type GitStatus,
+  type TransferItemV2,
+  type TransferEvent,
+  type TransferListResult,
+  type BrowserDownloadItem
 } from '@shared/types'
 
 // Subscribe helper for per-id main->renderer channels.
@@ -49,6 +58,10 @@ const api: DevTermApi = {
     input: (id, data) => ipcRenderer.send(IPC.sshInput, id, data),
     resize: (id, cols, rows) => ipcRenderer.send(IPC.sshResize, id, cols, rows),
     disconnect: (id) => ipcRenderer.send(IPC.sshDisconnect, id),
+    cancelReconnect: (id: string) => ipcRenderer.send(IPC.sshCancelReconnect, id),
+    getReconnectPolicy: (): Promise<ReconnectPolicy> => ipcRenderer.invoke(IPC.sshGetReconnectPolicy),
+    setReconnectPolicy: (patch: Partial<ReconnectPolicy>): Promise<ReconnectPolicy> =>
+      ipcRenderer.invoke(IPC.sshSetReconnectPolicy, patch),
     onData: (id, cb) => subscribe<string>(`${IPC.sshData}:${id}`, cb),
     onExit: (id, cb) => subscribe<void>(`${IPC.sshExit}:${id}`, () => cb()),
     onStatus: (id, cb) => subscribe<SSHStatus>(`${IPC.sshStatus}:${id}`, cb)
@@ -98,17 +111,17 @@ const api: DevTermApi = {
     cancel: (id: string) => ipcRenderer.send(IPC.transferCancel, id),
     onProgress: (id, cb) => subscribe<TransferProgress>(`${IPC.transferProgress}:${id}`, cb)
   },
-  claude: {
-    open: (opts: ClaudeOpenOpts): Promise<ClaudeOpenResult> =>
-      ipcRenderer.invoke(IPC.claudeOpen, opts),
-    close: (sessionId: string) => ipcRenderer.send(IPC.claudeClose, sessionId),
-    status: (sessionId: string): Promise<ClaudeBridgeStatus | null> =>
-      ipcRenderer.invoke(IPC.claudeStatus, sessionId),
+  agent: {
+    open: (opts: AgentOpenOpts): Promise<AgentOpenResult> =>
+      ipcRenderer.invoke(IPC.agentOpen, opts),
+    close: (sessionId: string) => ipcRenderer.send(IPC.agentClose, sessionId),
+    status: (sessionId: string): Promise<AgentBridgeStatus | null> =>
+      ipcRenderer.invoke(IPC.agentStatus, sessionId),
     onBridgeStatus: (sessionId, cb) =>
-      subscribe<ClaudeBridgeStatus>(`${IPC.claudeBridgeStatus}:${sessionId}`, cb),
-    onConfirm: (cb) => subscribe<ConfirmRequest>(IPC.claudeConfirm, cb),
+      subscribe<AgentBridgeStatus>(`${IPC.agentBridgeStatus}:${sessionId}`, cb),
+    onConfirm: (cb) => subscribe<ConfirmRequest>(IPC.agentConfirm, cb),
     replyConfirm: (reqId: string, approved: boolean) =>
-      ipcRenderer.send(IPC.claudeConfirmReply, reqId, approved)
+      ipcRenderer.send(IPC.agentConfirmReply, reqId, approved)
   },
   connections: {
     list: (): Promise<SavedConnection[]> => ipcRenderer.invoke(IPC.connectionsList),
@@ -120,7 +133,13 @@ const api: DevTermApi = {
   workspaces: {
     list: (): Promise<Workspace[]> => ipcRenderer.invoke(IPC.workspacesList),
     save: (ws: Workspace): Promise<Workspace[]> => ipcRenderer.invoke(IPC.workspacesSave, ws),
-    delete: (id: string): Promise<Workspace[]> => ipcRenderer.invoke(IPC.workspacesDelete, id)
+    delete: (id: string): Promise<Workspace[]> => ipcRenderer.invoke(IPC.workspacesDelete, id),
+    rename: (id: string, name: string): Promise<Workspace[]> =>
+      ipcRenderer.invoke(IPC.workspacesRename, id, name),
+    duplicate: (id: string): Promise<Workspace[]> =>
+      ipcRenderer.invoke(IPC.workspacesDuplicate, id),
+    recordLaunch: (id: string): Promise<Workspace[]> =>
+      ipcRenderer.invoke(IPC.workspacesRecordLaunch, id)
   },
   snippets: {
     list: (): Promise<Snippet[]> => ipcRenderer.invoke(IPC.snippetsList),
@@ -146,7 +165,133 @@ const api: DevTermApi = {
     setGlass: (enabled: boolean): Promise<void> => ipcRenderer.invoke(IPC.windowSetGlass, enabled)
   },
   localContext: (): Promise<HostContext> => ipcRenderer.invoke(IPC.localContext),
-  platform: process.platform
+  platform: process.platform,
+
+  // -------------------------------------------------------------------------
+  // Foundation cluster additions (additive — see @shared/types)
+  // -------------------------------------------------------------------------
+  bridgeActivity: {
+    on: (sessionId: string, cb: (entry: BridgeActivityEntry) => void): (() => void) =>
+      subscribe<BridgeActivityEntry>(`${IPC.bridgeActivityEvent}:${sessionId}`, cb),
+    list: (
+      sessionId: string,
+      opts?: { sinceMs?: number; limit?: number }
+    ): Promise<BridgeActivityEntry[]> => ipcRenderer.invoke(IPC.bridgeActivityList, sessionId, opts),
+    clear: (sessionId: string): Promise<void> =>
+      ipcRenderer.invoke(IPC.bridgeActivityClear, sessionId)
+  },
+  settingsIo: {
+    export: (): Promise<void> => ipcRenderer.invoke(IPC.settingsIoExport),
+    import: (): Promise<{
+      ok: boolean
+      counts?: { settings: boolean; snippets: number; workspaces: number; approvalRules: number }
+    }> => ipcRenderer.invoke(IPC.settingsIoImport)
+  },
+  approvalRules: {
+    list: (sessionId?: string): Promise<ApprovalRule[]> =>
+      ipcRenderer.invoke(IPC.approvalRules, { op: 'list', sessionId }),
+    add: (rule: Omit<ApprovalRule, 'id' | 'createdAt'>): Promise<ApprovalRule[]> =>
+      ipcRenderer.invoke(IPC.approvalRules, { op: 'add', rule }),
+    remove: (id: string): Promise<ApprovalRule[]> =>
+      ipcRenderer.invoke(IPC.approvalRules, { op: 'remove', id }),
+    match: (sessionId: string, command: string): Promise<ApprovalRule | null> =>
+      ipcRenderer.invoke(IPC.approvalRules, { op: 'match', sessionId, command })
+  },
+  portForward: {
+    list: (sessionId?: string): Promise<PortForward[]> =>
+      ipcRenderer.invoke(IPC.portForwardList, sessionId),
+    // FOUNDATION: Cluster B will implement
+    add: (req: Omit<PortForward, 'id' | 'createdAt' | 'bytes'>): Promise<PortForward> =>
+      ipcRenderer.invoke(IPC.portForwardAdd, req) as Promise<PortForward>,
+    // FOUNDATION: Cluster B will implement
+    remove: (id: string): Promise<void> => ipcRenderer.invoke(IPC.portForwardRemove, id)
+  },
+
+  // -------------------------------------------------------------------------
+  // Git awareness (read-only): status snapshot, per-file diff, and live push
+  // notifications. Mutations (add/commit/push/checkout) are NOT exposed.
+  // -------------------------------------------------------------------------
+  git: {
+    status: (target: { sessionId?: string; path: string }): Promise<GitStatus> =>
+      ipcRenderer.invoke(IPC.gitStatus, target),
+    diff: (target: { sessionId?: string; path: string; file: string }): Promise<string> =>
+      ipcRenderer.invoke(IPC.gitDiff, target),
+    /**
+     * Subscribe to live status updates for `path`. The main process polls the
+     * underlying source every 5s and only pushes when the snapshot changed.
+     * Returns an unsubscribe; calling it is safe before the first event.
+     */
+    onChange: (path: string, cb: (status: GitStatus) => void): (() => void) => {
+      // The renderer-side bookkeeping (which session owns the path) is open-
+      // coded here; the main side uses an `add` invoke to start polling and a
+      // `remove` to stop it. Path is the only renderer-side key.
+      const channel = `${IPC.gitOnChange}:${path}`
+      const off = subscribe<GitStatus>(channel, cb)
+      return () => {
+        off()
+        // Best-effort: tell main we no longer care. Failure (e.g. main quit)
+        // is fine — the next GC pass cleans the watch list.
+        ipcRenderer.send(`${IPC.gitOnChange}:remove`, { path })
+      }
+    },
+    /**
+     * Start polling for `path`. Call once when the file tree starts showing
+     * the directory; pair with the unsubscribe returned by `onChange`.
+     */
+    watch: (target: { sessionId?: string; path: string }): void => {
+      ipcRenderer.send(`${IPC.gitOnChange}:add`, target)
+    }
+  },
+
+  // -------------------------------------------------------------------------
+  // Cluster D: persistent transfer queue + in-app browser enhancements
+  // -------------------------------------------------------------------------
+  transfers: {
+    list: (): Promise<TransferListResult> => ipcRenderer.invoke(IPC.transfersList),
+    enqueueUpload: (opts: { sessionId: string; localPath: string; remotePath: string }) =>
+      ipcRenderer.invoke(IPC.transfersEnqueueUpload, opts) as Promise<TransferItemV2>,
+    enqueueDownload: (opts: { sessionId: string; localPath: string; remotePath: string }) =>
+      ipcRenderer.invoke(IPC.transfersEnqueueDownload, opts) as Promise<TransferItemV2>,
+    cancel: (id: string): Promise<void> => ipcRenderer.invoke(IPC.transfersCancel, id),
+    retry: (id: string): Promise<TransferItemV2 | null> =>
+      ipcRenderer.invoke(IPC.transfersRetry, id) as Promise<TransferItemV2 | null>,
+    clearFinished: (): Promise<TransferListResult> =>
+      ipcRenderer.invoke(IPC.transfersClearFinished) as Promise<TransferListResult>,
+    onProgress: (id: string, cb: (e: TransferEvent) => void): (() => void) =>
+      subscribe<TransferEvent>(`${IPC.transfersEvent}:${id}`, cb),
+    onStatus: (cb: (items: TransferListResult) => void): (() => void) => {
+      // Match the existing namespaces' shape: subscribe to the broadcast
+      // channel, then ask for the initial snapshot.
+      const off = subscribe<void>(IPC.transfersStatus, () => {
+        ipcRenderer.invoke(IPC.transfersList).then(cb).catch(() => undefined)
+      })
+      ipcRenderer.invoke(IPC.transfersList).then(cb).catch(() => undefined)
+      return off
+    }
+  },
+  browserDownloads: {
+    list: (): Promise<BrowserDownloadItem[]> =>
+      ipcRenderer.invoke(IPC.browserDownloadsList) as Promise<BrowserDownloadItem[]>,
+    cancel: (id: string): Promise<void> => ipcRenderer.invoke(IPC.browserDownloadsCancel, id),
+    onUpdate: (cb: (items: BrowserDownloadItem[]) => void): (() => void) => {
+      const off = subscribe<BrowserDownloadItem[]>(IPC.browserDownloadsEvent, cb)
+      ipcRenderer
+        .invoke(IPC.browserDownloadsList)
+        .then(cb)
+        .catch(() => undefined)
+      return off
+    }
+  },
+  browserZoom: {
+    get: (origin: string): Promise<number> => ipcRenderer.invoke(IPC.browserZoomGet, origin),
+    set: (origin: string, level: number): Promise<void> =>
+      ipcRenderer.invoke(IPC.browserZoomSet, origin, level) as Promise<void>,
+    reset: (): Promise<void> => ipcRenderer.invoke(IPC.browserZoomReset)
+  },
+  openBrowserDevtools: (webContentsId: number): Promise<void> =>
+    ipcRenderer.invoke(IPC.browserDevtoolsOpen, webContentsId),
+  setBrowserMuted: (webContentsId: number, muted: boolean): Promise<void> =>
+    ipcRenderer.invoke(IPC.browserMute, webContentsId, muted)
 }
 
 contextBridge.exposeInMainWorld('devterm', api)

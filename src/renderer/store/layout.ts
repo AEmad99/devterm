@@ -273,6 +273,13 @@ interface LayoutState {
    * focused session goes away.
    */
   focusedId: string | null
+  /**
+   * Per-group metadata (transient, in-memory only). Used to flag a group that
+   * was launched from a saved workspace, so the group bar can offer a
+   * "Save changes back to this workspace" action. Cleared when the group goes
+   * away. Keyed by group id.
+   */
+  groupFlags: Record<string, { launchedFromWorkspaceId?: string }>
   /** Enter/leave focus mode for a specific session (null exits). */
   setFocus: (id: string | null) => void
   /** Toggle focus mode for a session (focus it, or exit if it's already focused). */
@@ -296,6 +303,10 @@ interface LayoutState {
   resize: (splitId: string, index: number, delta: number) => void
   /** Set a group's tree from a workspace snapshot (fresh node ids) and focus it. */
   restoreGroup: (id: string, name: string, snap: LayoutSnapshot | null) => void
+  /** Tag a group as launched from a given workspace (so the "save back" action shows). */
+  flagGroupLaunched: (groupId: string, workspaceId: string) => void
+  /** Drop the launched-from flag once the user has saved back. */
+  clearGroupLaunched: (groupId: string) => void
 }
 
 /** Apply a tree transform to the active group only. */
@@ -315,6 +326,7 @@ export const useLayout = create<LayoutState>((set) => ({
   groups: [{ id: DEFAULT_GROUP, name: 'Terminals', root: null, activeLeaf: null }],
   activeGroupId: DEFAULT_GROUP,
   focusedId: null,
+  groupFlags: {},
 
   setFocus: (id) => set({ focusedId: id }),
   toggleFocus: (sid) => set((s) => ({ focusedId: sid && s.focusedId !== sid ? sid : null })),
@@ -370,7 +382,14 @@ export const useLayout = create<LayoutState>((set) => ({
       // Drop focus mode if its session closed.
       const liveIds = new Set(sessions.map((ss) => ss.id))
       const focusedId = s.focusedId && liveIds.has(s.focusedId) ? s.focusedId : null
-      return { groups, activeGroupId, focusedId }
+      // Prune group flags for groups that no longer exist (group closed → flag
+      // is meaningless).
+      const liveGroupIds = new Set(groups.map((g) => g.id))
+      const groupFlags: Record<string, { launchedFromWorkspaceId?: string }> = {}
+      for (const [gid, flag] of Object.entries(s.groupFlags)) {
+        if (liveGroupIds.has(gid)) groupFlags[gid] = flag
+      }
+      return { groups, activeGroupId, focusedId, groupFlags }
     }),
 
   ensureGroup: (id, name) =>
@@ -524,5 +543,17 @@ export const useLayout = create<LayoutState>((set) => ({
         ? s.groups.map((g) => (g.id === id ? { ...g, name, ...built } : g))
         : [...s.groups, { id, name, ...built }]
       return { groups, activeGroupId: id, focusedId: null }
+    }),
+
+  flagGroupLaunched: (groupId, workspaceId) =>
+    set((s) => ({
+      groupFlags: { ...s.groupFlags, [groupId]: { launchedFromWorkspaceId: workspaceId } }
+    })),
+
+  clearGroupLaunched: (groupId) =>
+    set((s) => {
+      const next = { ...s.groupFlags }
+      delete next[groupId]
+      return { groupFlags: next }
     })
 }))

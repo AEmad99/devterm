@@ -1,7 +1,14 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react'
-import type { FileEntry } from '@shared/types'
+import type { FileEntry, GitFileStatus, GitStatus } from '@shared/types'
 import type { FsApi } from '../lib/fsapi'
 import { IconChevron, IconFolder, IconFile, IconLink } from './Icons'
+
+/**
+ * Identity key for a selected file. Paths are absolute within a single pane,
+ * so a path string is unique enough. We compare with `samePath` to stay
+ * separator-tolerant on Windows.
+ */
+export type Selection = Set<string>
 
 /** Imperative handle so a parent can refresh a sub-directory after a mutation. */
 export interface FileTreeHandle {
@@ -20,6 +27,21 @@ interface DirState {
 
 const INDENT = 14 // px added per nesting level
 const BASE_PAD = 6 // px left padding at depth 0
+
+/**
+ * Compute the path of `entry` relative to `root`, using the OS's separator
+ * (and tolerating the alternate one, so a Windows root with forward-slash
+ * children still resolves). Returns the full path as a fallback when `entry`
+ * isn't under `root` (defensive — the explorer never feeds us a stray entry).
+ */
+function relPath(root: string, entry: string): string {
+  const normRoot = root.replace(/[\\/]+$/, '')
+  if (entry === normRoot) return ''
+  if (entry.startsWith(normRoot + '\\') || entry.startsWith(normRoot + '/')) {
+    return entry.slice(normRoot.length + 1)
+  }
+  return entry
+}
 
 function reachableOpenDirs(
   entries: FileEntry[],
@@ -54,22 +76,53 @@ function FileTreeImpl(
     rootPath,
     rootEntries,
     selectedPath,
+    selectedPaths,
     onSelect,
+    onMultiSelect,
     onActivateFile,
-    onActivateDir
+    onActivateDir,
+    gitStatus,
+    onRequestDiff
   }: {
     api: FsApi
     rootPath: string
     rootEntries: FileEntry[]
+    /** Legacy single-select; kept for callers that don't multi-select. */
     selectedPath: string | null
+    /**
+     * Multi-select set. Wins over `selectedPath` when provided. Shift+click
+     * extends the range from the anchor; Ctrl/Cmd+click toggles membership.
+     */
+    selectedPaths?: Selection
     onSelect: (entry: FileEntry) => void
+    /**
+     * Optional multi-select callback. Receives the updated set and the
+     * click event so it can interpret modifier keys if it wants to.
+     */
+    onMultiSelect?: (next: Selection, ev: React.MouseEvent) => void
     onActivateFile: (entry: FileEntry) => void
     onActivateDir: (entry: FileEntry) => void
+    /**
+     * Optional live git status. When provided (and `isRepo`), we render a
+     * small letter badge next to each filename and light up a right-click
+     * "Show changes" action. Undefined = no git, no badges.
+     */
+    gitStatus?: GitStatus
+    /**
+     * Resolve a textual diff for a single file. The tree calls this when the
+     * user invokes the "Show changes" right-click action; parent owns the
+     * IPC hop so the tree stays unaware of the main/renderer boundary.
+     */
+    onRequestDiff?: (entry: FileEntry) => Promise<string>
   },
   ref: React.Ref<FileTreeHandle>
 ) {
   const [open, setOpen] = useState<Set<string>>(new Set())
   const [dirs, setDirs] = useState<Record<string, DirState>>({})
+  // Right-click "Show changes" → diff modal. Held locally so the tree is
+  // self-contained for the diff action (the parent only provides the diff
+  // resolver and the git status map).
+  const [diffModal, setDiffModal] = useState<{ entry: FileEntry; text: string } | null>(null)
   // Mirrors of the latest state, so `toggle` can decide whether to lazy-load
   // without reading stale closures or nesting setState calls.
   const openRef = useRef(open)
@@ -190,14 +243,59 @@ function FileTreeImpl(
     for (const e of entries) {
       const expanded = e.isDir && open.has(e.path)
       const pad = BASE_PAD + depth * INDENT
+      // Map an entry's absolute path to a repo-relative key for the badge.
+      // rootPath is always an ancestor; the relative portion is what git
+      // reports. For remote sessions where the path separator is '/', this
+      // is exact; on local Windows we tolerate both.
+      const rel = relPath(rootPath, e.path)
+      const status: GitFileStatus | undefined = gitStatus?.isRepo
+        ? gitStatus.entries[rel]
+        : undefined
+      const onContextMenu = (ev: React.MouseEvent) => {
+        // Only meaningful for files inside a repo; directories get the default
+        // browser context menu (no diff makes sense for them).
+        if (!e.isDir && status && onRequestDiff) {
+          ev.preventDefault()
+          onSelect(e)
+          onRequestDiff(e).then((text) => setDiffModal({ entry: e, text }))
+        }
+      }
+      // Multi-select aware click. The parent owns the actual selection
+      // model — we hand it the entry and the event so it can read modifier
+      // keys; we always ALSO call the legacy onSelect so single-select
+      // callers keep working.
+      const isMulti = selectedPaths?.has(e.path) ?? false
+      const isSel = isMulti || selectedPath === e.path
+      const onRowClick = (ev: React.MouseEvent) => {
+        if (onMultiSelect && (ev.shiftKey || ev.ctrlKey || ev.metaKey)) {
+          ev.preventDefault()
+          onMultiSelect(extendSelection(selectedPaths ?? new Set(), entries, e, ev), ev)
+          return
+        }
+        onSelect(e)
+        if (onMultiSelect) onMultiSelect(new Set([e.path]), ev)
+      }
       acc.push(
         <div
           key={e.path}
-          className={`tree-row ${selectedPath === e.path ? 'sel' : ''}`}
+          className={`tree-row ${isSel ? 'sel' : ''} ${
+            status ? `git-${status.toLowerCase()}` : ''
+          }`}
           style={{ paddingLeft: pad }}
           title={`${e.mode}${e.isDir ? '' : '  ' + e.size + ' B'}`}
-          onClick={() => onSelect(e)}
+          onClick={onRowClick}
           onDoubleClick={() => (e.isDir ? onActivateDir(e) : onActivateFile(e))}
+          onContextMenu={onContextMenu}
+          draggable
+          onDragStart={(ev) => {
+            // Allow this entry to be dropped onto a sibling pane to start
+            // a transfer. The setData mime is the contract used by the
+            // drop handler in SftpBrowser / FileExplorer.
+            ev.dataTransfer.setData('application/x-devterm-path', e.path)
+            ev.dataTransfer.setData('application/x-devterm-name', e.name)
+            ev.dataTransfer.setData('application/x-devterm-isdir', e.isDir ? '1' : '0')
+            ev.dataTransfer.effectAllowed = 'copyMove'
+          }}
         >
           {e.isDir ? (
             <button
@@ -213,7 +311,7 @@ function FileTreeImpl(
           ) : (
             <span className="tree-twisty spacer" />
           )}
-          <span className={`tree-icon ${e.isDir ? 'is-dir' : ''}`}>
+          <span className={`tree-icon ${e.isDir ? 'is-dir' : ''} ${e.isSymlink ? 'is-symlink' : ''}`}>
             {e.isDir ? (
               <IconFolder size={15} />
             ) : e.isSymlink ? (
@@ -222,7 +320,22 @@ function FileTreeImpl(
               <IconFile size={15} />
             )}
           </span>
-          <span className="tree-name">{e.name}</span>
+          <span className="tree-name">
+            {e.name}
+            {e.isSymlink && !e.isDir && (
+              <span className="tree-symlink-arrow" title="Symbolic link">
+                {'\u21AA'}
+              </span>
+            )}
+          </span>
+          {status && (
+            <span
+              className={`tree-git-badge git-${status.toLowerCase()}`}
+              title={`git status: ${status}`}
+            >
+              {status}
+            </span>
+          )}
         </div>
       )
       if (expanded) {
@@ -261,8 +374,70 @@ function FileTreeImpl(
 
   const rows: React.ReactNode[] = []
   renderRows(rootEntries, 0, rows)
-  return <div className="file-tree">{rows}</div>
+  return (
+    <div className="file-tree">
+      {rows}
+      {diffModal && (
+        <div className="modal-backdrop" onClick={() => setDiffModal(null)}>
+          <div className="modal git-diff-modal" onClick={(ev) => ev.stopPropagation()}>
+            <h3>Changes — {diffModal.entry.name}</h3>
+            <pre className="git-diff-pre">
+              {diffModal.text.trim() ? diffModal.text : '(no diff)'}
+            </pre>
+            <div className="actions">
+              <button type="button" onClick={() => setDiffModal(null)}>
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
 }
 
 const FileTree = forwardRef(FileTreeImpl)
 export default FileTree
+
+/**
+ * Compute the next multi-select set after a click on `clicked`.
+ *  - Plain click: replace with { clicked }.
+ *  - Ctrl/Cmd-click: toggle membership.
+ *  - Shift-click: extend the range from the last anchor (or the previous
+ *    selection's last item) to the clicked entry, both inclusive.
+ */
+function extendSelection(
+  prev: Selection,
+  visibleSiblings: FileEntry[],
+  clicked: FileEntry,
+  ev: React.MouseEvent
+): Selection {
+  const next = new Set(prev)
+  if (ev.shiftKey) {
+    // Find the anchor: the last item of the existing selection, or the
+    // clicked entry itself when nothing is selected.
+    const siblingPaths = visibleSiblings.map((s) => s.path)
+    const clickedIdx = siblingPaths.indexOf(clicked.path)
+    if (clickedIdx < 0) return new Set([clicked.path])
+    let anchorIdx = -1
+    for (let i = prev.size; i > 0; i--) {
+      // Find the highest-index sibling in the current selection
+      const last = [...prev].reverse().find((p) => siblingPaths.includes(p))
+      if (last) {
+        anchorIdx = siblingPaths.indexOf(last)
+        break
+      }
+    }
+    if (anchorIdx < 0) anchorIdx = clickedIdx
+    const [from, to] =
+      anchorIdx <= clickedIdx ? [anchorIdx, clickedIdx] : [clickedIdx, anchorIdx]
+    for (let i = from; i <= to; i++) next.add(siblingPaths[i])
+    return next
+  }
+  if (ev.ctrlKey || ev.metaKey) {
+    if (next.has(clicked.path)) next.delete(clicked.path)
+    else next.add(clicked.path)
+    return next
+  }
+  return new Set([clicked.path])
+}

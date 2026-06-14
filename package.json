@@ -1,7 +1,7 @@
 {
   "name": "devterm",
   "version": "1.0.0",
-  "description": "DevTerm — SSH/SFTP terminal with a Claude agent bridge",
+  "description": "DevTerm — SSH/SFTP terminal with a pi coding agent bridge",
   "main": "out/main/index.js",
   "author": "DevTerm",
   "license": "MIT",
