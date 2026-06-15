@@ -1,14 +1,40 @@
-import {
-  app,
-  BrowserWindow,
-  Menu,
-  MenuItemConstructorOptions,
-  clipboard,
-  session,
-  shell,
-  dialog
-} from 'electron'
+import { app, BrowserWindow, Menu, MenuItemConstructorOptions, clipboard, session, shell, dialog } from 'electron'
 import { join } from 'path'
+
+// Pin Chromium's disk cache, GPU shader cache, and service-worker storage
+// inside the app's own userData directory before the cache subsystem
+// initialises. Electron 29 on Windows defaults the cache to
+// %LOCALAPPDATA%, which can be locked by antivirus, a zombie electron.exe
+// from a previous dev run, or a freshly-migrated user data directory.
+// When that happens Chromium logs a cascade of non-fatal startup errors:
+//
+//   cache_util_win.cc(20)]   Unable to move the cache: Access is denied. (0x5)
+//   disk_cache.cc(208)]     Unable to create cache
+//   gpu_disk_cache.cc(708)] Gpu Cache Creation failed: -2
+//   service_worker_storage.cc(2016)] Failed to delete the database: Database IO error
+//
+// Pointing the cache at a subfolder of userData means we own its
+// lifecycle: nothing outside the app holds a handle to it, on uninstall
+// the data goes away with userData, and a stale lock can only come from
+// ourselves (in which case quitting cleanly resolves it).
+{
+  // userData resolves from app.setName() / package.json name and is
+  // available before `ready` on Electron 29.
+  const userDataDir = app.getPath('userData')
+  const cacheDir = join(userDataDir, 'Cache')
+  const sessionDataDir = join(userDataDir, 'SessionData')
+  app.setPath('cache', cacheDir)
+  app.setPath('sessionData', sessionDataDir)
+  // Belt-and-suspenders: the disk_cache backend also reads
+  // --disk-cache-dir, so setting the same path on the command line keeps
+  // disk_cache, the network cache, and the GPU shader cache consistent
+  // even if Electron's defaults drift between versions.
+  app.commandLine.appendSwitch('disk-cache-dir', cacheDir)
+  // DevTerm is a terminal app, not a 3D one; the GPU shader disk cache
+  // is the source of the "Gpu Cache Creation failed" line and has no
+  // upside for us, so skip it.
+  app.commandLine.appendSwitch('disable-gpu-shader-disk-cache')
+}
 
 // Electron 29 has a benign internal race around <webview> guests: when a page
 // disposes a subframe mid-navigation (routine on Google and ad-heavy sites), an
