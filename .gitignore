@@ -19,3 +19,9 @@ dist/
 .mavis/
 .minimax/
 .opencode/
+
+# local agent / codex / doc-build state (per-user; not part of the app)
+.agents/
+.codex/
+.doc-build/
+docs/

@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import type { AgentKind } from '@shared/types'
 
 /**
  * User-facing settings for terminals. Persisted to localStorage (renderer-only,
@@ -47,6 +48,12 @@ export interface AppSettings {
   showStatusBar: boolean
   /** Whether the agent activity panel is collapsed by default (Cluster A). */
   agentActivityCollapsed: boolean
+  /**
+   * Which coding agent (`claude` or `pi`) to launch in remote sessions. Mirrors
+   * the per-session agent picker; the picker writes the last-used choice here so
+   * it persists across launches and restarts. First-ever default is `claude`.
+   */
+  agentKind: AgentKind
   /**
    * Whether the transfers panel is open in the bottom dock. Cluster D adds
    * this. App toolbar's segmented "Activity | Transfers | Off" toggle is the
@@ -104,6 +111,7 @@ const DEFAULTS: AppSettings = {
   },
   showStatusBar: true,
   agentActivityCollapsed: false,
+  agentKind: 'claude',
   transfersPanelOpen: false
 }
 
@@ -127,6 +135,10 @@ function load(): AppSettings {
         typeof parsed?.agentActivityCollapsed === 'boolean'
           ? parsed.agentActivityCollapsed
           : DEFAULTS.agentActivityCollapsed,
+      agentKind:
+        parsed?.agentKind === 'claude' || parsed?.agentKind === 'pi'
+          ? parsed.agentKind
+          : DEFAULTS.agentKind,
       transfersPanelOpen:
         typeof parsed?.transfersPanelOpen === 'boolean'
           ? parsed.transfersPanelOpen
@@ -144,6 +156,7 @@ interface SettingsState extends AppSettings {
   setAutoReconnect: (patch: Partial<AutoReconnectSettings>) => void
   setShowStatusBar: (v: boolean) => void
   setAgentActivityCollapsed: (v: boolean) => void
+  setAgentKind: (v: AgentKind) => void
   setTransfersPanelOpen: (v: boolean) => void
   reset: () => void
 }
@@ -159,6 +172,7 @@ function persist(state: AppSettings): void {
         autoReconnect: state.autoReconnect,
         showStatusBar: state.showStatusBar,
         agentActivityCollapsed: state.agentActivityCollapsed,
+        agentKind: state.agentKind,
         transfersPanelOpen: state.transfersPanelOpen
       })
     )
@@ -205,6 +219,11 @@ export const useSettings = create<SettingsState>((set, get) => ({
     persist(snapshot(get()))
   },
 
+  setAgentKind: (v) => {
+    set({ agentKind: v })
+    persist(snapshot(get()))
+  },
+
   setTransfersPanelOpen: (v) => {
     set({ transfersPanelOpen: v })
     persist(snapshot(get()))
@@ -218,6 +237,7 @@ export const useSettings = create<SettingsState>((set, get) => ({
       autoReconnect: DEFAULTS.autoReconnect,
       showStatusBar: DEFAULTS.showStatusBar,
       agentActivityCollapsed: DEFAULTS.agentActivityCollapsed,
+      agentKind: DEFAULTS.agentKind,
       transfersPanelOpen: DEFAULTS.transfersPanelOpen
     })
     persist(DEFAULTS)
@@ -235,6 +255,7 @@ function snapshot(s: SettingsState): AppSettings {
     autoReconnect: s.autoReconnect,
     showStatusBar: s.showStatusBar,
     agentActivityCollapsed: s.agentActivityCollapsed,
+    agentKind: s.agentKind,
     transfersPanelOpen: s.transfersPanelOpen
   }
 }

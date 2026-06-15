@@ -115,6 +115,8 @@ const api: DevTermApi = {
     open: (opts: AgentOpenOpts): Promise<AgentOpenResult> =>
       ipcRenderer.invoke(IPC.agentOpen, opts),
     close: (sessionId: string) => ipcRenderer.send(IPC.agentClose, sessionId),
+    setCwd: (sessionId: string, cwd: string) =>
+      ipcRenderer.send(IPC.agentSetCwd, sessionId, cwd),
     status: (sessionId: string): Promise<AgentBridgeStatus | null> =>
       ipcRenderer.invoke(IPC.agentStatus, sessionId),
     onBridgeStatus: (sessionId, cb) =>

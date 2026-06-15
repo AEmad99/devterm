@@ -16,6 +16,12 @@ export interface ToolDeps {
   context: HostContext
   airGapped: boolean
   policy: Policy
+  /**
+   * The operator's live remote shell cwd (from OSC 7), or undefined if unknown.
+   * Tools run commands and resolve relative paths against it so the agent works
+   * where the operator is `cd`'d, not in the SSH login default ($HOME).
+   */
+  getCwd?: () => string | undefined
   /** Ask the operator to approve a guarded action. 'timeout' = no response in time, NOT a disconnect. */
   confirm: (tool: string, detail: string) => Promise<ConfirmOutcome>
 }
@@ -29,6 +35,31 @@ const errorText = (s: string) => ({
   content: [{ type: 'text' as const, text: s }],
   isError: true
 })
+
+/**
+ * The operator's live cwd, but only when it is a POSIX path (`/...`). SSH exec
+ * channels always start in the login default ($HOME) and `cd` does not persist
+ * between calls, so to run "where the operator is" we prefix each command with
+ * a `cd` and resolve relative paths against this value. We deliberately apply
+ * it only on POSIX remotes: a Windows remote cwd (`C:\...`) would build a broken
+ * command for cmd.exe/PowerShell, so those hosts keep today's $HOME behaviour
+ * and the agent uses absolute paths (it is still told the cwd in its briefing).
+ */
+function posixCwd(getCwd?: () => string | undefined): string | undefined {
+  const cwd = getCwd?.()
+  return cwd && cwd.startsWith('/') ? cwd : undefined
+}
+
+/** Single-quote a path for a POSIX shell: close, escaped literal quote, reopen. */
+function shQuote(p: string): string {
+  return `'${p.replace(/'/g, `'\\''`)}'`
+}
+
+/** Resolve a possibly-relative remote path against the POSIX cwd. */
+function resolvePosix(cwd: string | undefined, p: string): string {
+  if (!cwd || p.startsWith('/')) return p
+  return `${cwd.replace(/\/+$/, '')}/${p.replace(/^\.\//, '')}`
+}
 
 /**
  * Wrap a `confirm(...)` call so it records an `approval_request` entry at
@@ -65,7 +96,7 @@ function wrapConfirm(
 }
 
 export function registerTools(mcp: McpServer, deps: ToolDeps): void {
-  const { ssh, sessionId, context, airGapped, policy, confirm } = deps
+  const { ssh, sessionId, context, airGapped, policy, confirm, getCwd } = deps
   // Pre-bound confirm wrapper that records bridge activity around every ask.
   const confirmWithActivity = (tool: string, detail: string) =>
     wrapConfirm(sessionId, tool, detail, confirm)
@@ -96,7 +127,8 @@ export function registerTools(mcp: McpServer, deps: ToolDeps): void {
   mcp.registerTool(
     'get_host_context',
     {
-      description: 'Facts about the connected host: hostname, OS, and whether it is air-gapped.',
+      description:
+        'Facts about the connected host: hostname, OS, the operator\'s current working directory, and whether it is air-gapped.',
       inputSchema: {}
     },
     async () =>
@@ -106,6 +138,9 @@ export function registerTools(mcp: McpServer, deps: ToolDeps): void {
             hostname: context.hostname,
             os: context.os,
             detail: context.detail,
+            // The operator's live shell cwd — where run_command runs and where
+            // relative file paths resolve. null until the shell reports it.
+            cwd: getCwd?.() ?? null,
             airGapped,
             note: airGapped
               ? 'AIR-GAPPED: no internet. Use local mirrors (Harbor/Skopeo/oc mirror), never yum/dnf/apt from the internet.'
@@ -121,7 +156,8 @@ export function registerTools(mcp: McpServer, deps: ToolDeps): void {
     'run_command',
     {
       description:
-        'Run a shell command on the connected remote host and return stdout/stderr/exit code.',
+        'Run a shell command on the connected remote host and return stdout/stderr/exit code. ' +
+        "It runs in the operator's current terminal directory (their live `cd`); pass absolute paths to act elsewhere.",
       inputSchema: {
         command: z.string().describe('The command line to execute on the remote host.'),
         timeout_ms: z
@@ -153,7 +189,14 @@ export function registerTools(mcp: McpServer, deps: ToolDeps): void {
       }
       try {
         const ms = timeout_ms ?? DEFAULT_RUN_TIMEOUT_MS
-        const { stdout, stderr, code, timedOut } = await ssh.exec(sessionId, command, ms)
+        // Run in the operator's live cwd. exec channels reset to $HOME on every
+        // call and `cd` doesn't persist between them, so prefix one. With `&&`,
+        // a missing cwd surfaces as a clear error instead of silently running in
+        // the wrong directory. Policy still evaluates the agent's original
+        // `command`, never our prefix.
+        const cwd = posixCwd(getCwd)
+        const toRun = cwd ? `cd ${shQuote(cwd)} && ${command}` : command
+        const { stdout, stderr, code, timedOut } = await ssh.exec(sessionId, toRun, ms)
         // A timeout is reported as a normal (non-error) result with explicit wording:
         // marking it isError historically led the agent to misreport it as a dropped connection.
         if (timedOut)
@@ -176,12 +219,17 @@ export function registerTools(mcp: McpServer, deps: ToolDeps): void {
     'list_dir',
     {
       description: 'List a directory on the remote host (name, type, size, perms).',
-      inputSchema: { path: z.string().describe('Absolute remote directory path.') }
+      inputSchema: {
+        path: z
+          .string()
+          .describe("Remote directory path — absolute, or relative to the operator's current directory.")
+      }
     },
     async ({ path }) => {
       try {
+        const target = resolvePosix(posixCwd(getCwd), path)
         const sftp = await ssh.getSftp(sessionId)
-        const listing = await listRemote(sftp, path)
+        const listing = await listRemote(sftp, target)
         const lines = listing.entries.map(
           (e) => `${e.mode} ${String(e.size).padStart(10)} ${e.name}${e.isDir ? '/' : ''}`
         )
@@ -197,7 +245,9 @@ export function registerTools(mcp: McpServer, deps: ToolDeps): void {
     {
       description: 'Read a text file from the remote host.',
       inputSchema: {
-        path: z.string().describe('Absolute remote file path.'),
+        path: z
+          .string()
+          .describe("Remote file path — absolute, or relative to the operator's current directory."),
         max_bytes: z
           .number()
           .int()
@@ -208,9 +258,10 @@ export function registerTools(mcp: McpServer, deps: ToolDeps): void {
     },
     async ({ path, max_bytes }) => {
       try {
+        const target = resolvePosix(posixCwd(getCwd), path)
         const sftp = await ssh.getSftp(sessionId)
         const buf = await new Promise<Buffer>((resolve, reject) =>
-          sftp.readFile(path, (err, data) => (err ? reject(err) : resolve(data as Buffer)))
+          sftp.readFile(target, (err, data) => (err ? reject(err) : resolve(data as Buffer)))
         )
         const cap = max_bytes ?? 200000
         const truncated = buf.length > cap
@@ -229,11 +280,14 @@ export function registerTools(mcp: McpServer, deps: ToolDeps): void {
     {
       description: 'Write/overwrite a text file on the remote host.',
       inputSchema: {
-        path: z.string().describe('Absolute remote file path.'),
+        path: z
+          .string()
+          .describe("Remote file path — absolute, or relative to the operator's current directory."),
         content: z.string().describe('Full file contents to write.')
       }
     },
     async ({ path, content }) => {
+      const target = resolvePosix(posixCwd(getCwd), path)
       const v = policy.evaluateWrite()
       if (!v.allow)
         return errorText(
@@ -242,20 +296,20 @@ export function registerTools(mcp: McpServer, deps: ToolDeps): void {
             `Ask the operator to set it to 'confirm' or 'full' mode.`
         )
       if (v.needConfirm) {
-        const outcome = await confirmWithActivity('write_file', `${path} (${content.length} bytes)`)
+        const outcome = await confirmWithActivity('write_file', `${target} (${content.length} bytes)`)
         if (outcome === 'timeout')
           return errorText(
-            `Approval timed out for write to ${path} — no operator response within 2 min. ` +
+            `Approval timed out for write to ${target} — no operator response within 2 min. ` +
               `The connection is fine; re-issue to prompt again.`
           )
-        if (outcome === 'denied') return errorText(`Operator denied write to ${path}`)
+        if (outcome === 'denied') return errorText(`Operator denied write to ${target}`)
       }
       try {
         const sftp = await ssh.getSftp(sessionId)
         await new Promise<void>((resolve, reject) =>
-          sftp.writeFile(path, content, (err) => (err ? reject(err) : resolve()))
+          sftp.writeFile(target, content, (err) => (err ? reject(err) : resolve()))
         )
-        return text(`wrote ${content.length} bytes to ${path}`)
+        return text(`wrote ${content.length} bytes to ${target}`)
       } catch (e) {
         return errorText(`write_file failed: ${(e as Error).message}`)
       }

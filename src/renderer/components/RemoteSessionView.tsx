@@ -1,5 +1,5 @@
 import { memo, useEffect, useRef, useState } from 'react'
-import type { PolicyMode } from '@shared/types'
+import type { AgentKind, PolicyMode } from '@shared/types'
 import { useSessions, type Session } from '../store/sessions'
 import { useSettings } from '../store/settings'
 import TerminalView from './TerminalView'
@@ -34,6 +34,13 @@ function RemoteSessionView({ session }: { session: Session }) {
   const [filesOpened, setFilesOpened] = useState(false)
   const [agentOpen, setAgentOpen] = useState(false)
   const [mode, setMode] = useState<PolicyMode>('full')
+  // Seed the agent choice from the persisted "last used" setting, kept as local
+  // state so it stays fixed for an open pane and another remote session changing
+  // its picker can't restart this one. Changing it here writes back to settings
+  // so the choice is remembered next launch.
+  const [agentKind, setAgentKind] = useState<AgentKind>(() => useSettings.getState().agentKind)
+  const persistAgentKind = useSettings((s) => s.setAgentKind)
+  const agentLabel = agentKind === 'claude' ? 'Claude' : 'Pi'
   const [agentWidth, setAgentWidth] = useState(480)
   const splitRef = useRef<HTMLDivElement>(null)
   const cancelSshReconnect = useSessions((s) => s.cancelSshReconnect)
@@ -105,9 +112,28 @@ function RemoteSessionView({ session }: { session: Session }) {
 
         <label
           className="policy-field"
-          title="What the in-app Pi agent is allowed to do on this host"
+          title="Which coding agent to launch for this host. Claude is Anthropic-only; Pi reaches more models and subscriptions. Both act on this host only through DevTerm's MCP bridge."
         >
           <span className="policy-label">Agent</span>
+          <select
+            className="policy-select"
+            value={agentKind}
+            disabled={agentOpen}
+            onChange={(e) => {
+              const next = e.target.value as AgentKind
+              setAgentKind(next)
+              persistAgentKind(next)
+            }}
+          >
+            <option value="claude">Claude</option>
+            <option value="pi">Pi</option>
+          </select>
+        </label>
+        <label
+          className="policy-field"
+          title="What the in-app agent is allowed to do on this host"
+        >
+          <span className="policy-label">Policy</span>
           <select
             className="policy-select"
             value={mode}
@@ -125,11 +151,11 @@ function RemoteSessionView({ session }: { session: Session }) {
           title={
             !session.context
               ? 'Connect the SSH session first'
-              : 'Launch the Pi agent for this host'
+              : `Launch the ${agentLabel} agent for this host`
           }
           onClick={() => setAgentOpen((v) => !v)}
         >
-          {agentOpen ? '✕ Close Pi' : '🤖 Pi'}
+          {agentOpen ? `✕ Close ${agentLabel}` : `🤖 Open ${agentLabel}`}
         </button>
       </div>
 
@@ -156,7 +182,7 @@ function RemoteSessionView({ session }: { session: Session }) {
               )}
               {agentOpen && (
                 <div className="tc-agent" style={{ width: agentWidth }}>
-                  <AgentPane sessionId={session.id} mode={mode} />
+                  <AgentPane sessionId={session.id} kind={agentKind} mode={mode} />
                 </div>
               )}
             </div>

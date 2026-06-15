@@ -255,19 +255,37 @@ export interface FileContent {
 export const MAX_EDIT_BYTES = 5 * 1024 * 1024
 
 // ---------------------------------------------------------------------------
-// Agent bridge (interactive `pi` CLI wired to the in-process MCP bridge).
-// The MCP bridge, tools, and policy are agent-agnostic — they speak MCP. The
-// renderer-visible contract below is the only place the agent's identity leaks
-// out, and the IPC channel names are pure strings with no agent-specific bits.
+// Agent bridge: an interactive coding-agent CLI wired to the in-process MCP
+// bridge. DevTerm can launch either the `claude` CLI or the `pi` CLI; the user
+// picks per session. The MCP bridge, tools, and policy are agent-agnostic —
+// they speak MCP. The renderer-visible contract below is the only place the
+// agent's identity leaks out, and the IPC channel names are pure strings with
+// no agent-specific bits.
 // ---------------------------------------------------------------------------
 
 export type PolicyMode = 'read_only' | 'confirm' | 'full'
 
+/**
+ * Which coding agent to spawn for a session. `claude` runs the Claude CLI
+ * (Anthropic-only, native MCP via --mcp-config); `pi` runs the pi coding agent
+ * (more models/subscriptions, MCP via a loaded extension). Both reach this host
+ * only through DevTerm's MCP bridge.
+ */
+export type AgentKind = 'claude' | 'pi'
+
 export interface AgentOpenOpts {
   sessionId: string
+  /** Which agent CLI to launch. */
+  kind: AgentKind
   mode: PolicyMode
   /** Tell the agent the host has no internet. Optional; defaults to false. */
   airGapped?: boolean
+  /**
+   * The remote shell's current working directory at launch (from OSC 7), so the
+   * agent's commands start where the operator is. Live updates flow over
+   * `agent:set-cwd`. Optional: omitted until the shell reports a cwd.
+   */
+  cwd?: string
   cols: number
   rows: number
 }
@@ -386,6 +404,7 @@ export const IPC = {
   agentConfirmReply: 'agent:confirm:reply', // renderer -> main
   agentBridgeStatus: 'agent:bridge-status', // suffixed :<sessionId>
   agentStatus: 'agent:status',
+  agentSetCwd: 'agent:set-cwd', // renderer -> main: live working-directory updates
 
   // saved connections (persisted in userData)
   connectionsList: 'connections:list',
@@ -545,6 +564,8 @@ export interface DevTermApi {
   agent: {
     open(opts: AgentOpenOpts): Promise<AgentOpenResult>
     close(sessionId: string): void
+    /** Push the remote shell's live cwd so the agent's commands follow the operator's `cd`. */
+    setCwd(sessionId: string, cwd: string): void
     status(sessionId: string): Promise<AgentBridgeStatus | null>
     onBridgeStatus(sessionId: string, cb: (status: AgentBridgeStatus) => void): () => void
     onConfirm(cb: (req: ConfirmRequest) => void): () => void

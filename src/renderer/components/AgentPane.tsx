@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
-import type { AgentBridgeStatus, PolicyMode } from '@shared/types'
+import type { AgentBridgeStatus, AgentKind, PolicyMode } from '@shared/types'
 import { useSessions } from '../store/sessions'
 import { fitNow, fitSoon } from '../lib/fit'
 import { attachRenderer, attachClipboard } from '../lib/renderer'
@@ -16,12 +16,22 @@ const MODE_LABEL: Record<PolicyMode, string> = {
 }
 
 /**
- * Runs the real interactive `pi` CLI in a node-pty, wired to the in-process
- * MCP bridge for this session via a pi extension (loaded with `-e <path>` by
- * the launch step). The pane is a plain terminal; the status pill is driven
- * by the bridge's actual HTTP/SSE connection state.
+ * Runs a real interactive coding-agent CLI (`claude` or `pi`, per `kind`) in a
+ * node-pty, wired to the in-process MCP bridge for this session — Claude via its
+ * native `--mcp-config`, pi via a loaded extension. The pane is a plain
+ * terminal; the status pill is driven by the bridge's actual HTTP/SSE
+ * connection state.
  */
-export default function AgentPane({ sessionId, mode }: { sessionId: string; mode: PolicyMode }) {
+export default function AgentPane({
+  sessionId,
+  kind,
+  mode
+}: {
+  sessionId: string
+  kind: AgentKind
+  mode: PolicyMode
+}) {
+  const label = kind === 'claude' ? 'Claude' : 'Pi'
   const hostRef = useRef<HTMLDivElement>(null)
   const [bridge, setBridge] = useState<BridgeState>('connecting')
   const [bridgeMessage, setBridgeMessage] = useState<string | undefined>()
@@ -29,6 +39,11 @@ export default function AgentPane({ sessionId, mode }: { sessionId: string; mode
   const [lastHeartbeatAt, setLastHeartbeatAt] = useState<number | undefined>()
   const [restartNonce, setRestartNonce] = useState(0)
   const hostClosed = useSessions((s) => s.sessions.find((x) => x.id === sessionId)?.closed ?? false)
+  // The operator's live shell cwd (tracked from OSC 7 in TerminalView). Pushed
+  // to main so the agent's commands follow the operator's `cd` — see the effect
+  // below. Kept out of the agent-launch effect's deps so a `cd` never restarts
+  // the agent; it's a live update, not a relaunch.
+  const cwd = useSessions((s) => s.sessions.find((x) => x.id === sessionId)?.cwd)
   // Mirror the bridge state up to the session store so the tab dot can color
   // on it. The local `bridge` is the source of truth for the in-pane status
   // pill; the store copy is just a cache for the chrome. We only push the
@@ -45,6 +60,14 @@ export default function AgentPane({ sessionId, mode }: { sessionId: string; mode
       setAgentBridgeState(sessionId, status.state)
     })
   }, [sessionId, setAgentBridgeState])
+
+  // Mirror the live cwd to main on every change (and on mount). open() also
+  // seeds the launch cwd; this keeps it current as the operator navigates.
+  // Fire-and-forget and idempotent — a push before the agent is open just
+  // records the latest value for when it starts.
+  useEffect(() => {
+    if (cwd) window.devterm.agent.setCwd(sessionId, cwd)
+  }, [sessionId, cwd])
 
   useEffect(() => {
     const host = hostRef.current
@@ -67,7 +90,7 @@ export default function AgentPane({ sessionId, mode }: { sessionId: string; mode
     const disposeRenderer = attachRenderer(term)
     const disposeClipboard = attachClipboard(term, host)
     fitNow(fit, host)
-    term.write('\x1b[90mStarting Pi agent bridged to this host...\x1b[0m\r\n')
+    term.write(`\x1b[90mStarting ${label} agent bridged to this host...\x1b[0m\r\n`)
 
     let disposed = false
     const cleanups: Array<() => void> = [disposeRenderer, disposeClipboard]
@@ -76,22 +99,27 @@ export default function AgentPane({ sessionId, mode }: { sessionId: string; mode
       try {
         const { ptyId, mcpUrl } = await window.devterm.agent.open({
           sessionId,
+          kind,
           mode,
+          // Read non-reactively so the launch isn't tied to cwd changes; live
+          // updates after this flow through agent.setCwd (effect above).
+          cwd: useSessions.getState().sessions.find((x) => x.id === sessionId)?.cwd,
           cols: term.cols,
           rows: term.rows
         })
         if (disposed) return window.devterm.agent.close(sessionId)
         setMcpUrl(mcpUrl)
         setBridge((cur) => (cur === 'connecting' ? 'listening' : cur))
+        const toolNote = kind === 'claude' ? 'local file tools scratch-only' : 'built-in tools off'
         term.write(
-          `\x1b[90mMCP bridge: ${mcpUrl} | policy: ${mode} | agent: pi (built-in tools off)\x1b[0m\r\n`
+          `\x1b[90mMCP bridge: ${mcpUrl} | policy: ${mode} | agent: ${kind} (${toolNote})\x1b[0m\r\n`
         )
         cleanups.push(window.devterm.pty.onData(ptyId, (d) => term.write(d)))
         cleanups.push(
           window.devterm.pty.onExit(ptyId, ({ exitCode }) => {
             setBridge('exited')
-            setBridgeMessage(`Pi exited with code ${exitCode}`)
-            term.write(`\r\n\x1b[90m[pi exited with code ${exitCode}]\x1b[0m\r\n`)
+            setBridgeMessage(`${label} exited with code ${exitCode}`)
+            term.write(`\r\n\x1b[90m[${kind} exited with code ${exitCode}]\x1b[0m\r\n`)
           })
         )
         term.onData((d) => window.devterm.pty.input(ptyId, d))
@@ -111,9 +139,9 @@ export default function AgentPane({ sessionId, mode }: { sessionId: string; mode
         const msg = String((e as Error).message || e)
         setBridge('error')
         setBridgeMessage(msg)
-        term.write(`\r\n\x1b[31m[failed to start pi: ${msg}]\x1b[0m\r\n`)
+        term.write(`\r\n\x1b[31m[failed to start ${kind}: ${msg}]\x1b[0m\r\n`)
         term.write(
-          '\x1b[90mIs the `pi` CLI installed and on PATH? Authenticated with an API key or /login? Is the SSH session connected?\x1b[0m\r\n'
+          `\x1b[90mIs the \`${kind}\` CLI installed and on PATH? Authenticated with an API key or /login? Is the SSH session connected?\x1b[0m\r\n`
         )
       }
     })()
@@ -128,7 +156,7 @@ export default function AgentPane({ sessionId, mode }: { sessionId: string; mode
       // its first bridge-status event.
       setAgentBridgeState(sessionId, 'stopped')
     }
-  }, [mode, restartNonce, sessionId, setAgentBridgeState])
+  }, [kind, label, mode, restartNonce, sessionId, setAgentBridgeState])
 
   const pill = hostClosed
     ? { tone: 'down', text: 'Host disconnected' }
