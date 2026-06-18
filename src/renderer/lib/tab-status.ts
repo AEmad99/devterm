@@ -14,7 +14,7 @@
 
 import type { AgentBridgeState } from '@shared/types'
 
-export type TabStatusTone = 'idle' | 'warn' | 'error' | 'pending'
+export type TabStatusTone = 'idle' | 'warn' | 'error' | 'pending' | 'attention'
 
 export interface TabStatus {
   /** What the dot should be colored as. */
@@ -36,6 +36,7 @@ export interface SessionStatusInput {
   closed?: boolean
   agentBridgeState?: AgentBridgeState
   agentPendingApproval?: boolean
+  needsAttention?: boolean
 }
 
 /**
@@ -55,7 +56,13 @@ export function deriveTabStatus(s: SessionStatusInput): TabStatus {
   if (s.agentPendingApproval) {
     return { tone: 'warn', reason: 'Agent awaiting approval', bridgeState: s.agentBridgeState, pendingApproval: true }
   }
-  // 3. Reconnecting / agent bridge not yet up — orange to flag "not OK but
+  // 3. Needs attention (green) — an agent finished or a bell rang and the
+  //    operator hasn't looked yet. Below a blocking approval but above the
+  //    in-flight connection states: it's an actionable "come look" signal.
+  if (s.needsAttention) {
+    return { tone: 'attention', reason: 'Needs your attention', bridgeState: s.agentBridgeState }
+  }
+  // 4. Reconnecting / agent bridge not yet up — orange to flag "not OK but
   //    not failed, just in flight". Closed sessions stay idle so they don't
   //    keep glowing after the user has dismissed them.
   if (!s.closed && isReconnectingStatus(s.status)) {

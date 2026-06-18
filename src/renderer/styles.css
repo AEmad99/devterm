@@ -10,6 +10,7 @@
   --term-fg: #c0caf5;
   --muted: #565f89;
   --accent: #7aa2f7;
+  --accent-2: #bb9af7;
   --accent-fg: #0b0e14;
   --selection: rgba(122, 162, 247, 0.3);
   --agent: #7c5cff;
@@ -21,6 +22,7 @@
   --tab-status-warn: #e0af68;      /* yellow — agent awaiting approval */
   --tab-status-error: #f48771;     /* red    — error / failed / mismatch */
   --tab-status-pending: #ff9e64;   /* orange — reconnecting / bridge starting */
+  --tab-status-attention: #9ece6a; /* green  — agent finished / needs you */
 
   /* Derived tokens — resolve against the live core vars, so they re-theme for
      free. color-mix is supported by the bundled Chromium. */
@@ -36,12 +38,27 @@
   --radius-sm: 6px;
   --radius: 9px;
   --radius-lg: 14px;
-  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.3);
-  --shadow-2: 0 8px 24px rgba(0, 0, 0, 0.36);
-  --shadow-pop: 0 18px 50px rgba(0, 0, 0, 0.5);
+  /* Shadows are tinted with the theme background (not flat black) so elevation
+     reads as part of the palette instead of a grey wash. */
+  --shadow-color: color-mix(in srgb, var(--bg) 42%, #000);
+  --shadow-1: 0 1px 2px color-mix(in srgb, var(--shadow-color) 72%, transparent);
+  --shadow-2: 0 10px 30px color-mix(in srgb, var(--shadow-color) 66%, transparent);
+  --shadow-pop: 0 26px 64px color-mix(in srgb, var(--shadow-color) 78%, transparent);
 
-  /* Glass tuning (used when data-glass='on'). */
+  /* Premium surface treatment, all derived from the live palette so every theme
+     gets cohesive depth: a hairline top highlight on raised surfaces, and a
+     slightly sunken tone for gradient bottoms / inset wells. */
+  --elevate-hi: color-mix(in srgb, var(--fg) 7%, transparent);
+  --surface-sunk: color-mix(in srgb, var(--panel) 84%, #000);
+
+  /* Ambient backdrop intensity — raised to 1 for glass themes by applyTheme. */
+  --ambient-strength: 0.55;
+
+  /* Glass tuning (used when data-glass='on'). Solid themes keep the highlight /
+     edge inert so the shared frosted rules stay harmless. */
   --glass-blur: 22px;
+  --glass-hi: transparent;
+  --glass-edge: var(--border);
 }
 
 * {
@@ -90,13 +107,62 @@ body,
   height: 100%;
 }
 
+/* ===========================================================================
+   Ambient backdrop — a themed depth layer pinned behind the whole app. The OS
+   window is opaque on Electron 29 (so real see-through glass is impossible);
+   instead, two soft accent blooms over the base background give frosted
+   surfaces something real to blur and lend every theme subtle depth.
+
+   Pointer-transparent, fixed to the viewport, painted at z-index -1 in the root
+   stacking context — beneath all content but above the window canvas, so a
+   backdrop-filter higher up samples it. Drift is added under
+   prefers-reduced-motion: no-preference near the end of this file; it is
+   transform-only and never touches xterm geometry.
+   =========================================================================== */
+.app::before,
+.app::after {
+  content: '';
+  position: fixed;
+  inset: -12vmax; /* overscan so the drifting blooms never reveal an edge */
+  z-index: -1;
+  pointer-events: none;
+  will-change: transform;
+}
+.app::before {
+  background:
+    radial-gradient(
+      58vmax 58vmax at 16% 8%,
+      color-mix(in oklab, var(--accent) calc(var(--ambient-strength) * 30%), transparent),
+      transparent 60%
+    ),
+    radial-gradient(
+      52vmax 52vmax at 88% 92%,
+      color-mix(in oklab, var(--accent-2) calc(var(--ambient-strength) * 26%), transparent),
+      transparent 62%
+    );
+  transform: translate3d(0, 0, 0) scale(1.06);
+}
+.app::after {
+  background: radial-gradient(
+    46vmax 46vmax at 82% 14%,
+    color-mix(in oklab, var(--accent-2) calc(var(--ambient-strength) * 18%), transparent),
+    transparent 60%
+  );
+  transform: translate3d(0, 0, 0) scale(1.08);
+}
+
 .titlebar {
   display: flex;
   align-items: center;
   gap: 10px;
   padding: 7px 12px;
-  background: color-mix(in srgb, var(--panel) 80%, var(--bg));
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--panel) 96%, var(--fg)),
+    color-mix(in srgb, var(--panel) 78%, var(--bg))
+  );
   border-bottom: 1px solid var(--border);
+  box-shadow: inset 0 1px 0 var(--elevate-hi);
   font-size: 13px;
   user-select: none;
 }
@@ -791,6 +857,7 @@ body,
   background: var(--bg-term);
   color: #fff;
   border-color: var(--border);
+  box-shadow: inset 0 1px 0 var(--elevate-hi);
 }
 .tab.active::after {
   content: '';
@@ -838,9 +905,17 @@ body,
   box-shadow: 0 0 0 1px var(--tab-status-pending);
   animation: reconnect-pulse 1.4s ease-in-out infinite;
 }
+/* Attention overrides the kind color outright (and pulses) so a finished or
+   input-waiting agent's tab is unmistakable across a strip of tabs. */
+.tab .dot[data-status='attention'] {
+  background: var(--tab-status-attention);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--tab-status-attention) 45%, transparent);
+  animation: reconnect-pulse 1.4s ease-in-out infinite;
+}
 @media (prefers-reduced-motion: reduce) {
   .tab .dot[data-status='warn'],
-  .tab .dot[data-status='pending'] {
+  .tab .dot[data-status='pending'],
+  .tab .dot[data-status='attention'] {
     animation: none;
   }
 }
@@ -2269,7 +2344,7 @@ select option {
   align-items: center;
   gap: 14px;
   padding: 12px 16px;
-  background: linear-gradient(180deg, var(--panel), #1b1e25);
+  background: linear-gradient(180deg, var(--panel), var(--surface-sunk));
   border: 1px solid var(--border);
   border-radius: 12px;
   transition:
@@ -2403,7 +2478,7 @@ select option {
 .ws-card {
   margin-top: 22px;
   padding: 18px;
-  background: linear-gradient(180deg, var(--panel), #1b1e25);
+  background: linear-gradient(180deg, var(--panel), var(--surface-sunk));
   border: 1px solid var(--border);
   border-radius: 14px;
 }
@@ -2455,10 +2530,10 @@ select option {
   align-items: center;
   gap: 8px;
   padding: 34px 44px;
-  background: linear-gradient(180deg, var(--panel), #1b1e25);
+  background: linear-gradient(180deg, var(--panel), var(--surface-sunk));
   border: 1px solid var(--border);
   border-radius: 16px;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+  box-shadow: var(--shadow-2);
 }
 .empty-ico {
   font-size: 38px;
@@ -2893,12 +2968,39 @@ textarea:focus {
   line-height: 1.5;
 }
 .theme-swatch.is-glass .theme-swatch-preview {
-  backdrop-filter: blur(2px);
+  backdrop-filter: blur(3px) saturate(1.4);
+  -webkit-backdrop-filter: blur(3px) saturate(1.4);
+}
+/* Soft two-tone accent bloom behind the preview text — sells "premium" in the
+   gallery and gives the glass previews real depth. Driven by --sw-accent /
+   --sw-accent2, set inline per swatch (SettingsModal). */
+.tsw-glow {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(
+      62% 80% at 82% 16%,
+      color-mix(in oklab, var(--sw-accent, var(--accent)) 42%, transparent),
+      transparent 70%
+    ),
+    radial-gradient(
+      70% 92% at 10% 96%,
+      color-mix(in oklab, var(--sw-accent2, var(--accent)) 30%, transparent),
+      transparent 72%
+    );
+  opacity: 0.5;
+}
+.theme-swatch.is-glass .tsw-glow {
+  opacity: 0.92;
 }
 .tsw-line {
   display: flex;
   gap: 5px;
   align-items: center;
+  position: relative;
+  z-index: 1;
 }
 .tsw-caret {
   display: inline-block;
@@ -2913,6 +3015,7 @@ textarea:focus {
   bottom: 8px;
   display: flex;
   gap: 3px;
+  z-index: 1;
 }
 .tsw-dots span {
   width: 7px;
@@ -2945,12 +3048,23 @@ textarea:focus {
 }
 
 /* ===========================================================================
-   Glass theme — translucent surfaces + backdrop blur. Enabled when the Glass
-   theme is active (applyTheme sets data-glass). The app uses a normal native
-   OS window frame so Windows owns snap/maximize/resize behavior; glass is a
-   themed in-app surface treatment unless a future Electron build provides a
-   native Acrylic/Mica material through `window:set-glass`.
+   Glass theme — frosted, translucent in-app surfaces. Enabled when a glass
+   theme is active (applyTheme sets data-glass='on'). The OS window stays a
+   normal opaque frame so Windows owns snap/maximize/resize — this is NOT real
+   window see-through. Instead the frosted surfaces blur the ambient backdrop
+   painted behind the app (.app::before/::after), which is what finally makes
+   the effect read as glass. A future Electron build can upgrade this to native
+   Acrylic/Mica via `window:set-glass`.
    =========================================================================== */
+:root[data-glass='on'] {
+  --glass-blur: 26px;
+  --glass-hi: rgba(255, 255, 255, 0.08); /* top sheen on frosted edges */
+  --glass-edge: rgba(255, 255, 255, 0.14); /* brighter hairline border */
+}
+
+/* Frosted chrome — every raised surface blurs the ambient backdrop behind it.
+   The panel/bg fills are already low-alpha for glass themes, so the blur turns
+   them into real frosted glass now that there's an ambient layer to sample. */
 :root[data-glass='on'] .titlebar,
 :root[data-glass='on'] .statusbar,
 :root[data-glass='on'] .sidebar,
@@ -2959,27 +3073,54 @@ textarea:focus {
 :root[data-glass='on'] .tabs,
 :root[data-glass='on'] .browser-toolbar,
 :root[data-glass='on'] .browser-tabs,
+:root[data-glass='on'] .browser-find,
 :root[data-glass='on'] .view-toggle,
 :root[data-glass='on'] .explorer-head,
-:root[data-glass='on'] .filepane-head {
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.4);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.4);
+:root[data-glass='on'] .explorer-pathbar,
+:root[data-glass='on'] .filepane-head,
+:root[data-glass='on'] .filepane-toolbar,
+:root[data-glass='on'] .editor-toolbar,
+:root[data-glass='on'] .agent-status,
+:root[data-glass='on'] .bottom-panel-toggle {
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.7);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.7);
 }
+
+/* Floating overlays melt the content behind them away with a deeper blur and a
+   lit hairline edge. */
 :root[data-glass='on'] .modal,
 :root[data-glass='on'] .palette,
-:root[data-glass='on'] .term-search {
-  background: color-mix(in srgb, var(--panel) 78%, transparent);
-  backdrop-filter: blur(30px) saturate(1.5);
-  -webkit-backdrop-filter: blur(30px) saturate(1.5);
+:root[data-glass='on'] .term-search,
+:root[data-glass='on'] .autosuggest,
+:root[data-glass='on'] .browser-dl-drawer {
+  background: color-mix(in srgb, var(--panel) 80%, transparent);
+  backdrop-filter: blur(34px) saturate(1.8);
+  -webkit-backdrop-filter: blur(34px) saturate(1.8);
+  border-color: var(--glass-edge);
+  box-shadow:
+    var(--shadow-pop),
+    inset 0 1px 0 var(--glass-hi);
 }
-/* A subtle top sheen on the titlebar sells the glass. */
+
+/* Hairline highlights catch the light along the big glass panes + titlebar. */
 :root[data-glass='on'] .titlebar {
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  box-shadow:
+    inset 0 1px 0 var(--glass-hi),
+    0 1px 0 color-mix(in srgb, #000 28%, transparent);
 }
-/* Tabs/panels read better with a faint translucent fill rather than the solid one. */
+:root[data-glass='on'] .sidebar {
+  box-shadow: inset -1px 0 0 var(--glass-hi);
+}
+:root[data-glass='on'] .pane-tabstrip,
+:root[data-glass='on'] .tabs,
+:root[data-glass='on'] .group-bar {
+  box-shadow: inset 0 1px 0 var(--glass-hi);
+}
+
+/* Translucent accent fills read better than the solid ones on glass. */
 :root[data-glass='on'] .tab.active,
 :root[data-glass='on'] .group-tab.active {
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
 }
 
 /* ===========================================================================
@@ -3225,7 +3366,36 @@ textarea:focus {
   }
 }
 
+/* Ambient backdrop drift — very slow, transform-only counter-motion on the two
+   blooms for a living-glass feel. Gated by prefers-reduced-motion below; the
+   static base transforms live on .app::before / ::after. */
+@keyframes dt-ambient-a {
+  from {
+    transform: translate3d(-3%, -2%, 0) scale(1.06);
+  }
+  to {
+    transform: translate3d(4%, 3%, 0) scale(1.14);
+  }
+}
+@keyframes dt-ambient-b {
+  from {
+    transform: translate3d(3%, 2%, 0) scale(1.08);
+  }
+  to {
+    transform: translate3d(-4%, -3%, 0) scale(1);
+  }
+}
+
 @media (prefers-reduced-motion: no-preference) {
+  /* --- Ambient backdrop blooms drift slowly for a living-glass feel. Long,
+     offset loops so the motion is felt, never watched. Compositor-only. --- */
+  .app::before {
+    animation: dt-ambient-a 46s ease-in-out infinite alternate;
+  }
+  .app::after {
+    animation: dt-ambient-b 62s ease-in-out infinite alternate;
+  }
+
   /* --- Overlay entrances: backdrop fades, panel scales up.
      These mount fresh on each open, so the keyframe plays once per open. --- */
   .modal-backdrop {

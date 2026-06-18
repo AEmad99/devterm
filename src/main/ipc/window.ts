@@ -1,4 +1,4 @@
-import { ipcMain, BrowserWindow } from 'electron'
+import { ipcMain, BrowserWindow, Notification } from 'electron'
 import { IPC } from '@shared/types'
 
 /**
@@ -26,6 +26,35 @@ export function registerWindowIpc(getWin: () => BrowserWindow | null): void {
     }
     if (process.platform === 'darwin' && typeof win.setVibrancy === 'function') {
       win.setVibrancy(enabled ? 'under-window' : null)
+    }
+  })
+
+  // Attention signal: when an agent/terminal wants the operator and the window
+  // is in the background, flash the taskbar button and post an OS notification.
+  // The renderer already decides *whether* to alert (it owns the active-session
+  // / focus / debounce logic); main just performs the OS-level surfacing. Skip
+  // it entirely when the window is focused — you can't flash a foreground window
+  // and a toast would be redundant with the in-app chime + tab badge.
+  ipcMain.on(IPC.windowFlashAttention, (_e, notice: { title: string; body?: string }) => {
+    const win = getWin()
+    if (!win || win.isDestroyed() || win.isFocused()) return
+    // FLASHW_TIMERNOFG: flash until the window comes to the foreground (Windows
+    // auto-clears it on activate); the focus listener below is a belt-and-braces.
+    win.flashFrame(true)
+    if (Notification.isSupported()) {
+      const n = new Notification({
+        title: notice.title || 'DevTerm',
+        body: notice.body || '',
+        silent: false
+      })
+      n.on('click', () => {
+        const w = getWin()
+        if (!w || w.isDestroyed()) return
+        if (w.isMinimized()) w.restore()
+        w.show()
+        w.focus()
+      })
+      n.show()
     }
   })
 }

@@ -443,6 +443,9 @@ export const IPC = {
 
   // window appearance (glass/translucent material)
   windowSetGlass: 'window:set-glass',
+  // attention: OS notification + taskbar flash when an agent/terminal wants the
+  // operator and the window is in the background
+  windowFlashAttention: 'window:flash-attention',
 
   // foundation cluster: bridge activity log
   bridgeActivityList: 'bridge-activity:list',
@@ -633,6 +636,13 @@ export interface DevTermApi {
      * (Electron ≥30); a no-op otherwise, where the CSS glass layer still applies.
      */
     setGlass(enabled: boolean): Promise<void>
+    /**
+     * Pull the operator back to a backgrounded window: flash the taskbar button
+     * and post an OS notification (clicking it focuses the window). A no-op when
+     * the window is already focused. Used by the agent/terminal attention signal
+     * so a finished or input-waiting agent surfaces even when DevTerm is hidden.
+     */
+    flashAttention(notice: { title: string; body?: string }): void
   }
   /** Context of the local workstation. */
   localContext(): Promise<HostContext>

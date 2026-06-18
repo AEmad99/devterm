@@ -396,7 +396,13 @@ function collectSelected(
 ): FileEntry[] {
   if (!listing) return []
   if (multiSel.size > 0) {
-    return listing.entries.filter((e) => multiSel.has(e.path))
+    // `listing.entries` only holds the pane's ROOT level, so a file selected
+    // inside an expanded sub-folder won't be found here. Fall back to the
+    // actual selected entry (`sel`) rather than returning an empty set — that
+    // empty set is what made the transfer button silently do nothing for
+    // anything but a single root-level click.
+    const matched = listing.entries.filter((e) => multiSel.has(e.path))
+    if (matched.length > 0) return matched
   }
   return sel ? [sel] : []
 }

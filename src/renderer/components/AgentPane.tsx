@@ -5,6 +5,7 @@ import type { AgentBridgeStatus, AgentKind, PolicyMode } from '@shared/types'
 import { useSessions } from '../store/sessions'
 import { fitNow, fitSoon } from '../lib/fit'
 import { attachRenderer, attachClipboard } from '../lib/renderer'
+import { createIdleChime } from '../lib/attention'
 
 /** Live state of the agent's link to this host (what the status pill reflects). */
 type BridgeState = AgentBridgeStatus['state'] | 'connecting' | 'exited'
@@ -114,7 +115,26 @@ export default function AgentPane({
         term.write(
           `\x1b[90mMCP bridge: ${mcpUrl} | policy: ${mode} | agent: ${kind} (${toolNote})\x1b[0m\r\n`
         )
-        cleanups.push(window.devterm.pty.onData(ptyId, (d) => term.write(d)))
+        // Raise an attention signal when this agent finishes or waits for input:
+        // its output goes quiet for a beat after a real burst of work. setArmed
+        // on the operator's first keystroke arms the idle path (so the startup
+        // banner never chimes) and it stays armed for the session.
+        const attention = createIdleChime({
+          sessionId,
+          minBurstMs: 2000,
+          makeNotice: () => {
+            const s = useSessions.getState().sessions.find((x) => x.id === sessionId)
+            const host = s?.context?.hostname || s?.title || 'host'
+            return { title: `${label} · ${host}`, body: 'Agent finished or needs your input' }
+          }
+        })
+        cleanups.push(attention.dispose)
+        cleanups.push(
+          window.devterm.pty.onData(ptyId, (d) => {
+            attention.feed(d)
+            term.write(d)
+          })
+        )
         cleanups.push(
           window.devterm.pty.onExit(ptyId, ({ exitCode }) => {
             setBridge('exited')
@@ -122,7 +142,11 @@ export default function AgentPane({
             term.write(`\r\n\x1b[90m[${kind} exited with code ${exitCode}]\x1b[0m\r\n`)
           })
         )
-        term.onData((d) => window.devterm.pty.input(ptyId, d))
+        term.onData((d) => {
+          attention.setArmed(true)
+          attention.onInput()
+          window.devterm.pty.input(ptyId, d)
+        })
         const push = () => {
           if (fitNow(fit, host)) window.devterm.pty.resize(ptyId, term.cols, term.rows)
         }

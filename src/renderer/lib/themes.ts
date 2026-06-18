@@ -55,6 +55,9 @@ export interface ChromeColors {
   muted: string
   /** Brand/selection accent. */
   accent: string
+  /** Secondary accent — drives the two-tone ambient backdrop glow and gradient
+   *  flourishes. Falls back to `accent` (single-hue glow) when omitted. */
+  accent2?: string
   /** Optional override for text on an accent-filled control (else auto by luminance). */
   accentFg?: string
 }
@@ -65,7 +68,9 @@ export interface Theme {
   /** Short tag shown in the picker, e.g. "Dark" / "Glass". */
   group: string
   dark: boolean
-  /** Translucent surfaces + window see-through + backdrop blur. */
+  /** Frosted in-app surfaces: translucent fills + backdrop blur sampled over the
+   *  ambient backdrop layer. The OS window stays opaque on Electron 29, so this
+   *  is an in-app depth illusion, not real window see-through. */
   glass?: boolean
   terminal: AnsiPalette
   chrome: ChromeColors
@@ -127,7 +132,8 @@ export const THEMES: Theme[] = [
       border: '#2a2c3d',
       fg: '#c0caf5',
       muted: '#565f89',
-      accent: '#7aa2f7'
+      accent: '#7aa2f7',
+      accent2: '#bb9af7'
     }
   },
   {
@@ -165,7 +171,8 @@ export const THEMES: Theme[] = [
       border: '#3a3c4e',
       fg: '#f8f8f2',
       muted: '#6272a4',
-      accent: '#bd93f9'
+      accent: '#bd93f9',
+      accent2: '#ff79c6'
     }
   },
   {
@@ -203,7 +210,8 @@ export const THEMES: Theme[] = [
       border: '#313244',
       fg: '#cdd6f4',
       muted: '#7f849c',
-      accent: '#cba6f7'
+      accent: '#cba6f7',
+      accent2: '#f5c2e7'
     }
   },
   {
@@ -241,7 +249,8 @@ export const THEMES: Theme[] = [
       border: '#4c566a',
       fg: '#eceff4',
       muted: '#7b88a1',
-      accent: '#88c0d0'
+      accent: '#88c0d0',
+      accent2: '#81a1c1'
     }
   },
   {
@@ -280,6 +289,7 @@ export const THEMES: Theme[] = [
       fg: '#ebdbb2',
       muted: '#928374',
       accent: '#fe8019',
+      accent2: '#d3869b',
       accentFg: '#1d2021'
     }
   },
@@ -318,7 +328,8 @@ export const THEMES: Theme[] = [
       border: '#3a3f4b',
       fg: '#abb2bf',
       muted: '#5c6370',
-      accent: '#61afef'
+      accent: '#61afef',
+      accent2: '#c678dd'
     }
   },
   {
@@ -356,7 +367,8 @@ export const THEMES: Theme[] = [
       border: '#0e4b5a',
       fg: '#93a1a1',
       muted: '#586e75',
-      accent: '#268bd2'
+      accent: '#268bd2',
+      accent2: '#2aa198'
     }
   },
   {
@@ -395,6 +407,7 @@ export const THEMES: Theme[] = [
       fg: '#cbccc6',
       muted: '#707a8c',
       accent: '#ffcc66',
+      accent2: '#5ccfe6',
       accentFg: '#171b24'
     }
   },
@@ -435,7 +448,50 @@ export const THEMES: Theme[] = [
       border: 'rgba(255,255,255,0.10)',
       fg: '#e8ebf5',
       muted: '#aab2c6',
-      accent: '#8ab4ff'
+      accent: '#8ab4ff',
+      accent2: '#cba6f7'
+    }
+  },
+  {
+    id: 'aurora',
+    name: 'Aurora',
+    group: 'Glass',
+    dark: true,
+    glass: true,
+    terminal: {
+      // Deep teal-black glass; the ambient teal/violet blooms read through it.
+      background: 'rgba(9, 18, 22, 0.42)',
+      foreground: '#e6f7f3',
+      cursor: '#5eead4',
+      cursorAccent: '#091216',
+      selection: 'rgba(94, 234, 212, 0.28)',
+      black: '#0a141a',
+      red: '#ff8a9a',
+      green: '#7ee7c7',
+      yellow: '#ffd98a',
+      blue: '#7dd3fc',
+      magenta: '#c9a6ff',
+      cyan: '#5eead4',
+      white: '#d7eae6',
+      brightBlack: '#4d6b6b',
+      brightRed: '#ff9fb0',
+      brightGreen: '#9bf0d6',
+      brightYellow: '#ffe6ab',
+      brightBlue: '#a5e0ff',
+      brightMagenta: '#dcc2ff',
+      brightCyan: '#8ff3e4',
+      brightWhite: '#ffffff'
+    },
+    chrome: {
+      bg: 'rgba(7, 15, 19, 0.55)',
+      panel: 'rgba(13, 26, 30, 0.45)',
+      panel2: 'rgba(22, 41, 46, 0.50)',
+      border: 'rgba(255, 255, 255, 0.10)',
+      fg: '#e6f7f3',
+      muted: '#8fb3ad',
+      accent: '#5eead4',
+      accent2: '#c084fc',
+      accentFg: '#06121a'
     }
   }
 ]
@@ -500,9 +556,13 @@ export function applyTheme(theme: Theme): void {
   set('--fg', c.fg)
   set('--muted', c.muted)
   set('--accent', c.accent)
+  set('--accent-2', c.accent2 ?? c.accent)
   set('--accent-fg', c.accentFg ?? readableOn(c.accent))
   set('--selection', theme.terminal.selection)
   set('--term-fg', theme.terminal.foreground)
+  // Ambient backdrop intensity: glass themes lean into the glow, solid themes
+  // keep it subtle. styles.css scales the bloom opacity by this number.
+  set('--ambient-strength', theme.glass ? '1' : '0.55')
   root.dataset.theme = theme.id
   root.dataset.glass = theme.glass ? 'on' : 'off'
   root.style.colorScheme = theme.dark ? 'dark' : 'light'

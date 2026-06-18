@@ -142,6 +142,19 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // Returning to DevTerm (alt-tab, clicking the taskbar) satisfies the attention
+  // signal for whatever session you land on — clear its badge so it doesn't keep
+  // glowing once you're back and looking. Tab/pane clicks clear via setActive;
+  // this covers a plain window refocus that doesn't change the active session.
+  useEffect(() => {
+    const onFocus = () => {
+      const { activeId, setNeedsAttention } = useSessions.getState()
+      if (activeId) setNeedsAttention(activeId, false)
+    }
+    window.addEventListener('focus', onFocus)
+    return () => window.removeEventListener('focus', onFocus)
+  }, [])
+
   // Move active terminal +1/-1 within the active group (wraps), and focus it.
   const cycleTerminal = (dir: 1 | -1) => {
     const { groups, activeGroupId, setActiveTab } = useLayout.getState()

@@ -44,6 +44,8 @@ export interface AppSettings {
   prefs: TerminalPrefs
   /** Auto-reconnect policy applied to remote SSH sessions when they drop. */
   autoReconnect: AutoReconnectSettings
+  /** Attention signals (chime / OS notification / tab badge) for agents + terminals. */
+  attention: AttentionSettings
   /** Bottom status bar visibility (Cluster C adds this). */
   showStatusBar: boolean
   /** Whether the agent activity panel is collapsed by default (Cluster A). */
@@ -81,6 +83,26 @@ export interface AutoReconnectSettings {
   factor: number
 }
 
+/**
+ * Attention signals — raised when an agent (or any terminal) finishes work or
+ * asks for input. The renderer decides *when* to fire (see lib/attention.ts):
+ * by default only when you are NOT already looking at that session, which also
+ * filters a foreground shell's own tab-completion bells. This object only holds
+ * the user's preferences for *how* the alert surfaces.
+ */
+export interface AttentionSettings {
+  /** Master switch for all attention signals. */
+  enabled: boolean
+  /** Play a short chime when a signal fires. */
+  sound: boolean
+  /** Chime loudness, 0 (silent) .. 1 (full). */
+  volume: number
+  /** Post an OS notification + flash the taskbar when the window is backgrounded. */
+  system: boolean
+  /** Treat an agent pane going quiet after a burst of output as "finished" (heuristic). */
+  idle: boolean
+}
+
 export const DEFAULT_FONT_FAMILY = 'Cascadia Code, Consolas, "Courier New", monospace'
 
 // Inlined rather than imported from lib/themes to avoid a module cycle (themes
@@ -109,6 +131,13 @@ const DEFAULTS: AppSettings = {
     maxDelayMs: 30000,
     factor: 2
   },
+  attention: {
+    enabled: true,
+    sound: true,
+    volume: 0.5,
+    system: true,
+    idle: true
+  },
   showStatusBar: true,
   agentActivityCollapsed: false,
   agentKind: 'claude',
@@ -129,6 +158,7 @@ function load(): AppSettings {
       terminalBg: { ...DEFAULTS.terminalBg, ...(parsed?.terminalBg ?? {}) },
       prefs: { ...DEFAULTS.prefs, ...(parsed?.prefs ?? {}) },
       autoReconnect: { ...DEFAULTS.autoReconnect, ...(parsed?.autoReconnect ?? {}) },
+      attention: { ...DEFAULTS.attention, ...(parsed?.attention ?? {}) },
       showStatusBar:
         typeof parsed?.showStatusBar === 'boolean' ? parsed.showStatusBar : DEFAULTS.showStatusBar,
       agentActivityCollapsed:
@@ -154,6 +184,7 @@ interface SettingsState extends AppSettings {
   setTerminalBg: (patch: Partial<TerminalBg>) => void
   setPrefs: (patch: Partial<TerminalPrefs>) => void
   setAutoReconnect: (patch: Partial<AutoReconnectSettings>) => void
+  setAttention: (patch: Partial<AttentionSettings>) => void
   setShowStatusBar: (v: boolean) => void
   setAgentActivityCollapsed: (v: boolean) => void
   setAgentKind: (v: AgentKind) => void
@@ -170,6 +201,7 @@ function persist(state: AppSettings): void {
         terminalBg: state.terminalBg,
         prefs: state.prefs,
         autoReconnect: state.autoReconnect,
+        attention: state.attention,
         showStatusBar: state.showStatusBar,
         agentActivityCollapsed: state.agentActivityCollapsed,
         agentKind: state.agentKind,
@@ -209,6 +241,12 @@ export const useSettings = create<SettingsState>((set, get) => ({
     void window.devterm.ssh.setReconnectPolicy?.(autoReconnect).catch(() => undefined)
   },
 
+  setAttention: (patch) => {
+    const attention = { ...get().attention, ...patch }
+    set({ attention })
+    persist(snapshot(get()))
+  },
+
   setShowStatusBar: (v) => {
     set({ showStatusBar: v })
     persist(snapshot(get()))
@@ -235,6 +273,7 @@ export const useSettings = create<SettingsState>((set, get) => ({
       terminalBg: DEFAULTS.terminalBg,
       prefs: DEFAULTS.prefs,
       autoReconnect: DEFAULTS.autoReconnect,
+      attention: DEFAULTS.attention,
       showStatusBar: DEFAULTS.showStatusBar,
       agentActivityCollapsed: DEFAULTS.agentActivityCollapsed,
       agentKind: DEFAULTS.agentKind,
@@ -253,6 +292,7 @@ function snapshot(s: SettingsState): AppSettings {
     terminalBg: s.terminalBg,
     prefs: s.prefs,
     autoReconnect: s.autoReconnect,
+    attention: s.attention,
     showStatusBar: s.showStatusBar,
     agentActivityCollapsed: s.agentActivityCollapsed,
     agentKind: s.agentKind,

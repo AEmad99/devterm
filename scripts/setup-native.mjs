@@ -10,7 +10,7 @@
 // Run with: npm run setup   (after `npm install --ignore-scripts`)
 
 import { execSync } from 'node:child_process'
-import { existsSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, writeFileSync, rmSync, readdirSync, copyFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -55,6 +55,50 @@ if (existsSync(ptyBin)) {
   execSync(`tar -xzf ${JSON.stringify(tgz)} -C ${JSON.stringify(join(nm, 'node-pty'))}`, { stdio: 'inherit' })
   rmSync(tgz)
   console.log('✓ node-pty native binary installed')
+}
+
+// 3) Bundled ConPTY dll (Windows only). PtyManager forks with `useConptyDll`
+//    to dodge the in-box conhost ConPTY's TUI repaint/teardown bugs. The native
+//    conpty.node hard-throws "Cannot find conpty.dll" unless conpty.dll (and the
+//    OpenConsole.exe it launches) sit in build/Release/conpty/. The package
+//    ships those binaries under third_party/conpty/<version>/win10-<arch>/, but
+//    the prebuilt .node tarball doesn't include the folder and the package's own
+//    copy step is a postinstall that never runs under `--ignore-scripts`. Lay it
+//    down here so it's present in dev and gets asarUnpacked into the build.
+if (process.platform === 'win32') {
+  const ptyRoot = join(nm, 'node-pty')
+  const conptyDest = join(ptyRoot, 'build', 'Release', 'conpty')
+  if (existsSync(join(conptyDest, 'conpty.dll'))) {
+    console.log('✓ ConPTY bundled dll present')
+  } else {
+    const tpRoot = join(ptyRoot, 'third_party', 'conpty')
+    const arch = process.arch === 'arm64' ? 'arm64' : 'x64'
+    let installed = false
+    if (existsSync(tpRoot)) {
+      // third_party/conpty/<version>/win10-<arch>/{conpty.dll,OpenConsole.exe}
+      for (const ver of readdirSync(tpRoot)) {
+        const archDir = join(tpRoot, ver, `win10-${arch}`)
+        const srcDll = join(archDir, 'conpty.dll')
+        const srcExe = join(archDir, 'OpenConsole.exe')
+        if (existsSync(srcDll) && existsSync(srcExe)) {
+          mkdirSync(conptyDest, { recursive: true })
+          copyFileSync(srcDll, join(conptyDest, 'conpty.dll'))
+          copyFileSync(srcExe, join(conptyDest, 'OpenConsole.exe'))
+          installed = true
+          console.log(`✓ ConPTY bundled dll installed (win10-${arch}, ${ver})`)
+          break
+        }
+      }
+    }
+    if (!installed) {
+      console.warn(
+        '! Could not find bundled ConPTY binaries under third_party/conpty.\n' +
+          '  PtyManager forks with useConptyDll, so without these the local shell\n' +
+          '  fails to spawn. Reinstall node-pty, or copy conpty.dll + OpenConsole.exe\n' +
+          '  into node_modules/node-pty/build/Release/conpty/.'
+      )
+    }
+  }
 }
 
 console.log('Native setup complete. Next: npm run dev')

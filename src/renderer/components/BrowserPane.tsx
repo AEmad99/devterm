@@ -300,6 +300,15 @@ const BrowserTab = memo(
         className="browser-webview"
         src={tab.initialUrl}
         partition="persist:browser"
+        // Lets the guest open popups (target=_blank / window.open). Without it
+        // Electron silently drops those requests so they never reach main's
+        // setWindowOpenHandler — which is what denies the OS popup and routes the
+        // URL back here as a new tab (see registerBrowserGuest above +
+        // src/main/index.ts) — making "open in new tab" links look dead. The value
+        // must hit the DOM as a string: react-dom doesn't know this non-standard
+        // attribute and strips boolean values, while @types/react types it as
+        // boolean. So we render "" (presence is all Electron checks) and cast.
+        allowpopups={'' as unknown as boolean}
       />
     )
   })

@@ -43,6 +43,13 @@ export interface Session {
    * the yellow "agent needs your attention" dot.
    */
   agentPendingApproval?: boolean
+  /**
+   * True when this session has raised an attention signal (an agent finished or
+   * a terminal bell rang) that the operator hasn't looked at yet. Set by
+   * lib/attention.ts; cleared when the session becomes active or the window
+   * refocuses on it. Drives the green "needs attention" tab dot.
+   */
+  needsAttention?: boolean
 }
 
 interface SessionState {
@@ -83,6 +90,12 @@ interface SessionState {
    * tab dot to color on.
    */
   setAgentPendingApproval: (id: string, pending: boolean) => void
+  /**
+   * Set / clear the session's "needs attention" flag (an agent finished or a
+   * bell rang). Set by lib/attention.ts; cleared automatically when the session
+   * becomes active. Drives the green attention tab dot.
+   */
+  setNeedsAttention: (id: string, pending: boolean) => void
 }
 
 export const useSessions = create<SessionState>((set, get) => ({
@@ -211,7 +224,18 @@ export const useSessions = create<SessionState>((set, get) => ({
     }))
   },
 
-  setActive: (id) => set({ activeId: id }),
+  setActive: (id) =>
+    set((s) => {
+      // Looking at a session satisfies its attention signal — clear the badge
+      // as it becomes active (covers tab clicks and pane mousedown alike).
+      const needsClear = s.sessions.some((x) => x.id === id && x.needsAttention)
+      return {
+        activeId: id,
+        sessions: needsClear
+          ? s.sessions.map((x) => (x.id === id ? { ...x, needsAttention: false } : x))
+          : s.sessions
+      }
+    }),
   setGroup: (id, groupId) =>
     set((s) => {
       const cur = s.sessions.find((x) => x.id === id)
@@ -264,6 +288,15 @@ export const useSessions = create<SessionState>((set, get) => ({
         sessions: s.sessions.map((x) =>
           x.id === id ? { ...x, agentPendingApproval: pending } : x
         )
+      }
+    }),
+
+  setNeedsAttention: (id, pending) =>
+    set((s) => {
+      const cur = s.sessions.find((x) => x.id === id)
+      if (!cur || !!cur.needsAttention === pending) return s
+      return {
+        sessions: s.sessions.map((x) => (x.id === id ? { ...x, needsAttention: pending } : x))
       }
     }),
 

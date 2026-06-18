@@ -113,6 +113,11 @@ function createWindow(): void {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      // Let the attention chime (Web Audio) play without a prior user gesture.
+      // An agent finishing isn't a gesture, so Chromium's default policy would
+      // leave the AudioContext suspended and the chime silent. This is our own
+      // trusted app shell, not arbitrary web content, so allowing it is fine.
+      autoplayPolicy: 'no-user-gesture-required',
       // Enables the <webview> tag used by the in-app browser pane. Each guest is
       // hardened on attach (see web-contents-created below) and runs isolated.
       webviewTag: true
@@ -120,6 +125,11 @@ function createWindow(): void {
   })
 
   mainWindow.on('ready-to-show', () => mainWindow?.show())
+
+  // Stop the attention taskbar flash as soon as the operator comes back to the
+  // window (Windows usually auto-clears on activate, but be explicit so a flash
+  // can never get stuck on after focus returns).
+  mainWindow.on('focus', () => mainWindow?.flashFrame(false))
 
   // Open external links in the OS browser, never in-app.
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -170,6 +180,13 @@ if (process.argv.includes('--self-test')) {
 } else {
   app.whenReady().then(() => {
     Menu.setApplicationMenu(null) // no default File/Edit/View menu — cleaner UI
+
+    // Identify the app to Windows so attention notifications (Notification in
+    // ipc/window.ts) are attributed to "DevTerm" with the app icon and group
+    // under it in Action Center. Must match electron-builder's appId. No-op off
+    // Windows. In dev (unpackaged) toasts may be limited, but the taskbar flash
+    // still fires — packaged builds get full toast support via the install shim.
+    app.setAppUserModelId('com.devterm.app')
 
     // The in-app browser pane's persistent partition (must match BrowserPane.tsx).
     // Strip the `DevTerm/x` and `Electron/x` tokens from its user agent so it looks
