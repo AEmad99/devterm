@@ -8,7 +8,7 @@ import { useSessions, type Session } from '../store/sessions'
 import { useSettings, type TerminalBg } from '../store/settings'
 import { getTheme, xtermTheme, terminalHostColor, type Theme } from '../lib/themes'
 import { parseOsc7 } from '../lib/osc7'
-import { createIdleChime, isAgentCommand } from '../lib/attention'
+import { createIdleChime, isAgentCommand, AGENT_ATTENTION_BODY } from '../lib/attention'
 import { fitNow, fitSoon } from '../lib/fit'
 import { attachRenderer, attachClipboard } from '../lib/renderer'
 import { matchHotkey } from '../lib/hotkeys'
@@ -119,19 +119,19 @@ function TerminalView({ session }: { session: Session }) {
       if (suggest.handleKey(e)) return false
       if (e.ctrlKey && e.shiftKey && !e.altKey) {
         const k = e.key.toLowerCase()
-        // preventDefault is load-bearing: returning false only stops xterm's own
-        // handling, not the browser default. Chromium's default for Ctrl+Shift+V
-        // is "paste as plain text", which fires a second `paste` event into
-        // xterm's textarea — the clipboard text was pasted twice (or more with
-        // key auto-repeat, hence the e.repeat guard).
         if (k === 'c') {
+          // Copy the selection. preventDefault keeps the chord off the shell as a
+          // control byte; returning false stops xterm's own handling.
           e.preventDefault()
           if (term.hasSelection()) window.devterm.clipboard.writeText(term.getSelection())
           return false
         }
         if (k === 'v') {
-          e.preventDefault()
-          if (!e.repeat) void window.devterm.clipboard.readText().then((t) => t && term.paste(t))
+          // Don't paste here. Paste (Ctrl+V and Ctrl+Shift+V alike) is owned by
+          // the single capture-phase `paste` listener in attachClipboard, which
+          // fires once per native paste event. We only stop xterm from turning
+          // the chord into a control byte — crucially we do NOT preventDefault,
+          // so the native paste event still reaches that listener.
           return false
         }
       }
@@ -149,8 +149,7 @@ function TerminalView({ session }: { session: Session }) {
     // quick command, or a long build never arms this; only an actual agent does.
     const idleChime = createIdleChime({
       sessionId: session.id,
-      minBurstMs: 2500,
-      makeNotice: () => ({ title: session.title, body: 'Agent finished or needs input' })
+      makeNotice: () => ({ title: session.title, body: AGENT_ATTENTION_BODY })
     })
     // Reconstruct the command being submitted so we can spot an agent launch.
     // Keystrokes are exact for a typed command; on Enter we also read the rendered

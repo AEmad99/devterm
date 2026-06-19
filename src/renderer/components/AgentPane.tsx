@@ -5,7 +5,7 @@ import type { AgentBridgeStatus, AgentKind, PolicyMode } from '@shared/types'
 import { useSessions } from '../store/sessions'
 import { fitNow, fitSoon } from '../lib/fit'
 import { attachRenderer, attachClipboard } from '../lib/renderer'
-import { createIdleChime } from '../lib/attention'
+import { createIdleChime, AGENT_ATTENTION_BODY } from '../lib/attention'
 
 /** Live state of the agent's link to this host (what the status pill reflects). */
 type BridgeState = AgentBridgeStatus['state'] | 'connecting' | 'exited'
@@ -121,11 +121,10 @@ export default function AgentPane({
         // banner never chimes) and it stays armed for the session.
         const attention = createIdleChime({
           sessionId,
-          minBurstMs: 2000,
           makeNotice: () => {
             const s = useSessions.getState().sessions.find((x) => x.id === sessionId)
             const host = s?.context?.hostname || s?.title || 'host'
-            return { title: `${label} · ${host}`, body: 'Agent finished or needs your input' }
+            return { title: `${label} · ${host}`, body: AGENT_ATTENTION_BODY }
           }
         })
         cleanups.push(attention.dispose)

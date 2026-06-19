@@ -160,13 +160,12 @@ function RemoteSessionView({ session }: { session: Session }) {
       </div>
 
       <div className="view-body">
-        {/* Layers hide with `visibility` (not display:none) so the shell keeps
-            its real dimensions and stays fitted while the SFTP view is open —
-            a display-hidden terminal is 0×0 and garbles on reveal. */}
-        <div
-          className="view-layer"
-          style={{ visibility: view === 'terminal' ? undefined : 'hidden' }}
-        >
+        {/* The shell layer hides via `.term-hidden` (visibility:hidden + an
+            off-screen translate), never display:none: it keeps its real
+            dimensions so the shell stays fitted and doesn't garble on reveal,
+            and going off-screen makes xterm pause the shell + agent render loops
+            while the SFTP view is open. */}
+        <div className={`view-layer${view === 'terminal' ? '' : ' term-hidden'}`}>
           <div className="term-agent-column" ref={splitRef}>
             <div className="term-agent-split">
               <div className="tc-term">

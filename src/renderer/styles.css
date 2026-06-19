@@ -983,6 +983,21 @@ body,
   /* Scope layout/paint to each pane so resizing one doesn't relayout the layer. */
   contain: layout paint;
 }
+/* A terminal-hosting layer that is currently hidden (an inactive tab/group, the
+   editor overlay, another top-level view, or the SFTP sub-view). We push it out
+   of the viewport instead of only setting visibility:hidden so xterm's
+   IntersectionObserver PAUSES that terminal's render loop while it's off-screen —
+   otherwise every backgrounded terminal keeps repainting on each PTY chunk, which
+   is the slowdown with many terminals open. The element keeps its real box size
+   (transform doesn't change layout), so the terminal stays fitted and just
+   repaints once on reveal — never display:none, which collapses it to 0×0 and
+   garbles on reveal. #root clips overflow, so the off-screen layer adds no
+   scrollbar; transition:none keeps the move instant if motion is ever added. */
+.term-hidden {
+  visibility: hidden;
+  transform: translateX(-200vw);
+  transition: none;
+}
 .chrome-layer {
   position: absolute;
   inset: 0;

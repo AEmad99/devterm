@@ -208,19 +208,20 @@ export default function TerminalLayout({
           const isFocused = focusedHere && s.id === focusedId
           const visible = isFocused || (slot?.groupId === activeGroupId && slot.activeTab)
           const rect = slot?.rect ?? { x: 0, y: 0, w: 1, h: 1 }
-          // Hide with `visibility`, never `display:none`: a display-hidden slot
-          // collapses to 0×0, so the terminal can't refit until reveal — the
-          // resize storm on reveal is what corrupted/clipped the output. Hidden
-          // slots don't paint and don't take pointer events, but keep geometry.
-          // Visible slots leave `visibility` unset so they inherit from (and can
-          // be hidden by) ancestor view switches.
-          const style: React.CSSProperties = isFocused
-            ? { ...FOCUSED_SLOT }
-            : { ...slotBodyStyle(rect), visibility: visible ? undefined : 'hidden' }
+          // A non-visible slot gets `.term-hidden` (visibility:hidden + an
+          // off-screen translate) — never display:none, which collapses it to
+          // 0×0 so the terminal can't refit until reveal (the resize storm that
+          // corrupted/clipped output). Off-screen keeps the slot's real geometry
+          // (so it stays fitted) AND makes xterm pause its render loop instead of
+          // repainting every PTY chunk while backgrounded. Visible slots carry no
+          // visibility/transform so they inherit (and can be hidden by) ancestor
+          // view switches.
+          const isHidden = !isFocused && !visible
+          const style: React.CSSProperties = isFocused ? { ...FOCUSED_SLOT } : slotBodyStyle(rect)
           return (
             <div
               key={s.id}
-              className={`term-slot ${isFocused ? 'focused' : ''}`}
+              className={`term-slot ${isFocused ? 'focused' : ''} ${isHidden ? 'term-hidden' : ''}`}
               style={style}
               onMouseDownCapture={() => focusSession(s.id)}
             >

@@ -545,16 +545,15 @@ export default function App() {
               The terminals view stays mounted at all times — switching to
               Connections/Workspaces only hides it. Unmounting it would tear
               down every TerminalView, killing the local PTYs and dropping the
-              SSH shells. Other views overlay on top when active. Hidden with
-              `visibility` (not display:none) so the terminals keep their real
-              dimensions and stay fitted while another view is shown — a
-              display-hidden terminal is 0×0 and can't refit until reveal,
-              which corrupted/clipped its output.
+              SSH shells. Other views overlay on top when active. Hidden via
+              `.term-hidden` (visibility:hidden + an off-screen translate), never
+              display:none: the terminals keep their real dimensions and stay
+              fitted while another view is shown (a display-hidden terminal is
+              0×0 and can't refit until reveal, which corrupted/clipped output),
+              and being off-screen makes xterm pause their render loops so a
+              background view doesn't keep every terminal repainting.
             */}
-            <div
-              className="view-pane"
-              style={{ visibility: view === 'terminals' ? undefined : 'hidden' }}
-            >
+            <div className={`view-pane${view === 'terminals' ? '' : ' term-hidden'}`}>
               <div className="terminals-stack">
                 {showGroupBar && (
                   <div className="group-bar">
@@ -650,12 +649,12 @@ export default function App() {
                   </div>
                 )}
                 <div className="terminals-body">
+                  {/* term-hidden (off-screen, not display:none) — keeps hidden
+                      terminals sized and pauses their render loops; see view-pane above. */}
                   <div
-                    className="layout-wrap"
-                    style={{
-                      // visibility (not display) — keep hidden terminals sized; see view-pane above.
-                      visibility: editorFocused || sessions.length === 0 ? 'hidden' : undefined
-                    }}
+                    className={`layout-wrap${
+                      editorFocused || sessions.length === 0 ? ' term-hidden' : ''
+                    }`}
                   >
                     <TerminalLayout sessions={sessions} onNewTerminal={() => setShowPicker(true)} />
                   </div>

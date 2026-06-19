@@ -160,6 +160,20 @@ export function signalAttention(sessionId: string, notice: AttentionNotice): voi
 // completion signal. Long enough to ride out a brief streaming gap.
 const IDLE_QUIET_MS = 8000
 
+// Minimum span of agent activity (first output → last output, this turn) before a
+// following quiet period counts as a real "finished / waiting" transition. It
+// filters trivial output: the bare echo of a launch command, a one-line prompt
+// redraw. Kept low so a short "asking a question" turn — little preceding work,
+// then the agent stops and waits — still signals, the same as a long turn that
+// finishes. Shared by both agent surfaces so they behave identically.
+const MIN_BURST_MS = 1500
+
+// One wording for every agent attention notice, local pane or remote pane, so the
+// "finished" and "needs input" cases read the same everywhere. We can't tell the
+// two apart from the output stream (both are "agent stopped emitting"), so the
+// copy covers both.
+export const AGENT_ATTENTION_BODY = 'Agent finished or needs your input'
+
 /** Command names DevTerm treats as a coding agent when launched in a shell. */
 const AGENT_COMMAND_NAMES = new Set(['claude', 'pi'])
 /** Wrappers that run another command — `npx claude`, `bunx pi`, etc. */
@@ -198,20 +212,23 @@ export function isAgentCommand(commandLine: string): boolean {
  * normal terminal running an inline agent (armed on the agent's launch command,
  * disarmed when the shell prompt returns). Gated by `attention.idle`.
  *
- * Call `feed` on each PTY output chunk, `setArmed` to toggle detection, and
- * `dispose` to clear the pending timer on unmount.
+ * `minBurstMs` defaults to the shared `MIN_BURST_MS` so both surfaces use the same
+ * sensitivity; callers only override it for a reason. Call `feed` on each PTY
+ * output chunk, `setArmed` to toggle detection, and `dispose` to clear the pending
+ * timer on unmount.
  */
 export function createIdleChime(opts: {
   sessionId: string
   makeNotice: () => AttentionNotice
-  minBurstMs: number
+  minBurstMs?: number
 }): {
   feed: (data: string) => void
   setArmed: (armed: boolean) => void
   onInput: () => void
   dispose: () => void
 } {
-  const { sessionId, makeNotice, minBurstMs } = opts
+  const { sessionId, makeNotice } = opts
+  const minBurstMs = opts.minBurstMs ?? MIN_BURST_MS
   let timer: number | undefined
   let burstStart = 0
   let lastOutputAt = 0
