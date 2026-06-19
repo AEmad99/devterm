@@ -118,6 +118,15 @@ function createWindow(): void {
       // leave the AudioContext suspended and the chime silent. This is our own
       // trusted app shell, not arbitrary web content, so allowing it is fine.
       autoplayPolicy: 'no-user-gesture-required',
+      // Don't suspend the renderer when the window is backgrounded. Attention
+      // signals exist precisely for when you've switched away: the idle-detection
+      // timers must keep ticking, and the Web Audio chime must keep playing. A
+      // throttled/occluded window suspends its AudioContext (currentTime stops
+      // advancing), so without this the chime is silent — and its volume slider
+      // moot — in the one case it matters. Hidden terminals already pause their
+      // own xterm rendering, so the residual cost is background timers, which a
+      // terminal app (SSH keepalives, watches, transfers) wants alive anyway.
+      backgroundThrottling: false,
       // Enables the <webview> tag used by the in-app browser pane. Each guest is
       // hardened on attach (see web-contents-created below) and runs isolated.
       webviewTag: true

@@ -75,8 +75,13 @@ export function chime(volume = 0.5): void {
   if (v === 0) return
   const now = ctx.currentTime
   const master = ctx.createGain()
-  // Keep the ceiling gentle — this fires unattended, it shouldn't startle.
-  master.gain.value = v * 0.18
+  // Perceptual (square) taper. Loudness tracks amplitude roughly logarithmically,
+  // so a *linear* volume reads as top-heavy — 50%→100% is a mere +6 dB and feels
+  // like "no change". Squaring spreads the audible range across the whole slider
+  // so each step is a clear difference. The ceiling stays gentle (this can fire
+  // while you're away) but high enough that 100% is plainly louder than the
+  // middle; 50% still lands on 0.09, so the default loudness is unchanged.
+  master.gain.value = v * v * 0.36
   master.connect(ctx.destination)
   const notes: Array<{ f: number; at: number }> = [
     { f: 659.25, at: 0 }, // E5

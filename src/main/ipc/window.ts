@@ -45,7 +45,13 @@ export function registerWindowIpc(getWin: () => BrowserWindow | null): void {
       const n = new Notification({
         title: notice.title || 'DevTerm',
         body: notice.body || '',
-        silent: false
+        // Stay silent: the audible alert is the in-app Web Audio chime, whose
+        // loudness the user controls via the attention "Chime volume" slider. A
+        // non-silent toast would play Windows' own notification ding at the fixed
+        // system volume — which has no API to scale and ignores that slider — so
+        // the volume setting would appear to do nothing. The toast itself and the
+        // taskbar flash still surface; only the uncontrollable OS sound is dropped.
+        silent: true
       })
       n.on('click', () => {
         const w = getWin()
