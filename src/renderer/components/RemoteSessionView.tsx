@@ -40,7 +40,7 @@ function RemoteSessionView({ session }: { session: Session }) {
   // so the choice is remembered next launch.
   const [agentKind, setAgentKind] = useState<AgentKind>(() => useSettings.getState().agentKind)
   const persistAgentKind = useSettings((s) => s.setAgentKind)
-  const agentLabel = agentKind === 'claude' ? 'Claude' : 'Pi'
+  const agentLabel = agentKind === 'claude' ? 'Claude' : agentKind === 'opencode' ? 'OpenCode' : 'Pi'
   const [agentWidth, setAgentWidth] = useState(480)
   const splitRef = useRef<HTMLDivElement>(null)
   const cancelSshReconnect = useSessions((s) => s.cancelSshReconnect)
@@ -112,7 +112,7 @@ function RemoteSessionView({ session }: { session: Session }) {
 
         <label
           className="policy-field"
-          title="Which coding agent to launch for this host. Claude is Anthropic-only; Pi reaches more models and subscriptions. Both act on this host only through DevTerm's MCP bridge."
+          title="Which coding agent to launch for this host. Claude is Anthropic-only; Pi reaches more models and subscriptions; OpenCode (sst/opencode) is the TUI agent with the broadest provider reach. All three act on this host only through DevTerm's MCP bridge."
         >
           <span className="policy-label">Agent</span>
           <select
@@ -127,6 +127,7 @@ function RemoteSessionView({ session }: { session: Session }) {
           >
             <option value="claude">Claude</option>
             <option value="pi">Pi</option>
+            <option value="opencode">OpenCode</option>
           </select>
         </label>
         <label

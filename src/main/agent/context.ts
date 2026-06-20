@@ -1,11 +1,12 @@
 import type { HostContext } from '@shared/types'
 
 /**
- * The "## Working directory" briefing section, shared by both agent briefings.
- * The cwd follows the operator's shell live (pushed over `agent:set-cwd` and
- * read by the MCP tools), so the briefing names the launch directory and points
- * the agent at `get_host_context` for the current value rather than baking in a
- * path that can go stale.
+ * The "## Working directory" briefing section, shared by all three agent
+ * briefings (pi / claude / opencode). The cwd follows the operator's shell
+ * live (pushed over `agent:set-cwd` and read by the MCP tools), so the
+ * briefing names the launch directory and points the agent at
+ * `get_host_context` for the current value rather than baking in a path
+ * that can go stale.
  */
 function workingDirSection(cwd: string | undefined): string {
   const where = cwd
@@ -113,6 +114,69 @@ not on the remote host — there is no host checkout here. Anything that looks
 like a local path is on your machine; for files on the connected host always use
 \`mcp__devterm__read_file\` / \`mcp__devterm__write_file\`, and to run a command
 use \`mcp__devterm__run_command\`.
+
+${
+  airGapped
+    ? `## ⚠ AIR-GAPPED HOST — NO INTERNET
+This host has **no outbound internet**. NEVER run \`yum\`/\`dnf\`/\`apt\`/\`pip\`/\`npm\`
+against internet repos, and never \`curl\`/\`wget\` from the internet. Use the
+**local mirrors only**: Harbor registry, Skopeo, \`oc mirror\`, and pre-staged
+local repos. If something isn't mirrored, say so rather than attempting an
+internet fetch.`
+    : `## Network
+This host has outbound internet, but prefer local/organisational mirrors when available.`
+}
+
+## Safety
+Destructive operations are gated by an operator-approval guardrail. Explain what
+a command does before running anything that changes state.
+`
+}
+
+/**
+ * Per-session AGENTS.md describing the host for the OpenCode TUI.
+ *
+ * OpenCode is its own world vs. Claude/pi: the tools are exposed as
+ * `devterm_<name>` (server-name prefix) — there is no `mcp__` segment —
+ * and OpenCode ships its own built-in tools which the launch step disables
+ * in `opencode.json`. The briefing tells the agent which prefixed tools to
+ * reach for, mirrors the air-gapped/network rules, and steers it away from
+ * trying to read or write files locally (the launch cwd is a throwaway
+ * temp dir).
+ */
+export function buildOpencodeMd(context: HostContext, airGapped: boolean, cwd?: string): string {
+  const osName =
+    context.os === 'windows' ? 'Windows' : context.os === 'mac' ? 'macOS' : context.os === 'linux' ? 'Linux' : 'unknown OS'
+
+  return `# Connected host: ${context.hostname}
+
+You are operating on a **remote ${osName}** host through DevTerm's MCP bridge.
+
+- Host: \`${context.hostname}\`
+- OS: ${osName}
+- Details: ${context.detail || '(unknown)'}
+
+## How to act on this host
+OpenCode exposes the bridge's tools as \`devterm_*\` (the MCP server is named
+\`devterm\`). Use them — they run on THIS host over the existing SSH connection.
+Do not \`ssh\` elsewhere, do not try to use a local checkout, and do not use any
+built-in read/write/edit/bash tool (they are disabled in this session's config).
+- \`devterm_run_command\` — run a shell command here.
+- \`devterm_read_file\` / \`devterm_write_file\` / \`devterm_list_dir\` — files on this host.
+- \`devterm_get_host_context\` — re-read these facts.
+- \`devterm_ping\` — confirm the bridge is still alive.
+
+The DevTerm MCP bridge is a real HTTP server on localhost; its bearer token is
+in the bridge config OpenCode loaded. The bridge enforces the operator's
+policy (read-only / confirm / full) before running any tool, and destructive
+operations may prompt the operator for approval.
+
+${workingDirSection(cwd)}
+## Your working directory is a throwaway
+The path you see on launch is a temp dir DevTerm uses only to hold the
+\`opencode.json\` config and this briefing — it is **not** a checkout of the
+remote host. Anything that looks like a local path is on your machine, not the
+host; use the \`devterm_*\` tools for everything on the connected host.
 
 ${
   airGapped

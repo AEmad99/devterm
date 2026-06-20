@@ -2,7 +2,7 @@
 
 This file guides Codex and other coding agents when working in the DevTerm repository.
 
-DevTerm is an Electron desktop terminal for local shells, SSH/SFTP sessions, terminal workspaces, file browsing and editing, an in-app browser, saved command snippets, and an embedded pi coding agent bridge. It is built with Electron 29, electron-vite, TypeScript strict mode, React 18, Zustand, xterm.js, ssh2, CodeMirror 6, and a prebuilt node-pty native module. The pi agent is loaded via the `@earendil-works/pi-coding-agent` npm package and runs as a real interactive CLI in a local node-pty.
+DevTerm is an Electron desktop terminal for local shells, SSH/SFTP sessions, terminal workspaces, file browsing and editing, an in-app browser, saved command snippets, and an embedded coding-agent bridge. It is built with Electron 29, electron-vite, TypeScript strict mode, React 18, Zustand, xterm.js, ssh2, CodeMirror 6, and a prebuilt node-pty native module. The agent bridge can host the `pi` CLI (`@earendil-works/pi-coding-agent`), the `claude` CLI (Anthropic Claude Code), or the `opencode` TUI (sst/opencode); all three run as real interactive CLIs in a local node-pty and reach the remote host only through DevTerm's in-process MCP bridge.
 
 ## Product Shape
 
@@ -139,14 +139,14 @@ Capture starts in the Terminals view through the group bar's Save group action. 
 
 Ad-hoc SSH sessions without a saved `connectionId` are skipped during capture because DevTerm cannot reconnect them later without credentials.
 
-### Agent Bridge (Pi)
+### Agent Bridge (Pi / Claude / OpenCode)
 
-The embedded agent is the real interactive `pi` CLI process (the `pi` coding agent from `@earendil-works/pi-coding-agent`) spawned in a local PTY. It is not the API or SDK. The launch flow is:
+The embedded agent is a real interactive CLI process spawned in a local PTY — not the API or SDK. The bridge is agent-agnostic (it speaks standard MCP streamable HTTP); the per-agent launch layer is the only thing that differs.
 
 - Renderer: `RemoteSessionView.tsx` opens `AgentPane.tsx` beside a remote terminal.
 - IPC: `src/main/ipc/agent.ts`.
-- Launch prep: `src/main/agent/launch.ts` (writes `AGENTS.md` + the per-session pi extension, picks the `pi` binary).
-- Agent instructions: `src/main/agent/context.ts` (host briefing, air-gapped rules, MCP tool map).
+- Launch prep: `src/main/agent/launch.ts` (pi), `src/main/agent/claude-launch.ts` (claude), `src/main/agent/opencode-launch.ts` (opencode). Each writes the briefing + a per-agent config to a temp dir and picks the agent's binary.
+- Agent instructions: `src/main/agent/context.ts` (host briefing, air-gapped rules, MCP tool map; one variant per agent because each agent's tool-prefix convention differs).
 - pi extension source: `src/main/agent/extension.ts` (a TypeScript string the launch step writes to disk and pi loads via `-e`).
 - MCP bridge: `src/main/mcp/server.ts` (transport-agnostic; could feed any MCP client).
 - Tools: `src/main/mcp/tools.ts`.
@@ -155,15 +155,13 @@ The embedded agent is the real interactive `pi` CLI process (the `pi` coding age
 For each agent session DevTerm:
 
 1. Starts an in-process MCP server on `127.0.0.1:<random-port>` gated by a random bearer token.
-2. Writes a per-session working directory containing `AGENTS.md` (the host briefing) and `devterm-mcp.mjs` (the pi extension source).
-3. Spawns `pi` in a node-pty with:
-   - `--no-session` (don't persist to `~/.pi/agent/sessions/`)
-   - `--no-builtin-tools` (scope the agent to MCP tools; no local fs/shell)
-   - `-e <abs-path>/devterm-mcp.mjs` (load our MCP bridge adapter)
-   - `--offline` (skip pi's startup network checks)
-4. The pi extension reads `DEVTERM_BRIDGE_URL` / `DEVTERM_BRIDGE_TOKEN` from the inherited env, performs the MCP `initialize` → `notifications/initialized` → `tools/list` handshake with `fetch` against the bridge, and re-registers each discovered tool with pi as `mcp__devterm__<name>`. Tool calls go back through the same bridge as streamable-HTTP POSTs.
+2. Writes a per-session working directory containing `AGENTS.md` / `CLAUDE.md` (the host briefing) and the per-agent bridge adapter (`devterm-mcp.mjs` for pi, `mcp-config.json` for claude, `opencode.json` for opencode).
+3. Spawns the agent in a node-pty with the binary + args its launch layer picked:
+   - **pi** (`@earendil-works/pi-coding-agent`): `--no-session` `--no-builtin-tools` `-e <abs-path>/devterm-mcp.mjs` `--offline`. Bridge URL/token travel through `DEVTERM_BRIDGE_URL` / `DEVTERM_BRIDGE_TOKEN` env vars. The extension does the MCP handshake and re-registers each tool as `mcp__devterm__<name>`.
+   - **claude** (Anthropic Claude Code): `--mcp-config <path>` `--strict-mcp-config` `--permission-mode bypassPermissions` `--dangerously-skip-permissions` `--allowedTools mcp__devterm__*,Read,Write,Edit`. The `--mcp-config` JSON wires the bridge as a remote HTTP server with the bearer token in a header. Claude keeps its local Read/Write/Edit enabled (scoped by `--allowedTools`) but the briefing steers all host work through the MCP tools.
+   - **opencode** (sst/opencode): `opencode <temp-dir>`, with `OPENCODE_CONFIG=<temp-dir>/opencode.json` in the env. The config has a `mcp.devterm` remote entry pointing at the bridge, every built-in tool disabled (so all host work must go through the `devterm_*` MCP tools), `autoupdate: false`, `share: 'disabled'`, and the bundled server pinned to `127.0.0.1`.
 
-Built-in pi tools are intentionally disabled so the agent cannot read/write the local machine; everything the model does goes through the MCP bridge, which runs on the shared `ssh2` client for the session. The agent's terminal output is raw and must not be parsed as state. Bridge state is reported by main over `agent:bridge-status:<sessionId>` based on actual MCP HTTP activity. The UI shows connecting, waiting, connected, disconnected, stopped, error, and exited states. Recoverable states show a Restart button that recreates the bridge and agent process. The bridge disables Node HTTP idle/request/socket timeouts and sends a standard MCP `notifications/message` heartbeat every 25 seconds while the agent's standalone SSE stream is connected, so a quiet agent session does not look stale to the client or OS.
+Built-in local fs/shell tools are intentionally disabled in every agent so the model cannot read or write the operator's machine; everything the model does goes through the MCP bridge, which runs on the shared `ssh2` client for the session. The agent's terminal output is raw and must not be parsed as state. Bridge state is reported by main over `agent:bridge-status:<sessionId>` based on actual MCP HTTP activity. The UI shows connecting, waiting, connected, disconnected, stopped, error, and exited states. Recoverable states show a Restart button that recreates the bridge and agent process. The bridge disables Node HTTP idle/request/socket timeouts and sends a standard MCP `notifications/message` heartbeat every 25 seconds while the agent's standalone SSE stream is connected, so a quiet agent session does not look stale to the client or OS.
 
 DevTerm policy modes:
 
@@ -224,7 +222,7 @@ All renderer-to-main capabilities must be represented in `src/shared/types.ts`, 
 | Remote shell/files/agent wrapper | `src/renderer/components/RemoteSessionView.tsx` |
 | Agent pane | `src/renderer/components/AgentPane.tsx` |
 | MCP bridge and tools | `src/main/mcp/server.ts`, `src/main/mcp/tools.ts`, `src/main/mcp/policy.ts` |
-| Agent launch/context | `src/main/agent/launch.ts`, `src/main/agent/context.ts`, `src/main/agent/extension.ts` |
+| Agent launch/context | `src/main/agent/launch.ts`, `src/main/agent/context.ts`, `src/main/agent/extension.ts`, `src/main/agent/claude-launch.ts`, `src/main/agent/opencode-launch.ts` |
 | Browser pane | `src/renderer/components/BrowserPane.tsx` |
 | File explorer/tree | `src/renderer/components/FileExplorer.tsx`, `FileTree.tsx` |
 | SFTP browser | `src/renderer/components/SftpBrowser.tsx`, `FilePane.tsx` |
@@ -246,7 +244,7 @@ All persistence is in Electron `userData`:
 - `snippets.json`: saved command snippets, no secrets.
 - `settings.json`: theme, terminal background, and terminal preferences, no secrets.
 
-Renderer sessions, layout state, open editors, transfer state, and agent (pi) processes are in-memory only.
+Renderer sessions, layout state, open editors, transfer state, and agent (pi/claude/opencode) processes are in-memory only.
 
 ## Commands
 

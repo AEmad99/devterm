@@ -51,9 +51,10 @@ export interface AppSettings {
   /** Whether the agent activity panel is collapsed by default (Cluster A). */
   agentActivityCollapsed: boolean
   /**
-   * Which coding agent (`claude` or `pi`) to launch in remote sessions. Mirrors
-   * the per-session agent picker; the picker writes the last-used choice here so
-   * it persists across launches and restarts. First-ever default is `claude`.
+   * Which coding agent (`claude`, `pi`, or `opencode`) to launch in remote
+   * sessions. Mirrors the per-session agent picker; the picker writes the
+   * last-used choice here so it persists across launches and restarts.
+   * First-ever default is `claude`.
    */
   agentKind: AgentKind
   /**
@@ -166,7 +167,9 @@ function load(): AppSettings {
           ? parsed.agentActivityCollapsed
           : DEFAULTS.agentActivityCollapsed,
       agentKind:
-        parsed?.agentKind === 'claude' || parsed?.agentKind === 'pi'
+        parsed?.agentKind === 'claude' ||
+        parsed?.agentKind === 'pi' ||
+        parsed?.agentKind === 'opencode'
           ? parsed.agentKind
           : DEFAULTS.agentKind,
       transfersPanelOpen:

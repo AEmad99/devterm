@@ -268,10 +268,12 @@ export type PolicyMode = 'read_only' | 'confirm' | 'full'
 /**
  * Which coding agent to spawn for a session. `claude` runs the Claude CLI
  * (Anthropic-only, native MCP via --mcp-config); `pi` runs the pi coding agent
- * (more models/subscriptions, MCP via a loaded extension). Both reach this host
+ * (more models/subscriptions, MCP via a loaded extension); `opencode` runs the
+ * OpenCode TUI (sst/opencode) wired to the bridge through a per-session
+ * `opencode.json` with a remote MCP server entry. All three reach this host
  * only through DevTerm's MCP bridge.
  */
-export type AgentKind = 'claude' | 'pi'
+export type AgentKind = 'claude' | 'pi' | 'opencode'
 
 export interface AgentOpenOpts {
   sessionId: string

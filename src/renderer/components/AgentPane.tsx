@@ -17,11 +17,12 @@ const MODE_LABEL: Record<PolicyMode, string> = {
 }
 
 /**
- * Runs a real interactive coding-agent CLI (`claude` or `pi`, per `kind`) in a
- * node-pty, wired to the in-process MCP bridge for this session — Claude via its
- * native `--mcp-config`, pi via a loaded extension. The pane is a plain
- * terminal; the status pill is driven by the bridge's actual HTTP/SSE
- * connection state.
+ * Runs a real interactive coding-agent CLI (`claude`, `pi`, or `opencode`,
+ * per `kind`) in a node-pty, wired to the in-process MCP bridge for this
+ * session — Claude via its native `--mcp-config`, pi via a loaded extension,
+ * OpenCode via a per-session `opencode.json` with a remote MCP entry. The
+ * pane is a plain terminal; the status pill is driven by the bridge's actual
+ * HTTP/SSE connection state.
  */
 export default function AgentPane({
   sessionId,
@@ -32,7 +33,7 @@ export default function AgentPane({
   kind: AgentKind
   mode: PolicyMode
 }) {
-  const label = kind === 'claude' ? 'Claude' : 'Pi'
+  const label = kind === 'claude' ? 'Claude' : kind === 'opencode' ? 'OpenCode' : 'Pi'
   const hostRef = useRef<HTMLDivElement>(null)
   const [bridge, setBridge] = useState<BridgeState>('connecting')
   const [bridgeMessage, setBridgeMessage] = useState<string | undefined>()
@@ -111,7 +112,12 @@ export default function AgentPane({
         if (disposed) return window.devterm.agent.close(sessionId)
         setMcpUrl(mcpUrl)
         setBridge((cur) => (cur === 'connecting' ? 'listening' : cur))
-        const toolNote = kind === 'claude' ? 'local file tools scratch-only' : 'built-in tools off'
+        const toolNote =
+          kind === 'claude'
+            ? 'local file tools scratch-only'
+            : kind === 'opencode'
+              ? 'built-in tools off, MCP devterm server'
+              : 'built-in tools off'
         term.write(
           `\x1b[90mMCP bridge: ${mcpUrl} | policy: ${mode} | agent: ${kind} (${toolNote})\x1b[0m\r\n`
         )
