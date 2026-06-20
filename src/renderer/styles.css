@@ -641,8 +641,48 @@ body,
 .terminal-host .xterm {
   height: 100%;
 }
+/* xterm's native scrollbar lives on `.xterm-viewport` (overflow-y: scroll).
+   The default WebKit overlay scrollbar is visually transparent and, in some
+   compositing-layer setups, the canvas behind it (pointer-events: auto) can
+   swallow the click before the browser routes it to the scrollbar thumb. We
+   give the track a solid surface and force the thumb to be on top of everything
+   else in the xterm so the user can always grab it. */
+.terminal-host .xterm-viewport {
+  background-color: var(--bg-term);
+}
 .terminal-host .xterm-viewport::-webkit-scrollbar {
   width: 10px;
+  background: var(--bg-term);
+}
+.terminal-host .xterm-viewport::-webkit-scrollbar-track {
+  background: var(--bg-term);
+  pointer-events: auto;
+}
+.terminal-host .xterm-viewport::-webkit-scrollbar-thumb {
+  background: #3a404b;
+  border-radius: 5px;
+  border: 2px solid var(--bg-term);
+  background-clip: padding-box;
+  pointer-events: auto;
+  min-height: 24px;
+}
+.terminal-host .xterm-viewport::-webkit-scrollbar-thumb:hover {
+  background: #4a515e;
+  background-clip: padding-box;
+}
+.terminal-host .xterm-viewport::-webkit-scrollbar-thumb:active {
+  background: #5a6270;
+  background-clip: padding-box;
+}
+.terminal-host .xterm-viewport::-webkit-scrollbar-corner {
+  background: var(--bg-term);
+}
+/* Pin the scrollbar gutter so the canvas never grows behind it. xterm measures
+   `clientWidth` (which excludes the scrollbar), so the canvas should already
+   stop before the thumb; this is a belt-and-braces guarantee for the Canvas
+   addon, which renders to a single absolutely-positioned <canvas>. */
+.terminal-host .xterm-viewport {
+  scrollbar-gutter: stable;
 }
 
 /* --- in-app browser pane (BrowserPane.tsx) --- */
@@ -980,8 +1020,16 @@ body,
 .term-slot {
   position: absolute;
   overflow: hidden;
-  /* Scope layout/paint to each pane so resizing one doesn't relayout the layer. */
-  contain: layout paint;
+  /* `contain: layout` (no `paint`) is intentional: `contain: paint` puts the
+     slot in its own compositing layer, and inside that layer Chrome can route
+     pointer events on the xterm-viewport's overlay scrollbar to the canvas
+     underneath (the canvas keeps `pointer-events: auto`), so the scrollbar
+     becomes ungrabbable. The focused slot already uses `contain: layout` for
+     the same reason (its own comment above). We still get the stacking context
+     + containing block from `contain: layout`, which is what keeps the slot
+     scoped. */
+  contain: layout;
+  isolation: isolate;
 }
 /* A terminal-hosting layer that is currently hidden (an inactive tab/group, the
    editor overlay, another top-level view, or the SFTP sub-view). We push it out

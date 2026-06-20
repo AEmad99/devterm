@@ -1,8 +1,9 @@
 // Attention signals — pull the operator back to a coding AGENT that finished
 // work or is waiting for input. Scoped to actual agents, never plain terminals:
 //   • the dedicated remote agent pane (AgentPane), and
-//   • an inline agent (`claude`/`pi`) run in a normal terminal — detected by its
-//     launch command, watched only while it runs (TerminalView).
+//   • an inline coding-agent CLI run in a normal terminal — detected by its
+//     launch command (`claude`, `codex`, `aider`, `pi`, …), watched only
+//     while it runs (TerminalView).
 // A plain shell, a quick command, or a long build never raises attention. (An
 // earlier version sniffed the raw stream for \x07, but a shell prompt emits BEL
 // as an OSC-string terminator — see the [char]7 in pty/manager.ts — so every
@@ -179,30 +180,91 @@ const MIN_BURST_MS = 1500
 // copy covers both.
 export const AGENT_ATTENTION_BODY = 'Agent finished or needs your input'
 
-/** Command names DevTerm treats as a coding agent when launched in a shell. */
-const AGENT_COMMAND_NAMES = new Set(['claude', 'pi'])
-/** Wrappers that run another command — `npx claude`, `bunx pi`, etc. */
-const RUNNER_NAMES = new Set(['npx', 'bunx', 'pnpx', 'pnpm', 'yarn', 'dlx', 'uvx', 'bun'])
+/**
+ * CLI coding-agent binaries DevTerm treats as "an agent" for inline detection.
+ * Listing a name here arms the idle chime in a plain terminal when the user
+ * launches that command (directly or via a runner like `npx`) — it does NOT
+ * add it to the dedicated agent pane, which is a separate concern (each pane
+ * agent needs its own MCP bridge + launch flow and is currently Claude/Pi only).
+ *
+ * The set covers the package's binary as published; runner detection below
+ * strips npm scopes (`@scope/pkg` → `pkg`) and common package suffixes
+ * (`-cli`, `-code`, `-agent`, `-coding`) so `npx @openai/codex`,
+ * `npx @google/gemini-cli`, and `npx @anthropic-ai/claude-code` all still
+ * match. Extend this set to watch more agents.
+ */
+const AGENT_COMMAND_NAMES = new Set([
+  'claude', // Anthropic Claude Code
+  'pi', // pi coding agent (@earendil-works/pi-coding-agent)
+  'codex', // OpenAI Codex CLI (@openai/codex)
+  'aider', // Aider (also `pipx run aider`)
+  'gemini', // Google Gemini CLI (@google/gemini-cli)
+  'opencode', // OpenCode (sst/opencode → opencode-ai)
+  'goose', // Block Goose (@block/goose)
+  'crush', // Charm Crush (@charmland/crush)
+  'kiro' // AWS Kiro CLI (rebranded from Amazon Q Developer)
+])
+/** Wrappers that run another command — `npx claude`, `bunx pi`, `pipx run aider`, etc. */
+const RUNNER_NAMES = new Set(['npx', 'bunx', 'pnpx', 'pnpm', 'yarn', 'dlx', 'uvx', 'bun', 'pipx'])
 
+// Subcommands of a package runner that aren't themselves an agent — e.g.
+// `pipx run aider` looks like three tokens; `run` is a runner verb, `aider` is
+// the package. Without this filter, `pipx run` would short-circuit and miss
+// the actual agent name.
+const RUNNER_SUBWORDS = new Set(['run', 'exec', 'dlx', 'x'])
+
+// Suffixes that npm/PyPI packages tack onto the binary name. Stripping them lets
+// a scoped package like `@google/gemini-cli` or `@anthropic-ai/claude-code` still
+// match the bare name (`gemini`, `claude`) in AGENT_COMMAND_NAMES. Conservative —
+// these are the four conventions actually used by the agents above; expand the
+// list if a new agent uses a different one.
+const AGENT_NAME_SUFFIXES = /[-_](cli|code|agent|coding)$/i
+
+// Strip a path/Windows-extension prefix AND an npm scope (`@scope/pkg` →
+// `pkg`). Result is the leaf binary name lowercased, ready to look up in the
+// agent or runner set. The scope strip keeps the runner check itself scope-safe
+// too, so a hypothetical `npx@latest`-style invocation would still resolve to
+// `npx`.
 const basename = (token: string): string =>
   token
     .replace(/^.*[\\/]/, '')
+    .replace(/^@[^/]+\//, '')
     .replace(/\.(exe|cmd|bat|ps1)$/i, '')
     .toLowerCase()
 
+// Match a token against AGENT_COMMAND_NAMES. Tries the raw basename first, then
+// the same name with a common package suffix (`-cli` / `-code` / `-agent` /
+// `-coding`) removed — that's how the agents above publish their npm package
+// names. Only strips when the suffix actually matches, so a bare agent name
+// (e.g. `claude-code` if it ever appears as a real binary) isn't rewritten.
+const isAgentToken = (token: string): boolean => {
+  const base = basename(token)
+  if (AGENT_COMMAND_NAMES.has(base)) return true
+  if (AGENT_NAME_SUFFIXES.test(base)) {
+    const stripped = base.replace(AGENT_NAME_SUFFIXES, '')
+    if (AGENT_COMMAND_NAMES.has(stripped)) return true
+  }
+  return false
+}
+
 /**
- * True when a shell command line launches a coding agent (`claude`, `pi`, or one
- * of those via a runner like `npx`). Used to arm idle detection for a normal
+ * True when a shell command line launches a coding agent — one of
+ * AGENT_COMMAND_NAMES, directly (`claude`, `npx codex`, `pipx run aider`,
+ * `aider`) or via a runner with a scoped package tail (`npx @openai/codex`,
+ * `bunx @google/gemini-cli`). Used to arm idle detection for a normal
  * terminal *only* while an inline agent is running — so plain shells, quick
  * commands, and long builds never raise an alert.
  */
 export function isAgentCommand(commandLine: string): boolean {
   const tokens = commandLine.trim().split(/\s+/).filter(Boolean)
   if (tokens.length === 0) return false
-  if (AGENT_COMMAND_NAMES.has(basename(tokens[0]))) return true
+  if (isAgentToken(tokens[0])) return true
   if (RUNNER_NAMES.has(basename(tokens[0]))) {
-    const sub = tokens.slice(1).find((t) => !t.startsWith('-'))
-    if (sub && AGENT_COMMAND_NAMES.has(basename(sub))) return true
+    // `npx -y @openai/codex`, `pipx run aider`, `pnpm dlx codex` — skip the
+    // runner's own subcommands (`run`, `dlx`, `exec`) so the next non-flag
+    // token is the actual package, not a runner verb.
+    const sub = tokens.slice(1).find((t) => !t.startsWith('-') && !RUNNER_SUBWORDS.has(basename(t)))
+    if (sub && isAgentToken(sub)) return true
   }
   return false
 }

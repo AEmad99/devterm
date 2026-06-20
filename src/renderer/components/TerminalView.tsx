@@ -143,10 +143,12 @@ function TerminalView({ session }: { session: Session }) {
       return id === null
     })
 
-    // Inline-agent attention: when an agent command (claude/pi) is launched in
-    // THIS shell, watch it for "finished / waiting" — its output going quiet for a
-    // beat after a real burst — until the shell prompt returns. A plain shell, a
-    // quick command, or a long build never arms this; only an actual agent does.
+    // Inline-agent attention: when an agent command (claude / codex / aider /
+    // pi / gemini / opencode / goose / crush / kiro, etc.) is launched in THIS
+    // shell, watch it for "finished / waiting" — its output going quiet for a
+    // beat after a real burst — until the shell prompt returns. A plain shell,
+    // a quick command, or a long build never arms this; only an actual agent
+    // does. The list of recognized agents lives in lib/attention.ts.
     const idleChime = createIdleChime({
       sessionId: session.id,
       makeNotice: () => ({ title: session.title, body: AGENT_ATTENTION_BODY })
