@@ -59,8 +59,8 @@ export function resolveOpencodeBin(): string {
  * the config disables every built-in tool so the only thing it can act on
  * the host with is the `devterm_*` MCP tools. The config also disables
  * autoupdate (the bridge is short-lived — an update prompt mid-session is
- * noise) and share/upload defaults, and pins the server port so the agent
- * can't claim another host's address book.
+ * noise) and share/upload defaults, and pins the bundled control server to
+ * localhost so it can't bind a routable address.
  */
 export function prepareOpencodeLaunch(hostContextMd: string, bridge: BridgeInfo): AgentLaunchSpec {
   const cwd = mkdtempSync(join(tmpdir(), 'devterm-opencode-'))
@@ -107,10 +107,14 @@ export function prepareOpencodeLaunch(hostContextMd: string, bridge: BridgeInfo)
     snapshot: false,
     server: {
       // Force the bundled HTTP server onto localhost so the TUI can't pick a
-      // routable address; port 0 = OS-assigned. The MCP bridge has its own
-      // localhost port — this is the opencode control server the TUI talks to.
-      hostname: '127.0.0.1',
-      port: 0
+      // routable address. Port is intentionally omitted: opencode's config
+      // schema rejects an explicit `port: 0` (exclusiveMinimum 0), yet its
+      // internal default already is 0 = OS-assigned an ephemeral port, which
+      // is exactly what we want. Writing `port: 0` here makes opencode reject
+      // the whole config and exit before the TUI starts. The MCP bridge has
+      // its own localhost port — this is the opencode control server the TUI
+      // talks to.
+      hostname: '127.0.0.1'
     }
   }
   writeFileSync(
