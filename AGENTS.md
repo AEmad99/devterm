@@ -261,7 +261,7 @@ Renderer sessions, layout state, open editors, transfer state, and agent (pi/cla
 
 ## Packaging And Release
 
-The application version is `package.json` `version`. Version `1.0.0` builds a Windows installer named `dist/DevTerm-1.0.0-setup.exe` plus `latest.yml` and a blockmap.
+The application version is `package.json` `version` (currently `1.0.1`). Each version builds a Windows installer named `dist/DevTerm-${version}-setup.exe` plus `latest.yml` and a blockmap.
 
 Windows packaging uses `electron-builder.yml`:
 
@@ -278,8 +278,8 @@ For release replacement, build locally first, then update the GitHub release/tag
 2. Build: `npm run build:win`.
 3. Commit to `main`.
 4. Push `main`.
-5. Move or recreate tag `v1.0.0` if the user explicitly wants to override the existing version.
-6. Upload `dist/DevTerm-1.0.0-setup.exe`, `.blockmap`, and `latest.yml` to release `v1.0.0` with clobber semantics.
+5. Move or recreate tag `v${version}` if the user explicitly wants to override the existing version.
+6. Upload `dist/DevTerm-${version}-setup.exe`, `.blockmap`, and `latest.yml` to release `v${version}` with clobber semantics.
 
 ## Critical Rules
 
