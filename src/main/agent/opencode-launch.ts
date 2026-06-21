@@ -1,5 +1,5 @@
 import { execSync } from 'child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { homedir, tmpdir } from 'os'
 import { join } from 'path'
 import type { BridgeInfo } from '../mcp/server'
@@ -47,45 +47,46 @@ export function resolveOpencodeBin(): string {
 }
 
 /**
- * Config keys lifted from the operator's real opencode config into the isolated
- * session config. We copy only what the bridged agent needs to *run* — the
- * provider definitions and model selection — plus harmless display prefs.
- * Everything else in the global config (most importantly `mcp` servers,
- * `plugin`s, and custom `agent`/`command` definitions) is deliberately left
- * behind: those can hand the agent host capabilities, and the whole point of
- * the bridge is that the agent only touches the host through `devterm_*`.
+ * Names of every MCP server the operator has configured globally, so the
+ * per-session config can switch each one off.
+ *
+ * opencode only ever *merges* config layers (a merge can't delete a key) and
+ * has no "ignore global config" switch, so without this the operator's
+ * `~/.config/opencode` mcp servers would be handed straight to the air-gapped
+ * agent — on the dev box this file was written against that was five
+ * `kubernetes-mcp-server` instances and an obsidian server, all `type: local`,
+ * i.e. they spawn processes on *this* machine, which would defeat the
+ * no-local-shell guarantee the bridge exists to enforce. Setting
+ * `{ enabled: false }` for each name in our higher-precedence config wins the
+ * merge conflict and stops opencode starting them.
+ *
+ * Best-effort: opencode resolves its global config from `$XDG_CONFIG_HOME/
+ * opencode` (falling back to `~/.config/opencode`) and accepts `opencode.json`
+ * or the legacy `config.json`. We read the raw file and return its `mcp` keys.
+ * A missing or unparseable (e.g. JSONC) file yields `[]`; `--pure` still strips
+ * the other capability vector — plugins — regardless of what we can read here.
+ *
+ * Note we deliberately do NOT relocate the config dir to isolate it: opencode
+ * bootstraps a multi-package plugin runtime into the config dir on startup, so
+ * pointing it at an empty per-session dir re-installs that runtime on every
+ * launch (seconds of latency, and a hard failure with no registry access).
+ * Keeping the real dir lets the operator's provider/model/auth and that runtime
+ * load natively; we subtract capabilities instead of rebuilding from nothing.
  */
-const INHERITED_CONFIG_KEYS = ['provider', 'model', 'small_model', 'username', 'theme'] as const
-
-/**
- * Best-effort read of the operator's global opencode config, returning only the
- * allowlisted keys (see {@link INHERITED_CONFIG_KEYS}). opencode resolves its
- * global config from `$XDG_CONFIG_HOME/opencode` (falling back to
- * `~/.config/opencode`) and accepts `opencode.json` or the legacy `config.json`.
- * We read the raw file — not opencode's *merged* resolution — so the operator's
- * mcp/plugin layers never tag along. Any failure (no file, or JSONC we can't
- * `JSON.parse`) degrades to `{}`: the agent then falls back to opencode's
- * built-in provider/model resolution, which still works for authed built-in
- * providers because auth lives in the data dir, which the session never moves.
- */
-function inheritGlobalConfig(): Record<string, unknown> {
+function operatorMcpServerNames(): string[] {
   const base = process.env.XDG_CONFIG_HOME || join(homedir(), '.config')
   const dir = join(base, 'opencode')
   for (const name of ['opencode.json', 'config.json']) {
     const file = join(dir, name)
     try {
       if (!existsSync(file)) continue
-      const parsed = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>
-      const picked: Record<string, unknown> = {}
-      for (const key of INHERITED_CONFIG_KEYS) {
-        if (parsed[key] !== undefined) picked[key] = parsed[key]
-      }
-      return picked
+      const parsed = JSON.parse(readFileSync(file, 'utf8')) as { mcp?: Record<string, unknown> }
+      return parsed.mcp ? Object.keys(parsed.mcp) : []
     } catch {
-      /* missing / unreadable / non-plain-JSON — try the next candidate */
+      /* unreadable / non-plain-JSON — try the next candidate */
     }
   }
-  return {}
+  return []
 }
 
 /**
@@ -104,34 +105,34 @@ function inheritGlobalConfig(): Record<string, unknown> {
  * noise) and share/upload defaults, and pins the bundled control server to
  * localhost so it can't bind a routable address.
  *
- * Isolation: opencode has no "ignore global config" switch and only ever
- * *merges* config layers (a merge can't delete a key), so an `mcp` server in
- * the operator's `~/.config/opencode` would otherwise be handed straight to the
- * bridged agent — including `type: local` servers that spawn processes on this
- * machine, which would defeat the air-gap. We sever the global layer by pointing
- * `XDG_CONFIG_HOME` at an empty per-session dir, then lift just the operator's
- * provider/model back across (see {@link inheritGlobalConfig}) so their selected
- * model still runs. Auth/credentials live in the data dir, which we never move,
- * so authed providers keep working.
+ * Isolation from the operator's own opencode setup: we keep opencode's real
+ * config dir (so their provider/model/auth and opencode's installed plugin
+ * runtime all load natively) and subtract the capability vectors instead —
+ * every operator MCP server is disabled by name (see
+ * {@link operatorMcpServerNames}) and `--pure` drops external plugins. Net
+ * effect: the agent inherits the operator's chosen model but none of their
+ * host-reaching mcp servers or plugins, and can still only touch the host
+ * through `devterm_*`.
  */
 export function prepareOpencodeLaunch(hostContextMd: string, bridge: BridgeInfo): AgentLaunchSpec {
   const cwd = mkdtempSync(join(tmpdir(), 'devterm-opencode-'))
   writeFileSync(join(cwd, 'AGENTS.md'), hostContextMd, { mode: 0o600 })
 
-  // Empty config home: opencode resolves its "global" config from
-  // `$XDG_CONFIG_HOME/opencode`, so pointing that env at a dir with no opencode
-  // config (below) severs the operator's real global config — mcp servers,
-  // plugins, agents — from this session. Must exist; opencode stats it at startup.
-  const configHome = join(cwd, 'config-home')
-  mkdirSync(configHome, { recursive: true })
+  // Disable every MCP server the operator configured globally. Deep-merge: our
+  // `enabled: false` wins the conflict on `mcp.<name>.enabled`, so opencode
+  // resolves them as disabled and never starts them — including `type: local`
+  // ones that would otherwise spawn processes on this machine.
+  const disabledMcp: Record<string, { enabled: boolean }> = {}
+  for (const name of operatorMcpServerNames()) {
+    if (name !== 'devterm') disabledMcp[name] = { enabled: false }
+  }
 
   const opencodeConfig = {
     $schema: 'https://opencode.ai/config.json',
-    // Lift the operator's provider/model (+ cosmetic prefs) across the isolation
-    // boundary so their chosen model still runs. Spread first so the explicit
-    // keys below always win on any conflict.
-    ...inheritGlobalConfig(),
     mcp: {
+      // Operator servers off (spread first); our bridge on (last, so a stray
+      // operator server literally named "devterm" can't shadow it).
+      ...disabledMcp,
       devterm: {
         type: 'remote',
         url: bridge.url,
@@ -190,20 +191,22 @@ export function prepareOpencodeLaunch(hostContextMd: string, bridge: BridgeInfo)
     bin: resolveOpencodeBin(),
     // `opencode [project]` is the default command — when no subcommand is
     // given, opencode starts the TUI against the project at `[project]` (or
-    // cwd). The TUI loads the bridge MCP server from `opencode.json` in cwd.
-    args: [cwd],
+    // cwd). `--pure` (a global flag) runs without external plugins, so the
+    // operator's configured plugins never load into the bridged session; the
+    // operator's mcp servers are handled by the disable list in the config.
+    args: ['--pure', cwd],
     cwd,
     env: {
       // OPENCODE_CONFIG points opencode at the per-session config file we just
       // wrote (rather than relying on project-file discovery, which walks up to
-      // the nearest git root and could pick up a real project config).
-      OPENCODE_CONFIG: join(cwd, 'opencode.json'),
-      // XDG_CONFIG_HOME relocates opencode's *global* config lookup to the empty
-      // per-session dir, so the operator's `~/.config/opencode` — crucially its
-      // mcp servers and plugins — is never merged into the bridged session. The
-      // data dir (auth) is governed by XDG_DATA_HOME, which we leave alone, so
-      // authed providers keep working.
-      XDG_CONFIG_HOME: configHome
+      // the nearest git root and could pick up a real project config). The
+      // operator's real config dir still loads and merges underneath — that's
+      // deliberate: it carries their provider/model/auth and opencode's
+      // already-installed plugin runtime, so the session starts instantly and
+      // works offline instead of re-installing packages on every launch. Our
+      // config above wins every conflict (adds the bridge, disables their mcp
+      // servers, scopes tools); `--pure` covers plugins.
+      OPENCODE_CONFIG: join(cwd, 'opencode.json')
     },
     cleanup: () => {
       try {
