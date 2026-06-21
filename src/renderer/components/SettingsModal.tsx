@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useState, type CSSProperties } from 'react'
 import { useSettings } from '../store/settings'
 import { THEMES, getTheme, applyTheme, type Theme } from '../lib/themes'
+import { chime } from '../lib/attention'
 import { IconClose } from './Icons'
 
 const FONT_PRESETS = [
@@ -33,8 +34,16 @@ function ThemeSwatch({
     >
       <span
         className="theme-swatch-preview"
-        style={{ background: t.background, borderColor: theme.chrome.border }}
+        style={
+          {
+            background: t.background,
+            borderColor: theme.chrome.border,
+            '--sw-accent': theme.chrome.accent,
+            '--sw-accent2': theme.chrome.accent2 ?? theme.chrome.accent
+          } as CSSProperties
+        }
       >
+        <span className="tsw-glow" aria-hidden="true" />
         <span className="tsw-line">
           <span style={{ color: t.green }}>~</span>
           <span style={{ color: t.blue }}>$</span>
@@ -74,6 +83,8 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
   const setPrefs = useSettings((s) => s.setPrefs)
   const autoReconnect = useSettings((s) => s.autoReconnect)
   const setAutoReconnect = useSettings((s) => s.setAutoReconnect)
+  const attention = useSettings((s) => s.attention)
+  const setAttention = useSettings((s) => s.setAttention)
   const reset = useSettings((s) => s.reset)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -268,6 +279,86 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                 <option value="none">None</option>
                 <option value="visual">Visual flash</option>
               </select>
+            </span>
+          </label>
+        </section>
+
+        <section className="settings-section">
+          <h3>Notifications</h3>
+          <div className="settings-sub-hint">
+            Get pulled back when a coding agent finishes or needs input — a chime, a
+            green tab dot, and (when DevTerm is in the background) an OS notification
+            with a taskbar flash. Only the agent pane is watched; normal terminals
+            never raise an alert.
+          </div>
+
+          <label className="settings-row">
+            <span className="settings-label">Attention alerts</span>
+            <span className="settings-control">
+              <input
+                type="checkbox"
+                checked={attention.enabled}
+                onChange={(e) => setAttention({ enabled: e.target.checked })}
+              />
+            </span>
+          </label>
+
+          <label className="settings-row">
+            <span className="settings-label">Play a chime</span>
+            <span className="settings-control">
+              <input
+                type="checkbox"
+                checked={attention.sound}
+                disabled={!attention.enabled}
+                onChange={(e) => setAttention({ sound: e.target.checked })}
+              />
+            </span>
+          </label>
+
+          <label className="settings-row">
+            <span className="settings-label">Chime volume ({Math.round(attention.volume * 100)}%)</span>
+            <span className="settings-control">
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.05}
+                value={attention.volume}
+                disabled={!attention.enabled || !attention.sound}
+                onChange={(e) => setAttention({ volume: Number(e.target.value) })}
+              />
+              <button
+                className="ghost small"
+                disabled={!attention.enabled || !attention.sound}
+                onClick={() => chime(attention.volume)}
+                title="Preview the chime"
+              >
+                Test
+              </button>
+            </span>
+          </label>
+
+          <label className="settings-row">
+            <span className="settings-label">System notification + taskbar flash</span>
+            <span className="settings-control">
+              <input
+                type="checkbox"
+                checked={attention.system}
+                disabled={!attention.enabled}
+                onChange={(e) => setAttention({ system: e.target.checked })}
+              />
+            </span>
+          </label>
+
+          <label className="settings-row">
+            <span className="settings-label">Treat an agent going quiet as &ldquo;finished&rdquo;</span>
+            <span className="settings-control">
+              <input
+                type="checkbox"
+                checked={attention.idle}
+                disabled={!attention.enabled}
+                onChange={(e) => setAttention({ idle: e.target.checked })}
+              />
             </span>
           </label>
         </section>

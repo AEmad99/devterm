@@ -13,6 +13,7 @@ import { Policy } from '../mcp/policy'
 import * as approvalRules from '../approval-rules'
 import { buildAgentsMd, prepareAgentLaunch } from '../agent/launch'
 import { buildClaudeMd, prepareClaudeLaunch } from '../agent/claude-launch'
+import { buildOpencodeMd, prepareOpencodeLaunch } from '../agent/opencode-launch'
 import type { SSHManager } from '../ssh/manager'
 import type { PtyManager } from '../pty/manager'
 
@@ -115,7 +116,12 @@ export function registerAgentIpc(
     const spec =
       opts.kind === 'claude'
         ? prepareClaudeLaunch(buildClaudeMd(context, airGapped, cwds.get(opts.sessionId)), info)
-        : prepareAgentLaunch(buildAgentsMd(context, airGapped, cwds.get(opts.sessionId)), info)
+        : opts.kind === 'opencode'
+          ? prepareOpencodeLaunch(
+              buildOpencodeMd(context, airGapped, cwds.get(opts.sessionId)),
+              info
+            )
+          : prepareAgentLaunch(buildAgentsMd(context, airGapped, cwds.get(opts.sessionId)), info)
     const { id: ptyId } = pty.create({
       shell: spec.bin,
       args: spec.args,

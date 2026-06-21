@@ -164,7 +164,9 @@ const api: DevTermApi = {
     onOpenTab: (cb) => subscribe<{ sourceId: number; url: string }>(IPC.browserOpenTab, cb)
   },
   window: {
-    setGlass: (enabled: boolean): Promise<void> => ipcRenderer.invoke(IPC.windowSetGlass, enabled)
+    setGlass: (enabled: boolean): Promise<void> => ipcRenderer.invoke(IPC.windowSetGlass, enabled),
+    flashAttention: (notice: { title: string; body?: string }) =>
+      ipcRenderer.send(IPC.windowFlashAttention, notice)
   },
   localContext: (): Promise<HostContext> => ipcRenderer.invoke(IPC.localContext),
   platform: process.platform,

@@ -8,6 +8,7 @@ import { useSessions, type Session } from '../store/sessions'
 import { useSettings, type TerminalBg } from '../store/settings'
 import { getTheme, xtermTheme, terminalHostColor, type Theme } from '../lib/themes'
 import { parseOsc7 } from '../lib/osc7'
+import { createIdleChime, isAgentCommand, AGENT_ATTENTION_BODY } from '../lib/attention'
 import { fitNow, fitSoon } from '../lib/fit'
 import { attachRenderer, attachClipboard } from '../lib/renderer'
 import { matchHotkey } from '../lib/hotkeys'
@@ -118,19 +119,19 @@ function TerminalView({ session }: { session: Session }) {
       if (suggest.handleKey(e)) return false
       if (e.ctrlKey && e.shiftKey && !e.altKey) {
         const k = e.key.toLowerCase()
-        // preventDefault is load-bearing: returning false only stops xterm's own
-        // handling, not the browser default. Chromium's default for Ctrl+Shift+V
-        // is "paste as plain text", which fires a second `paste` event into
-        // xterm's textarea — the clipboard text was pasted twice (or more with
-        // key auto-repeat, hence the e.repeat guard).
         if (k === 'c') {
+          // Copy the selection. preventDefault keeps the chord off the shell as a
+          // control byte; returning false stops xterm's own handling.
           e.preventDefault()
           if (term.hasSelection()) window.devterm.clipboard.writeText(term.getSelection())
           return false
         }
         if (k === 'v') {
-          e.preventDefault()
-          if (!e.repeat) void window.devterm.clipboard.readText().then((t) => t && term.paste(t))
+          // Don't paste here. Paste (Ctrl+V and Ctrl+Shift+V alike) is owned by
+          // the single capture-phase `paste` listener in attachClipboard, which
+          // fires once per native paste event. We only stop xterm from turning
+          // the chord into a control byte — crucially we do NOT preventDefault,
+          // so the native paste event still reaches that listener.
           return false
         }
       }
@@ -142,6 +143,48 @@ function TerminalView({ session }: { session: Session }) {
       return id === null
     })
 
+    // Inline-agent attention: when an agent command (claude / codex / aider /
+    // pi / gemini / opencode / goose / crush / kiro, etc.) is launched in THIS
+    // shell, watch it for "finished / waiting" — its output going quiet for a
+    // beat after a real burst — until the shell prompt returns. A plain shell,
+    // a quick command, or a long build never arms this; only an actual agent
+    // does. The list of recognized agents lives in lib/attention.ts.
+    const idleChime = createIdleChime({
+      sessionId: session.id,
+      makeNotice: () => ({ title: session.title, body: AGENT_ATTENTION_BODY })
+    })
+    // Reconstruct the command being submitted so we can spot an agent launch.
+    // Keystrokes are exact for a typed command; on Enter we also read the rendered
+    // prompt line, which catches a history-recalled or autosuggest-completed one.
+    let cmdBuf = ''
+    const readPromptLine = (): string => {
+      try {
+        const b = term.buffer.active
+        const text = b.getLine(b.baseY + b.cursorY)?.translateToString(true) ?? ''
+        const ps = text.match(/^PS .+?>\s(.*)$/) // PowerShell prompt injection
+        if (ps) return ps[1]
+        const generic = text.match(/^.*?[$#>]\s(.+)$/) // bash/zsh/other prompts
+        return generic ? generic[1] : ''
+      } catch {
+        return ''
+      }
+    }
+    const onUserInput = (d: string) => {
+      idleChime.onInput() // operator engaged — don't read prompt-composing as "finished"
+      if (d.charCodeAt(0) === 0x1b) {
+        cmdBuf = '' // an escape sequence (arrow/history) — stop tracking this line
+        return
+      }
+      for (const ch of d) {
+        if (ch === '\r' || ch === '\n') {
+          if (isAgentCommand(cmdBuf) || isAgentCommand(readPromptLine())) idleChime.setArmed(true)
+          cmdBuf = ''
+        } else if (ch === '\x7f' || ch === '\b') cmdBuf = cmdBuf.slice(0, -1)
+        else if (ch === '\x03' || ch === '\x15') cmdBuf = ''
+        else if (ch >= ' ') cmdBuf += ch
+      }
+    }
+
     // Visual bell: flash the pane when the shell emits BEL (\x07). xterm 5's
     // typings don't expose onBell, so we sniff the output stream instead.
     const flashBell = () => {
@@ -150,6 +193,7 @@ function TerminalView({ session }: { session: Session }) {
     }
     const writeData = (d: string) => {
       if (d.indexOf('\x07') !== -1 && useSettings.getState().prefs.bell === 'visual') flashBell()
+      idleChime.feed(d)
       term.write(d)
     }
 
@@ -162,8 +206,16 @@ function TerminalView({ session }: { session: Session }) {
       return true
     })
 
+    // OSC 133 ;A (a fresh shell prompt) means an inline agent has exited — stop
+    // watching this terminal. Registered after autosuggest's 133 handler and
+    // returns false so that one still runs (xterm calls them last-registered-first).
+    term.parser.registerOscHandler(133, (data) => {
+      if (data[0] === 'A') idleChime.setArmed(false)
+      return false
+    })
+
     let disposed = false
-    const cleanups: Array<() => void> = []
+    const cleanups: Array<() => void> = [idleChime.dispose]
 
     const wireResize = (resize: (cols: number, rows: number) => void) => {
       resizeRef.current = resize
@@ -229,7 +281,10 @@ function TerminalView({ session }: { session: Session }) {
           })
         )
         sendInput = (d) => window.devterm.pty.input(id, d)
-        term.onData((d) => window.devterm.pty.input(id, d))
+        term.onData((d) => {
+          onUserInput(d)
+          window.devterm.pty.input(id, d)
+        })
         wireResize((c, r) => window.devterm.pty.resize(id, c, r))
         cleanups.push(() => window.devterm.pty.kill(id))
       })()
@@ -256,7 +311,10 @@ function TerminalView({ session }: { session: Session }) {
           term.write(`\r\n\x1b[31m[failed to open shell: ${String(e)}]\x1b[0m\r\n`)
         })
       sendInput = (d) => window.devterm.ssh.input(sid, d)
-      term.onData((d) => window.devterm.ssh.input(sid, d))
+      term.onData((d) => {
+        onUserInput(d)
+        window.devterm.ssh.input(sid, d)
+      })
       wireResize((c, r) => window.devterm.ssh.resize(sid, c, r))
     }
 

@@ -34,11 +34,14 @@ export function attachRenderer(term: Terminal): () => void {
  * sandboxed — clipboard access goes through the `window.devterm.clipboard` bridge.
  *
  * - **Copy-on-select** (opt-in): mirror the selection to the clipboard as it's made.
+ * - **Paste**: a single capture-phase `paste` listener owns every keyboard/native
+ *   paste (Ctrl+V, Ctrl+Shift+V, middle-click) so it happens exactly once — see
+ *   the comment on the listener for why xterm's own handler double-fires.
  * - **Right-click**: pastes when "right-click paste" is on; otherwise the classic
  *   gesture — copy the selection if there is one, else paste.
  *
- * The Ctrl+Shift+C / Ctrl+Shift+V key bindings live in TerminalView's single
- * custom key handler (xterm only allows one). Returns a disposer.
+ * The Ctrl+Shift+C copy binding lives in TerminalView's single custom key handler
+ * (xterm only allows one); paste is owned here. Returns a disposer.
  */
 export function attachClipboard(term: Terminal, host: HTMLElement): () => void {
   const copySelection = () => {
@@ -49,6 +52,36 @@ export function attachClipboard(term: Terminal, host: HTMLElement): () => void {
   const selDisposable = term.onSelectionChange(() => {
     if (useSettings.getState().prefs.copyOnSelect) copySelection()
   })
+
+  // Single authoritative path for keyboard/native paste (Ctrl+V, Ctrl+Shift+V,
+  // middle-click). xterm binds its OWN `paste` handler to both its textarea and
+  // its root element, and that handler calls stopPropagation but NOT
+  // preventDefault — so after it reads the clipboard and emits the text, the
+  // browser STILL performs the default paste, inserting the same text into
+  // xterm's hidden helper textarea, which xterm's input handler can then re-emit.
+  // That race is the intermittent "pasted twice", and on a long line it reads as
+  // the command "streaming" in. We catch the paste in the CAPTURE phase (before
+  // xterm's listeners), stop it reaching them (stopImmediatePropagation) and stop
+  // the browser's default insert (preventDefault), then paste exactly once.
+  let lastPasteText = ''
+  let lastPasteAt = 0
+  const onPaste = (e: ClipboardEvent) => {
+    e.preventDefault()
+    e.stopImmediatePropagation()
+    const text = e.clipboardData?.getData('text/plain') ?? ''
+    if (!text) {
+      void paste() // no inline clipboard data — fall back to the bridge read
+      return
+    }
+    // Some platforms fire two paste events for one Ctrl+Shift+V ("paste & match
+    // style"); collapse an identical paste that lands within a couple of frames.
+    const now = Date.now()
+    if (text === lastPasteText && now - lastPasteAt < 80) return
+    lastPasteText = text
+    lastPasteAt = now
+    term.paste(text)
+  }
+  host.addEventListener('paste', onPaste, true) // capture: beat xterm's handlers
 
   const onContextMenu = (e: MouseEvent) => {
     e.preventDefault()
@@ -64,6 +97,7 @@ export function attachClipboard(term: Terminal, host: HTMLElement): () => void {
   host.addEventListener('contextmenu', onContextMenu)
   return () => {
     selDisposable.dispose()
+    host.removeEventListener('paste', onPaste, true)
     host.removeEventListener('contextmenu', onContextMenu)
   }
 }

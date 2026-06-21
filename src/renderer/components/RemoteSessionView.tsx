@@ -40,7 +40,7 @@ function RemoteSessionView({ session }: { session: Session }) {
   // so the choice is remembered next launch.
   const [agentKind, setAgentKind] = useState<AgentKind>(() => useSettings.getState().agentKind)
   const persistAgentKind = useSettings((s) => s.setAgentKind)
-  const agentLabel = agentKind === 'claude' ? 'Claude' : 'Pi'
+  const agentLabel = agentKind === 'claude' ? 'Claude' : agentKind === 'opencode' ? 'OpenCode' : 'Pi'
   const [agentWidth, setAgentWidth] = useState(480)
   const splitRef = useRef<HTMLDivElement>(null)
   const cancelSshReconnect = useSessions((s) => s.cancelSshReconnect)
@@ -112,7 +112,7 @@ function RemoteSessionView({ session }: { session: Session }) {
 
         <label
           className="policy-field"
-          title="Which coding agent to launch for this host. Claude is Anthropic-only; Pi reaches more models and subscriptions. Both act on this host only through DevTerm's MCP bridge."
+          title="Which coding agent to launch for this host. Claude is Anthropic-only; Pi reaches more models and subscriptions; OpenCode (sst/opencode) is the TUI agent with the broadest provider reach. All three act on this host only through DevTerm's MCP bridge."
         >
           <span className="policy-label">Agent</span>
           <select
@@ -127,6 +127,7 @@ function RemoteSessionView({ session }: { session: Session }) {
           >
             <option value="claude">Claude</option>
             <option value="pi">Pi</option>
+            <option value="opencode">OpenCode</option>
           </select>
         </label>
         <label
@@ -160,13 +161,12 @@ function RemoteSessionView({ session }: { session: Session }) {
       </div>
 
       <div className="view-body">
-        {/* Layers hide with `visibility` (not display:none) so the shell keeps
-            its real dimensions and stays fitted while the SFTP view is open —
-            a display-hidden terminal is 0×0 and garbles on reveal. */}
-        <div
-          className="view-layer"
-          style={{ visibility: view === 'terminal' ? undefined : 'hidden' }}
-        >
+        {/* The shell layer hides via `.term-hidden` (visibility:hidden + an
+            off-screen translate), never display:none: it keeps its real
+            dimensions so the shell stays fitted and doesn't garble on reveal,
+            and going off-screen makes xterm pause the shell + agent render loops
+            while the SFTP view is open. */}
+        <div className={`view-layer${view === 'terminal' ? '' : ' term-hidden'}`}>
           <div className="term-agent-column" ref={splitRef}>
             <div className="term-agent-split">
               <div className="tc-term">

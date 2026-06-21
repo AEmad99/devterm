@@ -1,5 +1,8 @@
 import { randomUUID } from 'crypto'
 import os from 'os'
+import { existsSync } from 'fs'
+import { dirname, join } from 'path'
+import { createRequire } from 'node:module'
 import * as pty from 'node-pty'
 import type { IPty, IWindowsPtyForkOptions } from 'node-pty'
 import type { PtyCreateOptions, PtyCreated } from '@shared/types'
@@ -30,8 +33,6 @@ export function shellArgs(shell: string): string[] {
   return []
 }
 
-import { existsSync } from 'fs'
-
 /**
  * Pick a sensible default interactive shell for the current platform.
  * On Windows we prefer PowerShell (pwsh 7 if installed, else Windows PowerShell)
@@ -46,6 +47,37 @@ export function defaultShell(): string {
     return process.env.COMSPEC || 'cmd.exe'
   }
   return process.env.SHELL || '/bin/bash'
+}
+
+/**
+ * Whether node-pty's bundled ConPTY dll is actually on disk. We prefer it (the
+ * Windows Terminal ConPTY) over the in-box conhost copy for its TUI repaint /
+ * teardown fixes, but the native conpty.node hard-throws "Cannot find
+ * conpty.dll" if `build/Release/conpty/conpty.dll` is missing (e.g. a prebuilt
+ * that didn't ship the folder, or a setup that didn't copy it). Resolve it via
+ * node-pty's own module location so this is correct in dev and the asarUnpacked
+ * packaged build alike, and degrade to the in-box ConPTY instead of crashing
+ * every local-terminal spawn. `npm run setup` lays the dll down; this is the
+ * runtime backstop.
+ */
+function bundledConptyAvailable(): boolean {
+  if (process.platform !== 'win32') return false
+  try {
+    const ptyMain = createRequire(__filename).resolve('node-pty')
+    return existsSync(join(dirname(ptyMain), '..', 'build', 'Release', 'conpty', 'conpty.dll'))
+  } catch {
+    return false
+  }
+}
+
+// Resolved once — the dll is present (or not) for the whole process lifetime,
+// and pty.create is hot.
+const USE_CONPTY_DLL = bundledConptyAvailable()
+if (process.platform === 'win32' && !USE_CONPTY_DLL) {
+  console.warn(
+    '[pty] bundled ConPTY dll not found (node-pty/build/Release/conpty/conpty.dll); ' +
+      'falling back to the in-box ConPTY. Run `npm run setup` to restore it.'
+  )
 }
 
 /**
@@ -72,8 +104,9 @@ export class PtyManager {
       // of the in-box conhost ConPTY: the OS copy has known TUI repaint
       // corruption and teardown bugs, and the bundled-dll path also skips the
       // console-list agent that crashes when the console is already gone.
-      // Ignored on non-Windows platforms.
-      useConptyDll: process.platform === 'win32'
+      // Falls back to the in-box ConPTY (USE_CONPTY_DLL=false) when the bundled
+      // dll isn't on disk, rather than throwing. Ignored on non-Windows.
+      useConptyDll: USE_CONPTY_DLL
     }
     const proc = pty.spawn(shell, args, ptyOpts)
 

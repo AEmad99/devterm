@@ -5,6 +5,7 @@ import type { AgentBridgeStatus, AgentKind, PolicyMode } from '@shared/types'
 import { useSessions } from '../store/sessions'
 import { fitNow, fitSoon } from '../lib/fit'
 import { attachRenderer, attachClipboard } from '../lib/renderer'
+import { createIdleChime, AGENT_ATTENTION_BODY } from '../lib/attention'
 
 /** Live state of the agent's link to this host (what the status pill reflects). */
 type BridgeState = AgentBridgeStatus['state'] | 'connecting' | 'exited'
@@ -16,11 +17,12 @@ const MODE_LABEL: Record<PolicyMode, string> = {
 }
 
 /**
- * Runs a real interactive coding-agent CLI (`claude` or `pi`, per `kind`) in a
- * node-pty, wired to the in-process MCP bridge for this session — Claude via its
- * native `--mcp-config`, pi via a loaded extension. The pane is a plain
- * terminal; the status pill is driven by the bridge's actual HTTP/SSE
- * connection state.
+ * Runs a real interactive coding-agent CLI (`claude`, `pi`, or `opencode`,
+ * per `kind`) in a node-pty, wired to the in-process MCP bridge for this
+ * session — Claude via its native `--mcp-config`, pi via a loaded extension,
+ * OpenCode via a per-session `opencode.json` with a remote MCP entry. The
+ * pane is a plain terminal; the status pill is driven by the bridge's actual
+ * HTTP/SSE connection state.
  */
 export default function AgentPane({
   sessionId,
@@ -31,7 +33,7 @@ export default function AgentPane({
   kind: AgentKind
   mode: PolicyMode
 }) {
-  const label = kind === 'claude' ? 'Claude' : 'Pi'
+  const label = kind === 'claude' ? 'Claude' : kind === 'opencode' ? 'OpenCode' : 'Pi'
   const hostRef = useRef<HTMLDivElement>(null)
   const [bridge, setBridge] = useState<BridgeState>('connecting')
   const [bridgeMessage, setBridgeMessage] = useState<string | undefined>()
@@ -110,11 +112,34 @@ export default function AgentPane({
         if (disposed) return window.devterm.agent.close(sessionId)
         setMcpUrl(mcpUrl)
         setBridge((cur) => (cur === 'connecting' ? 'listening' : cur))
-        const toolNote = kind === 'claude' ? 'local file tools scratch-only' : 'built-in tools off'
+        const toolNote =
+          kind === 'claude'
+            ? 'local file tools scratch-only'
+            : kind === 'opencode'
+              ? 'built-in tools off, MCP devterm server'
+              : 'built-in tools off'
         term.write(
           `\x1b[90mMCP bridge: ${mcpUrl} | policy: ${mode} | agent: ${kind} (${toolNote})\x1b[0m\r\n`
         )
-        cleanups.push(window.devterm.pty.onData(ptyId, (d) => term.write(d)))
+        // Raise an attention signal when this agent finishes or waits for input:
+        // its output goes quiet for a beat after a real burst of work. setArmed
+        // on the operator's first keystroke arms the idle path (so the startup
+        // banner never chimes) and it stays armed for the session.
+        const attention = createIdleChime({
+          sessionId,
+          makeNotice: () => {
+            const s = useSessions.getState().sessions.find((x) => x.id === sessionId)
+            const host = s?.context?.hostname || s?.title || 'host'
+            return { title: `${label} · ${host}`, body: AGENT_ATTENTION_BODY }
+          }
+        })
+        cleanups.push(attention.dispose)
+        cleanups.push(
+          window.devterm.pty.onData(ptyId, (d) => {
+            attention.feed(d)
+            term.write(d)
+          })
+        )
         cleanups.push(
           window.devterm.pty.onExit(ptyId, ({ exitCode }) => {
             setBridge('exited')
@@ -122,7 +147,11 @@ export default function AgentPane({
             term.write(`\r\n\x1b[90m[${kind} exited with code ${exitCode}]\x1b[0m\r\n`)
           })
         )
-        term.onData((d) => window.devterm.pty.input(ptyId, d))
+        term.onData((d) => {
+          attention.setArmed(true)
+          attention.onInput()
+          window.devterm.pty.input(ptyId, d)
+        })
         const push = () => {
           if (fitNow(fit, host)) window.devterm.pty.resize(ptyId, term.cols, term.rows)
         }

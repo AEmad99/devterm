@@ -268,10 +268,12 @@ export type PolicyMode = 'read_only' | 'confirm' | 'full'
 /**
  * Which coding agent to spawn for a session. `claude` runs the Claude CLI
  * (Anthropic-only, native MCP via --mcp-config); `pi` runs the pi coding agent
- * (more models/subscriptions, MCP via a loaded extension). Both reach this host
+ * (more models/subscriptions, MCP via a loaded extension); `opencode` runs the
+ * OpenCode TUI (sst/opencode) wired to the bridge through a per-session
+ * `opencode.json` with a remote MCP server entry. All three reach this host
  * only through DevTerm's MCP bridge.
  */
-export type AgentKind = 'claude' | 'pi'
+export type AgentKind = 'claude' | 'pi' | 'opencode'
 
 export interface AgentOpenOpts {
   sessionId: string
@@ -443,6 +445,9 @@ export const IPC = {
 
   // window appearance (glass/translucent material)
   windowSetGlass: 'window:set-glass',
+  // attention: OS notification + taskbar flash when an agent/terminal wants the
+  // operator and the window is in the background
+  windowFlashAttention: 'window:flash-attention',
 
   // foundation cluster: bridge activity log
   bridgeActivityList: 'bridge-activity:list',
@@ -633,6 +638,13 @@ export interface DevTermApi {
      * (Electron ≥30); a no-op otherwise, where the CSS glass layer still applies.
      */
     setGlass(enabled: boolean): Promise<void>
+    /**
+     * Pull the operator back to a backgrounded window: flash the taskbar button
+     * and post an OS notification (clicking it focuses the window). A no-op when
+     * the window is already focused. Used by the agent/terminal attention signal
+     * so a finished or input-waiting agent surfaces even when DevTerm is hidden.
+     */
+    flashAttention(notice: { title: string; body?: string }): void
   }
   /** Context of the local workstation. */
   localContext(): Promise<HostContext>
