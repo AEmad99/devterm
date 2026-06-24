@@ -81,6 +81,52 @@ if (process.platform === 'win32' && !USE_CONPTY_DLL) {
 }
 
 /**
+ * Env vars forwarded from the parent process to every spawned child. KEEP
+ * THIS LIST NARROW. node-pty previously forwarded the full `process.env` to
+ * every local PTY (the agent's interactive CLI included), which silently
+ * leaked the operator's `OPENAI_API_KEY`, `AWS_*`, `GITHUB_TOKEN`, etc. into
+ * the embedded agent. The list below is the minimum the agent + a normal
+ * interactive shell needs to find tools, locales, and a temp dir; provider
+ * API keys are injected explicitly via `spec.env` in the launch layer.
+ *
+ * TERM / COLORTERM are forwarded because xterm.js sets them in the parent
+ * and the child shell needs to see the same terminal type for things like
+ * colored output and OSC 7 acceptance.
+ */
+const FORWARDED_ENV_KEYS = [
+  'PATH',
+  'Path', // Windows is case-insensitive but the env-block is uppercase
+  'HOME',
+  'USERPROFILE',
+  'HOMEDRIVE',
+  'HOMEPATH',
+  'LANG',
+  'LC_ALL',
+  'LC_CTYPE',
+  'LC_MESSAGES',
+  'LANGUAGE',
+  'TERM',
+  'COLORTERM',
+  'SHELL',
+  'TMPDIR',
+  'TMP',
+  'TEMP',
+  'XDG_CONFIG_HOME',
+  'XDG_CACHE_HOME',
+  'XDG_DATA_HOME',
+  'SSH_AUTH_SOCK'
+] as const
+
+function baseEnv(): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const k of FORWARDED_ENV_KEYS) {
+    const v = process.env[k]
+    if (typeof v === 'string' && v.length > 0) out[k] = v
+  }
+  return out
+}
+
+/**
  * Owns local node-pty processes. Phase 1 spawns the local shell; later phases
  * (agent pane) spawn the interactive `pi` CLI through this same manager.
  */
@@ -93,13 +139,52 @@ export class PtyManager {
     const shell = opts.shell || defaultShell()
     const id = randomUUID()
     // Explicit args (e.g. launching `pi`) bypass the default prompt-injection.
-    const args = opts.args ?? shellArgs(shell)
+    const shellOnlyArgs = opts.args ?? shellArgs(shell)
+
+    // Phase 2: when the renderer asked for a tmux session, wrap the user's
+    // shell in `tmux -L devterm new-session -A -s <name> -x <cols> -y <rows>`.
+    // `-A` attaches to the existing session (resume after app restart) or
+    // creates a new one (first open). The inner shell is invoked exactly as
+    // before so PowerShell still gets its OSC 7 prompt injection.
+    //
+    // We still spawn `tmux` through node-pty: node-pty owns the PTY master
+    // (the size-handshake, the renderer-side data stream, the resize events),
+    // and tmux owns the inner PTY to the user's shell. They cooperate cleanly.
+    const tmuxSession = opts.tmuxSession
+    let spawnShell: string
+    let spawnArgs: string[]
+    if (tmuxSession) {
+      spawnShell = 'tmux'
+      spawnArgs = [
+        '-L',
+        'devterm',
+        'new-session',
+        '-A',
+        '-s',
+        tmuxSession,
+        '-x',
+        String(opts.cols || 80),
+        '-y',
+        String(opts.rows || 24),
+        shell,
+        ...shellOnlyArgs
+      ]
+    } else {
+      spawnShell = shell
+      spawnArgs = shellOnlyArgs
+    }
+
     const ptyOpts: IWindowsPtyForkOptions = {
       name: 'xterm-256color',
       cols: opts.cols || 80,
       rows: opts.rows || 24,
       cwd: opts.cwd || os.homedir(),
-      env: { ...(process.env as Record<string, string>), ...(opts.env ?? {}) },
+      // Curated env (see baseEnv) + per-spec overrides. Previously this was
+      // `{ ...process.env, ...opts.env }`, which leaked the operator's
+      // OPENAI_API_KEY / AWS_* / GITHUB_TOKEN etc. into every spawned
+      // child — including the embedded agent CLI. Provider keys now come in
+      // through `opts.env` (from the launch layer in src/main/agent/*).
+      env: { ...baseEnv(), ...(opts.env ?? {}) },
       // Use the ConPTY bundled with node-pty (the Windows Terminal one) instead
       // of the in-box conhost ConPTY: the OS copy has known TUI repaint
       // corruption and teardown bugs, and the bundled-dll path also skips the
@@ -108,7 +193,7 @@ export class PtyManager {
       // dll isn't on disk, rather than throwing. Ignored on non-Windows.
       useConptyDll: USE_CONPTY_DLL
     }
-    const proc = pty.spawn(shell, args, ptyOpts)
+    const proc = pty.spawn(spawnShell, spawnArgs, ptyOpts)
 
     proc.onData((data) => this.handlers.onData(id, data))
     proc.onExit(({ exitCode, signal }) => {
@@ -117,7 +202,7 @@ export class PtyManager {
     })
 
     this.ptys.set(id, proc)
-    return { id, shell }
+    return { id, shell: spawnShell, inTmux: !!tmuxSession }
   }
 
   // write/resize can throw (EPIPE et al.) when the process died but onExit

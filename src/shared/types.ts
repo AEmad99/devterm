@@ -7,18 +7,41 @@ export interface PtyCreateOptions {
   cwd?: string
   cols: number
   rows: number
+  /**
+   * Phase 2: when set, the PTY is spawned as a tmux session with this name
+   * (`tmux -L devterm new-session -A -s <tmuxSession> ...`). `-A` attaches if
+   * the session already exists (resume across app restart) or creates a new
+   * one (first open). Omit to run the bare shell — the previous Phase 1
+   * behavior, where the PTY process dies on app quit.
+   */
+  tmuxSession?: string
+}
+
+/**
+ * Phase 2: local tmux detection result. `available: false` means tmux is not
+ * on PATH (or `tmux -V` failed); the renderer falls back to Phase 1 behavior
+ * (fresh PTY + scrollback replay) and shows the install hint.
+ */
+export interface TmuxStatus {
+  available: boolean
+  /** Parsed major.minor version (e.g. "3.4") when available. */
+  version?: string
+  /** Resolved absolute path to the tmux binary when available. */
+  path?: string
 }
 
 export interface PtyCreated {
   id: string
   shell: string
+  /** Phase 2: `true` when the PTY was spawned inside a tmux session. */
+  inTmux?: boolean
 }
 
 // ---------------------------------------------------------------------------
 // Host context (local vs remote, and which OS)
 // ---------------------------------------------------------------------------
 
-export type HostOS = 'windows' | 'linux' | 'mac' | 'unknown'
+export type HostOS = 'windows' | 'linux' | 'mac' | 'posix' | 'unknown'
 
 export interface HostContext {
   /** Where this session runs. */
@@ -73,6 +96,26 @@ export interface ReconnectPolicy {
 export interface SSHConnectResult {
   sessionId: string
   context: HostContext
+  /**
+   * Phase 2: true when `command -v tmux` resolved on the host during the
+   * connection handshake. The renderer uses this to decide whether to wrap
+   * the remote shell in `tmux new-session -A -s <persistentId>` on
+   * `openShell`. Cached per-session on the main side; an SSH reconnect
+   * re-probes (a host may have tmux installed between sessions).
+   */
+  hasTmux?: boolean
+}
+
+/** Optional args to `ssh.openShell`. Phase 2 tmux wrapping. */
+export interface OpenShellOpts {
+  /**
+   * When set (and the session's host has tmux — see `SSHConnectResult.hasTmux`),
+   * the open shell is actually `tmux -L devterm new-session -A -s <name>`. On
+   * relaunch the same `name` reattaches to the surviving tmux session so the
+   * host-side process tree is preserved. Phase 2 wires this; Phase 1 omits it
+   * and falls back to a plain shell + `cd <startCwd>`.
+   */
+  tmuxSession?: string
 }
 
 /**
@@ -94,6 +137,27 @@ export type WorkspaceLayoutNode =
   | { type: 'split'; dir: 'row' | 'col'; sizes: number[]; children: WorkspaceLayoutNode[] }
 
 /**
+ * Per-pane UI state that survives a workspace capture/launch. Captured from
+ * `RemoteSessionView`'s local React state so a "Save as workspace" → "Launch"
+ * round-trip puts the pane back exactly as the user left it: same view toggle
+ * (Terminal vs SFTP), same agent pane (open/closed + kind + policy mode + width).
+ */
+export interface SessionPaneState {
+  /** Which subview is active in the pane. `files` only meaningful for remotes. */
+  view?: 'terminal' | 'files'
+  /** Once true, the SFTP layer is mounted (kept across view toggles). */
+  filesOpened?: boolean
+  /** Whether the coding-agent pane is open alongside the shell. */
+  agentOpen?: boolean
+  /** Which agent CLI to spawn when re-opening this pane. */
+  agentKind?: AgentKind
+  /** Policy mode the agent starts in (read-only / confirm / bypass). */
+  mode?: PolicyMode
+  /** Width of the agent pane in CSS pixels (clamped to the splitter's range). */
+  agentWidth?: number
+}
+
+/**
  * One terminal captured in a workspace. Local items reopen a local shell; remote
  * items reconnect a saved SSH connection. `id` is stable within the workspace and
  * is what the saved `layout` leaves reference (so the same item can be placed in
@@ -103,13 +167,125 @@ export type WorkspaceLayoutNode =
 export interface WorkspaceItem {
   /** Stable id within the workspace; referenced by layout leaf `tabs`. */
   id: string
-  kind: 'local' | 'remote'
+  kind: 'local' | 'remote' | 'browser'
   /** Remote items: the saved-connection id to reconnect. */
   connectionId?: string
   /** Best-effort working directory to restore (from OSC 7 tracking at capture). */
   cwd?: string
   /** Display label at capture time (for the workspace list). */
   title?: string
+  /**
+   * Renderer-side persistent id for this terminal. When set on capture, the
+   * renderer re-binds the launched session's tabs to the same persistentId on
+   * the next launch, so the workspace's `last-session.json` mirror (and any
+   * scrollback file keyed by persistentId) line up cleanly. Optional so the
+   * field can be omitted for items that predate the persistence layer.
+   */
+  persistentId?: string
+  /**
+   * Remote only: name of the tmux session the host shell is attached to (when
+   * Phase 2 lands and DevTerm wraps remote shells in tmux). Phase 1 leaves this
+   * undefined and the restore path reconnects with a plain shell + `cd`.
+   */
+  tmuxSessionName?: string
+  /** Per-pane UI state (view toggle, agent pane, etc.) — see SessionPaneState. */
+  pane?: SessionPaneState
+  /** Browser panes: the URL to load on launch. */
+  url?: string
+  /**
+   * Local only: a hint that the workspace item was captured from a session that
+   * had scrollback saved to `userData/scrollback/<persistentId>.log`. The
+   * restore path uses this to decide whether to replay bytes into xterm before
+   * the user gets the prompt back.
+   */
+  scrollbackCaptured?: boolean
+}
+
+/**
+ * One entry in `userData/sessions.json` — the per-session persistent record.
+ * Created when the renderer first sees a session, updated on cwd / scrollback
+ * events, removed on explicit forget. Survives app quit.
+ *
+ * Note: this is NOT the same as the renderer-side `Session` interface in
+ * `renderer/store/sessions.ts`. The renderer record is in-memory and ephemeral;
+ * this one is the durable shadow used to rebuild a session on the next launch.
+ */
+export interface PersistentSession {
+  /** UUID minted once by the renderer and reused across restarts. */
+  persistentId: string
+  /** What kind of session this is. */
+  kind: 'local' | 'remote' | 'browser'
+  /** Display label captured at session creation (best-effort, may be updated). */
+  title: string
+  /** Last known cwd from OSC 7. Empty until the shell reports one. */
+  cwd?: string
+  /** Remote: saved-connection id used to reconnect. */
+  connectionId?: string
+  /** Remote: a tmux session name to attach to (Phase 2). */
+  tmuxSessionName?: string
+  /** Browser: initial URL. */
+  url?: string
+  /** Local: explicit shell override; absent = platform default. */
+  shell?: string
+  /** Local: explicit launch args (e.g. an interactive `pi` command). */
+  args?: string[]
+  /** Wall-clock ms when this entry was first created. */
+  createdAt: number
+  /** Wall-clock ms when this entry was last touched (cwd change, etc.). */
+  lastSeenAt: number
+}
+
+/**
+ * The contents of `userData/sessions.json` — atomic write, same shape as
+ * `connections.json` / `workspaces.json`. Empty when the user has never had a
+ * persistent session.
+ */
+export interface SessionRegistry {
+  version: 1
+  entries: PersistentSession[]
+}
+
+/**
+ * The contents of `userData/last-session.json` — auto-snapshotted by the
+ * renderer on a debounce so the previous open arrangement restores on the next
+ * launch. Lives independently of saved workspaces; the user doesn't have to
+ * "Save as workspace" to get restoration.
+ */
+export interface LastSession {
+  version: 1
+  /** Wall-clock ms when this snapshot was written. */
+  savedAt: number
+  /** Renderer group tabs in display order. The DEFAULT_GROUP id stays 'default'. */
+  groups: LastSessionGroup[]
+  /** Which group was active when the snapshot was taken. */
+  activeGroupId: string
+  /** Sessions in the renderer sense — needed to recreate tabs + per-pane state. */
+  sessions: LastSessionSession[]
+  /** Which session was active. */
+  activeSessionId: string | null
+}
+
+export interface LastSessionGroup {
+  id: string
+  name: string
+  /** Persisted split tree (no node ids; layout.restoreGroup regenerates them). */
+  layout: WorkspaceLayoutNode | null
+}
+
+export interface LastSessionSession {
+  /** Renderer session id used to stitch back to the live tabs after restore. */
+  id: string
+  persistentId: string
+  kind: 'local' | 'remote' | 'browser'
+  title: string
+  /** Last known cwd (from OSC 7) at snapshot time. */
+  cwd?: string
+  connectionId?: string
+  url?: string
+  /** The group this session belongs to at snapshot time. */
+  groupId: string
+  /** Per-pane UI state to rehydrate RemoteSessionView / BrowserPane with. */
+  pane?: SessionPaneState
 }
 
 /**
@@ -323,6 +499,18 @@ export interface ConfirmRequest {
   detail: string
 }
 
+/**
+ * Renderer-safe summary of a provider API key entry. `isSet` tells the UI
+ * whether a plaintext is stored in main; the plaintext itself never crosses
+ * the IPC boundary.
+ */
+export interface ProviderKeyInfo {
+  id: 'openai' | 'anthropic' | 'openrouter' | 'gemini' | 'azure'
+  label: string
+  hint: string
+  isSet: boolean
+}
+
 export interface TransferStartOpts {
   direction: TransferDirection
   sessionId: string
@@ -408,6 +596,11 @@ export const IPC = {
   agentStatus: 'agent:status',
   agentSetCwd: 'agent:set-cwd', // renderer -> main: live working-directory updates
 
+  // provider API keys (encrypted at rest; only `list` is renderer-visible)
+  providerKeysList: 'provider-keys:list',
+  providerKeysSet: 'provider-keys:set',
+  providerKeysClear: 'provider-keys:clear',
+
   // saved connections (persisted in userData)
   connectionsList: 'connections:list',
   connectionsSave: 'connections:save',
@@ -461,6 +654,24 @@ export const IPC = {
   // foundation cluster: approval rules (action-style single channel)
   approvalRules: 'approval-rules',
 
+  // persistence layer: per-session registry + scrollback + last-session snapshot
+  sessionsOpen: 'sessions:open',
+  sessionsTouch: 'sessions:touch',
+  sessionsForget: 'sessions:forget',
+  sessionsList: 'sessions:list',
+  sessionsBindPty: 'sessions:bind-pty',
+  sessionsUnbindPty: 'sessions:unbind-pty',
+  sessionsScrollbackRead: 'sessions:scrollback:read',
+  sessionsScrollbackClear: 'sessions:scrollback:clear',
+  sessionsLastSessionRead: 'sessions:last-session:read',
+  sessionsLastSessionWrite: 'sessions:last-session:write',
+  sessionsLastSessionClear: 'sessions:last-session:clear',
+
+  // Phase 2: local tmux detection (status + change event + explicit refresh)
+  tmuxGetStatus: 'tmux:status',
+  tmuxOnStatusChanged: 'tmux:status:changed',
+  tmuxRefresh: 'tmux:refresh',
+
   // foundation cluster: port forwards (stubs; Cluster B will implement)
   portForwardList: 'port-forward:list',
   portForwardAdd: 'port-forward:add',
@@ -508,7 +719,7 @@ export interface DevTermApi {
   }
   ssh: {
     connect(profile: SSHProfile): Promise<SSHConnectResult>
-    openShell(sessionId: string, cols: number, rows: number): Promise<void>
+    openShell(sessionId: string, cols: number, rows: number, opts?: OpenShellOpts): Promise<void>
     input(sessionId: string, data: string): void
     resize(sessionId: string, cols: number, rows: number): void
     disconnect(sessionId: string): void
@@ -576,6 +787,18 @@ export interface DevTermApi {
     onConfirm(cb: (req: ConfirmRequest) => void): () => void
     replyConfirm(reqId: string, approved: boolean): void
   }
+  /**
+   * Provider API key store (encrypted at rest via Electron safeStorage).
+   * `list` returns id + isSet only — the plaintext NEVER crosses the IPC
+   * boundary into the renderer. `set`/`clear` write through to disk.
+   * The main process reads the plaintext back out only at agent launch time
+   * and folds it into the agent PTY's env.
+   */
+  providerKeys: {
+    list(): Promise<ProviderKeyInfo[]>
+    set(id: string, key: string): Promise<void>
+    clear(id: string): Promise<void>
+  }
   /** Persisted SSH connections (CRUD); each call returns the full updated list. */
   connections: {
     list(): Promise<SavedConnection[]>
@@ -599,6 +822,47 @@ export interface DevTermApi {
     list(): Promise<Snippet[]>
     save(s: Snippet): Promise<Snippet[]>
     delete(id: string): Promise<Snippet[]>
+  }
+  /**
+   * Persistence layer: per-session registry (sessions.json), scrollback log files
+   * (userData/scrollback/<persistentId>.log), and the auto-snapshotted
+   * last-session.json. Wires the renderer to the durable shadow of in-memory
+   * session state so terminals can be restored across app restarts.
+   */
+  sessions: {
+    /**
+     * Register a new persistent session (or update an existing one). Mints no
+     * id — the renderer supplies the persistentId (a UUID generated on first
+     * session create and reused across restarts).
+     */
+    open(entry: PersistentSession): Promise<void>
+    /** Update fields on an existing entry (e.g. cwd, title). */
+    touch(patch: Partial<PersistentSession> & { persistentId: string }): Promise<void>
+    /** Forget a session: removes the registry entry and any scrollback file. */
+    forget(persistentId: string): Promise<void>
+    /** List every entry currently in sessions.json. */
+    list(): Promise<PersistentSession[]>
+    /**
+     * Bind a PTY (by its main-side id) to a persistentId so the PTY's output
+     * is appended to `userData/scrollback/<persistentId>.log`. Called by the
+     * renderer right after `pty.create` returns.
+     */
+    bindPty(opts: { persistentId: string; ptyId: string }): Promise<void>
+    /** Drop the binding (e.g. on tab close) so scrollback stops streaming. */
+    unbindPty(ptyId: string): Promise<void>
+    /**
+     * Read the tail of a session's scrollback log, capped to `maxBytes`
+     * (default 1 MB). Returns UTF-8 text suitable for replay into xterm.
+     */
+    scrollbackRead(persistentId: string, maxBytes?: number): Promise<string>
+    /** Delete a session's scrollback log (used after restore-once). */
+    scrollbackClear(persistentId: string): Promise<void>
+    /** Read the auto-snapshotted last-session.json, or null if unset. */
+    lastSessionRead(): Promise<LastSession | null>
+    /** Write/replace the auto-snapshotted last-session.json (atomic). */
+    lastSessionWrite(snap: LastSession): Promise<void>
+    /** Clear the auto-snapshot (e.g. after a successful restore). */
+    lastSessionClear(): Promise<void>
   }
   /**
    * Command history for the palette: recent + most-used commands, merged from
@@ -645,6 +909,20 @@ export interface DevTermApi {
      * so a finished or input-waiting agent surfaces even when DevTerm is hidden.
      */
     flashAttention(notice: { title: string; body?: string }): void
+  }
+  /**
+   * Phase 2: local tmux status. Wrapping a local shell in tmux gives the
+   * session real process-tree survival across an app quit; the renderer reads
+   * this once on launch and on every change to decide whether to pass
+   * `tmuxSession` into `pty.create`.
+   */
+  tmux: {
+    /** Cached status; probes on first call. */
+    status(): Promise<TmuxStatus>
+    /** Re-probe (e.g. after the user installs tmux mid-session) and broadcast. */
+    refresh(): Promise<TmuxStatus>
+    /** Subscribe to status changes pushed from main (after `refresh`, etc.). */
+    onStatusChange(cb: (s: TmuxStatus) => void): () => void
   }
   /** Context of the local workstation. */
   localContext(): Promise<HostContext>
@@ -743,8 +1021,16 @@ export interface DevTermApi {
      * Enqueue a single upload. The main process allocates the id, persists
      * the item, and starts it through the producer/consumer queue.
      */
-    enqueueUpload(opts: { sessionId: string; localPath: string; remotePath: string }): Promise<TransferItemV2>
-    enqueueDownload(opts: { sessionId: string; localPath: string; remotePath: string }): Promise<TransferItemV2>
+    enqueueUpload(opts: {
+      sessionId: string
+      localPath: string
+      remotePath: string
+    }): Promise<TransferItemV2>
+    enqueueDownload(opts: {
+      sessionId: string
+      localPath: string
+      remotePath: string
+    }): Promise<TransferItemV2>
     /** Mark a queued or running transfer as canceled. */
     cancel(id: string): Promise<void>
     /**
@@ -889,12 +1175,7 @@ export interface PortForward {
 }
 
 /** Status badge for a tab (reconnecting, error, etc.). */
-export type TabStatus =
-  | 'normal'
-  | 'reconnecting'
-  | 'disconnected'
-  | 'agent_pending'
-  | 'error'
+export type TabStatus = 'normal' | 'reconnecting' | 'disconnected' | 'agent_pending' | 'error'
 
 /** A single recent host the user quick-connected to (for autocomplete). */
 export interface QuickConnectEntry {
@@ -964,7 +1245,15 @@ export interface GitStatus {
 /** Live status update for a single in-flight transfer item (mirrors TransferItemV2). */
 export type TransferEvent =
   | { kind: 'progress'; id: string; transferred: number; total: number; done: boolean }
-  | { kind: 'done'; id: string; transferred: number; total: number; canceled?: boolean; error?: string; finishedAt: number }
+  | {
+      kind: 'done'
+      id: string
+      transferred: number
+      total: number
+      canceled?: boolean
+      error?: string
+      finishedAt: number
+    }
 
 /** What the user gets back from `transfers.list()`. */
 export type TransferListResult = TransferItemV2[]
@@ -996,4 +1285,3 @@ export interface BrowserDownloadItem {
 export interface BrowserZoomMap {
   [origin: string]: number
 }
-

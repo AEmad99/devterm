@@ -40,6 +40,11 @@ export default function AgentPane({
   const [mcpUrl, setMcpUrl] = useState<string | undefined>()
   const [lastHeartbeatAt, setLastHeartbeatAt] = useState<number | undefined>()
   const [restartNonce, setRestartNonce] = useState(0)
+  // Bumped when the user rotates a provider API key while the agent is
+  // running. The agent has already started with the old env, so the new key
+  // isn't visible until we restart the PTY — this flag drives a notice + a
+  // one-click "Restart now" that re-runs the launch effect.
+  const [keyStale, setKeyStale] = useState(false)
   const hostClosed = useSessions((s) => s.sessions.find((x) => x.id === sessionId)?.closed ?? false)
   // The operator's live shell cwd (tracked from OSC 7 in TerminalView). Pushed
   // to main so the agent's commands follow the operator's `cd` — see the effect
@@ -70,6 +75,37 @@ export default function AgentPane({
   useEffect(() => {
     if (cwd) window.devterm.agent.setCwd(sessionId, cwd)
   }, [sessionId, cwd])
+
+  // Watch the provider-key store while the agent is open. A set / clear in
+  // Settings flips the env the agent was launched with — the running PTY
+  // still has the old snapshot, so we surface a "restart to apply" notice
+  // until the user clicks Restart (or closes & reopens the pane).
+  useEffect(() => {
+    let cancelled = false
+    let lastSig = ''
+    const tick = async () => {
+      try {
+        const list = await window.devterm.providerKeys.list()
+        if (cancelled) return
+        // Signature = ids of providers currently set. A rotation flips this.
+        const sig = list
+          .filter((k) => k.isSet)
+          .map((k) => k.id)
+          .sort()
+          .join(',')
+        if (lastSig && sig !== lastSig) setKeyStale(true)
+        lastSig = sig
+      } catch {
+        /* list failure is non-fatal — the banner just stays as-is */
+      }
+    }
+    void tick()
+    const id = window.setInterval(tick, 3000)
+    return () => {
+      cancelled = true
+      window.clearInterval(id)
+    }
+  }, [sessionId])
 
   useEffect(() => {
     const host = hostRef.current
@@ -217,6 +253,29 @@ export default function AgentPane({
 
   return (
     <div className="agent-pane">
+      {keyStale && (
+        <div className="agent-key-stale">
+          <span className="agent-key-stale-text">
+            Provider API key changed — restart the agent for the new key to take effect.
+          </span>
+          <button
+            className="agent-restart"
+            onClick={() => {
+              setKeyStale(false)
+              setRestartNonce((n) => n + 1)
+            }}
+          >
+            Restart now
+          </button>
+          <button
+            className="ghost small"
+            onClick={() => setKeyStale(false)}
+            title="Dismiss — the agent keeps running with the previous key until you restart it"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
       <div
         className={`agent-status agent-status--${pill.tone}`}
         title={statusTitle || 'Live state of the agent bridge to this host'}

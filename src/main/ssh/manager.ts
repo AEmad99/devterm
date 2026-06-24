@@ -1,8 +1,15 @@
 import { randomUUID } from 'crypto'
 import type { Client, ClientChannel, SFTPWrapper } from 'ssh2'
-import type { HostContext, SSHConnectResult, SSHProfile, SSHStatus } from '@shared/types'
+import type {
+  HostContext,
+  OpenShellOpts,
+  SSHConnectResult,
+  SSHProfile,
+  SSHStatus
+} from '@shared/types'
 import { establish } from './connection'
 import { detectRemoteContext } from './osDetect'
+import { openRemoteTmuxShell, probeRemoteTmux } from '../tmux/remote'
 
 interface Session {
   id: string
@@ -27,6 +34,13 @@ interface Session {
    * `null` = unknown / not yet probed. `true` = PowerShell detected.
    */
   isWindowsPowerShell?: boolean
+  /**
+   * Phase 2: true when the host has `tmux` on PATH (probed during connect).
+   * When true and the renderer asks for `tmuxSession` in `openShell`, the
+   * channel is opened via `tmux new-session -A` rather than a plain shell,
+   * so the host-side process tree survives an SSH disconnect.
+   */
+  hasTmux?: boolean
 }
 
 interface ReconnectState {
@@ -169,8 +183,13 @@ export class SSHManager {
     })
 
     const context = await detectRemoteContext(client)
-    this.sessions.set(id, { id, client, jump, context, profile })
-    return { sessionId: id, context }
+    // Phase 2: probe the host for tmux in parallel with caching the session.
+    // The probe is bounded (5s) so a slow host can't stall the handshake; on
+    // failure we just leave hasTmux undefined and the renderer falls back to
+    // a plain shell + `cd <startCwd>` (Phase 1 behavior).
+    const hasTmux = await probeRemoteTmux(client).catch(() => false)
+    this.sessions.set(id, { id, client, jump, context, profile, hasTmux })
+    return { sessionId: id, context, hasTmux }
   }
 
   /**
@@ -208,11 +227,7 @@ export class SSHManager {
    * new uuid; we then update our internal `Session.id` to match, so callers
    * that have already obtained the new id can still look it up.
    */
-  private scheduleReconnect(
-    sessionId: string,
-    profile: SSHProfile,
-    userInitiated = false
-  ): void {
+  private scheduleReconnect(sessionId: string, profile: SSHProfile, userInitiated = false): void {
     const policy = { ...this.policy }
     if (!policy.enabled && !userInitiated) return
     const maxAttempts = Math.max(1, policy.maxAttempts)
@@ -339,10 +354,36 @@ export class SSHManager {
     return this.sessions.get(sessionId)?.client
   }
 
-  openShell(sessionId: string, cols: number, rows: number): Promise<void> {
+  openShell(sessionId: string, cols: number, rows: number, opts?: OpenShellOpts): Promise<void> {
     const s = this.sessions.get(sessionId)
     if (!s) return Promise.reject(new Error('unknown session'))
     if (s.shell) return Promise.resolve()
+
+    // Phase 2: if the renderer asked for a tmux session and the host has tmux,
+    // take the exec-with-tmux path. Otherwise (or when tmux is missing on the
+    // host) fall back to the plain shell channel. The tmux path goes through
+    // `client.exec` (not `client.shell`) so tmux itself runs as the foreground
+    // process; the returned channel is wired up identically to a shell channel.
+    if (opts?.tmuxSession && s.hasTmux) {
+      return openRemoteTmuxShell(s.client, opts.tmuxSession, cols, rows).then((channel) => {
+        s.shell = channel
+        channel
+          .on('data', (d: Buffer) => this.handlers.onData(sessionId, d.toString()))
+          .on('close', () => {
+            this.handlers.onExit(sessionId)
+            s.shell = undefined
+          })
+        channel.stderr.on('data', (d: Buffer) => this.handlers.onData(sessionId, d.toString()))
+        // The OSC 7 cwd hook still has to be injected AFTER tmux has spawned
+        // its inner shell. tmux itself starts a fresh shell on each `-A` attach
+        // to a non-existent session; for an attach to an existing session the
+        // shell is already running and the hook lands in its env. Either way,
+        // 700ms is enough for tmux to settle and the inner shell to read the
+        // input.
+        this.injectOsc7Setup(s)
+      })
+    }
+
     return new Promise((resolve, reject) => {
       s.client.shell({ term: 'xterm-256color', cols, rows }, (err, channel) => {
         if (err) return reject(err)
@@ -354,60 +395,77 @@ export class SSHManager {
             s.shell = undefined
           })
         channel.stderr.on('data', (d: Buffer) => this.handlers.onData(sessionId, d.toString()))
-
-        // Best-effort OSC 7 cwd reporting for POSIX remotes so the file explorer
-        // can follow `cd`. The hook must be wired per-shell: bash re-runs
-        // PROMPT_COMMAND before each prompt, while zsh ignores it and instead
-        // calls the functions in `precmd_functions`. We detect the live shell via
-        // $ZSH_VERSION (set in the interactive shell, so more reliable than probing)
-        // and append to whichever mechanism applies — preserving the distro's own
-        // hooks and staying idempotent. Echo is suppressed so the setup line isn't
-        // shown; we then clear and emit once for the initial cwd. (A plain sh/dash
-        // login falls through to the bash branch, which it ignores, so only the
-        // initial directory is reported — acceptable for that rare case.)
-        if (s.context.os === 'linux' || s.context.os === 'mac') {
-          // __dt7 emits OSC 7 (cwd). __dtA/__dtB are OSC 133 ;A/;B semantic-prompt
-          // markers wrapped into PS1 (bash) / PROMPT (zsh) as non-printing regions
-          // so the renderer knows where the typed command begins — the anchor the
-          // history autocomplete reads from. Each wrap is guarded (case "*133*") so
-          // it's idempotent and only applied to the shell that supports it.
-          const setup =
-            `stty -echo 2>/dev/null; ` +
-            `__dt7() { printf '\\033]7;file://%s%s\\007' "\${HOSTNAME:-h}" "$PWD"; }; ` +
-            `__dtA=$(printf '\\033]133;A\\007'); __dtB=$(printf '\\033]133;B\\007'); ` +
-            `if [ -n "$ZSH_VERSION" ]; then ` +
-            `case " \${precmd_functions[*]} " in *" __dt7 "*) ;; *) precmd_functions+=(__dt7);; esac; ` +
-            `case "$PROMPT" in *133*) ;; *) PROMPT="%{$__dtA%}$PROMPT%{$__dtB%}";; esac; ` +
-            `else ` +
-            `case ":$PROMPT_COMMAND:" in *__dt7*) ;; *) PROMPT_COMMAND="__dt7\${PROMPT_COMMAND:+;$PROMPT_COMMAND}";; esac; ` +
-            `if [ -n "$BASH_VERSION" ]; then case "$PS1" in *133*) ;; *) PS1="\\[$__dtA\\]$PS1\\[$__dtB\\]";; esac; fi; ` +
-            `fi; ` +
-            `stty echo 2>/dev/null; clear; __dt7\n`
-          setTimeout(() => s.shell?.write(setup), 700)
-        } else if (s.context.os === 'windows') {
-          // Windows remote: probe whether the open shell is PowerShell (the
-          // OpenSSH server default on Server 2019+ and most modern Windows
-          // boxes). cmd.exe has no prompt hook that can emit OSC 7, so we
-          // intentionally fall through to no-op there — see the limitation
-          // note on `probeWindowsShell`. The setup is identical in shape to
-          // the local PTY's PowerShell branch in `main/pty/manager.ts`
-          // (function `prompt` writes the OSC 7 sequence and the OSC 133 ;A/;B
-          // markers around the visible prompt).
-          void probeWindowsShell(s.client).then((isPS) => {
-            s.isWindowsPowerShell = isPS
-            if (!isPS) return // cmd.exe: known limitation, no OSC 7.
-            const setup =
-              `function prompt { $e=[char]27; $b=[char]7; $p=$PWD.ProviderPath; ` +
-              `$u=($p -replace '\\\\','/'); ` +
-              `Write-Host -NoNewline ($e + ']133;A' + $b + $e + ']7;file:///' + $u + $b); ` +
-              `('PS ' + $p + '> ' + $e + ']133;B' + $b) }; ` +
-              `Clear-Host; prompt\n`
-            setTimeout(() => s.shell?.write(setup), 700)
-          })
-        }
+        this.injectOsc7Setup(s)
         resolve()
       })
     })
+  }
+
+  /**
+   * Best-effort OSC 7 cwd reporting for POSIX remotes so the file explorer
+   * can follow `cd`. The hook must be wired per-shell: bash re-runs
+   * PROMPT_COMMAND before each prompt, while zsh ignores it and instead
+   * calls the functions in `precmd_functions`. We detect the live shell via
+   * $ZSH_VERSION (set in the interactive shell, so more reliable than probing)
+   * and append to whichever mechanism applies — preserving the distro's own
+   * hooks and staying idempotent. Echo is suppressed so the setup line isn't
+   * shown; we then clear and emit once for the initial cwd. (A plain sh/dash
+   * login falls through to the bash branch, which it ignores, so only the
+   * initial directory is reported — acceptable for that rare case.)
+   *
+   * Called from both the plain-shell path and the tmux-exec path; the channel
+   * is on `s.shell` either way.
+   */
+  private injectOsc7Setup(s: Session): void {
+    if (
+      s.context.os === 'linux' ||
+      s.context.os === 'mac' ||
+      // 'posix' is the catch-all for `uname` answers we don't tokenize
+      // (FreeBSD / OpenBSD / NetBSD / DragonFly / Solaris / illumos / AIX /
+      // HP-UX) and for the rare Linux box with no `uname` binary. The OSC 7
+      // hook is bash/zsh/POSIX-sh portable; running it here is what keeps the
+      // agent's cwd tracking working on those hosts.
+      s.context.os === 'posix'
+    ) {
+      // __dt7 emits OSC 7 (cwd). __dtA/__dtB are OSC 133 ;A/;B semantic-prompt
+      // markers wrapped into PS1 (bash) / PROMPT (zsh) as non-printing regions
+      // so the renderer knows where the typed command begins — the anchor the
+      // history autocomplete reads from. Each wrap is guarded (case "*133*") so
+      // it's idempotent and only applied to the shell that supports it.
+      const setup =
+        `stty -echo 2>/dev/null; ` +
+        `__dt7() { printf '\\033]7;file://%s%s\\007' "\${HOSTNAME:-h}" "$PWD"; }; ` +
+        `__dtA=$(printf '\\033]133;A\\007'); __dtB=$(printf '\\033]133;B\\007'); ` +
+        `if [ -n "$ZSH_VERSION" ]; then ` +
+        `case " \${precmd_functions[*]} " in *" __dt7 "*) ;; *) precmd_functions+=(__dt7);; esac; ` +
+        `case "$PROMPT" in *133*) ;; *) PROMPT="%{$__dtA%}$PROMPT%{$__dtB%}";; esac; ` +
+        `else ` +
+        `case ":$PROMPT_COMMAND:" in *__dt7*) ;; *) PROMPT_COMMAND="__dt7\${PROMPT_COMMAND:+;$PROMPT_COMMAND}";; esac; ` +
+        `if [ -n "$BASH_VERSION" ]; then case "$PS1" in *133*) ;; *) PS1="\\[$__dtA\\]$PS1\\[$__dtB\\]";; esac; fi; ` +
+        `fi; ` +
+        `stty echo 2>/dev/null; clear; __dt7\n`
+      setTimeout(() => s.shell?.write(setup), 700)
+    } else if (s.context.os === 'windows') {
+      // Windows remote: probe whether the open shell is PowerShell (the
+      // OpenSSH server default on Server 2019+ and most modern Windows
+      // boxes). cmd.exe has no prompt hook that can emit OSC 7, so we
+      // intentionally fall through to no-op there — see the limitation
+      // note on `probeWindowsShell`. The setup is identical in shape to
+      // the local PTY's PowerShell branch in `main/pty/manager.ts`
+      // (function `prompt` writes the OSC 7 sequence and the OSC 133 ;A/;B
+      // markers around the visible prompt).
+      void probeWindowsShell(s.client).then((isPS) => {
+        s.isWindowsPowerShell = isPS
+        if (!isPS) return // cmd.exe: known limitation, no OSC 7.
+        const setup =
+          `function prompt { $e=[char]27; $b=[char]7; $p=$PWD.ProviderPath; ` +
+          `$u=($p -replace '\\\\','/'); ` +
+          `Write-Host -NoNewline ($e + ']133;A' + $b + $e + ']7;file:///' + $u + $b); ` +
+          `('PS ' + $p + '> ' + $e + ']133;B' + $b) }; ` +
+          `Clear-Host; prompt\n`
+        setTimeout(() => s.shell?.write(setup), 700)
+      })
+    }
   }
 
   /**
@@ -450,13 +508,21 @@ export class SSHManager {
       let settled = false
       let stdout = ''
       let stderr = ''
-      const finish = (r: { stdout: string; stderr: string; code: number | null; timedOut: boolean }) => {
+      const finish = (r: {
+        stdout: string
+        stderr: string
+        code: number | null
+        timedOut: boolean
+      }) => {
         if (!settled) {
           settled = true
           resolve(r)
         }
       }
-      const timer = setTimeout(() => finish({ stdout, stderr, code: null, timedOut: true }), timeoutMs)
+      const timer = setTimeout(
+        () => finish({ stdout, stderr, code: null, timedOut: true }),
+        timeoutMs
+      )
       s.client.exec(command, (err, stream) => {
         if (err) {
           clearTimeout(timer)

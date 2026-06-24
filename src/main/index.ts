@@ -1,4 +1,13 @@
-import { app, BrowserWindow, Menu, MenuItemConstructorOptions, clipboard, session, shell, dialog } from 'electron'
+import {
+  app,
+  BrowserWindow,
+  Menu,
+  MenuItemConstructorOptions,
+  clipboard,
+  session,
+  shell,
+  dialog
+} from 'electron'
 import { join } from 'path'
 
 // Pin Chromium's disk cache, GPU shader cache, and service-worker storage
@@ -64,6 +73,7 @@ process.on('uncaughtException', (err) => {
   }
 })
 import { registerPtyIpc } from './ipc/pty'
+import { registerSessionsIpc, type SessionIpcController } from './ipc/sessions'
 import { registerSshIpc } from './ipc/ssh'
 import { registerContextIpc } from './ipc/context'
 import { registerFileIpc } from './ipc/files'
@@ -72,6 +82,7 @@ import { registerConnectionsIpc } from './ipc/connections'
 import { registerWorkspacesIpc } from './ipc/workspaces'
 import { registerSnippetsIpc } from './ipc/snippets'
 import { registerHistoryIpc } from './ipc/history'
+import { registerTmuxIpc, type TmuxIpcController } from './ipc/tmux'
 import { registerDialogIpc } from './ipc/dialog'
 import { registerClipboardIpc } from './ipc/clipboard'
 import { registerWindowIpc } from './ipc/window'
@@ -79,8 +90,10 @@ import { registerFoundationIpc } from './foundation-ipc'
 import { registerGitIpc } from './ipc/git'
 import { registerTransfersIpc } from './ipc/transfers'
 import { registerBrowserIpc } from './ipc/browser'
+import { registerProviderKeysIpc } from './ipc/provider-keys'
 import { IPC } from '@shared/types'
 import { initAutoUpdater } from './updater'
+import { flushAll as flushScrollback } from './sessions/scrollback'
 import type { PtyManager } from './pty/manager'
 import type { SSHManager } from './ssh/manager'
 import type { FileController } from './ipc/files'
@@ -92,6 +105,8 @@ let fileController: FileController | null = null
 let agentController: AgentController | null = null
 let transfersController: { shutdown: () => Promise<void> } | null = null
 let browserController: { shutdown: () => Promise<void> } | null = null
+let sessionsController: SessionIpcController | null = null
+let _tmuxController: TmuxIpcController | null = null
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
@@ -154,7 +169,11 @@ function createWindow(): void {
 }
 
 function registerIpc(): void {
-  ptyManager = registerPtyIpc(() => mainWindow)
+  // Persistence layer must register before PTY so we can pass the binding
+  // lookup into the PTY's onData tee (PTY chunks are written to scrollback
+  // whenever a binding exists for the emitting pty id).
+  sessionsController = registerSessionsIpc()
+  ptyManager = registerPtyIpc(() => mainWindow, sessionsController.bindingFor)
   sshManager = registerSshIpc(() => mainWindow)
   fileController = registerFileIpc(sshManager, () => mainWindow)
   agentController = registerAgentIpc(sshManager, ptyManager, () => mainWindow)
@@ -168,9 +187,15 @@ function registerIpc(): void {
   registerContextIpc()
   registerFoundationIpc(() => mainWindow)
   registerGitIpc(sshManager, () => mainWindow)
+  // Phase 2: local tmux detection (cached, re-probed on demand by the
+  // renderer via the TmuxMissingBanner's "Re-check" button).
+  _tmuxController = registerTmuxIpc(() => mainWindow)
   // Cluster D: persistent transfer queue + in-app browser enhancements.
   transfersController = registerTransfersIpc(sshManager, () => mainWindow)
   browserController = registerBrowserIpc(() => mainWindow)
+  // Provider API key store (encrypted at rest). The plaintext is read back
+  // out only at agent launch time and folded into the agent PTY's env.
+  registerProviderKeysIpc()
 }
 
 // Headless self-test entrypoint: `electron . --self-test`.
@@ -292,5 +317,10 @@ if (process.argv.includes('--self-test')) {
     // Cluster D: persist the transfer queue and the browser zoom map.
     void transfersController?.shutdown()
     void browserController?.shutdown()
+    // Persistence layer: flush any pending scrollback chunks to disk so a
+    // crash/restart doesn't lose the last ~75ms of every terminal, and drop
+    // the in-memory ptyId→persistentId bindings (the renderer will re-bind
+    // them on next launch).
+    void flushScrollback().finally(() => sessionsController?.clearBindings())
   })
 }

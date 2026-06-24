@@ -22,6 +22,17 @@ export interface ToolDeps {
    * where the operator is `cd`'d, not in the SSH login default ($HOME).
    */
   getCwd?: () => string | undefined
+  /**
+   * Async cwd lookup that ALSO falls back to a one-shot `pwd` over the
+   * existing SSH client when OSC 7 has never spoken for this session (sh /
+   * dash login shells with no PROMPT_COMMAND hook, the very first call
+   * before any prompt has rendered, or hosts where the OSC 7 setup landed in
+   * tmux's stdin but never reached the inner shell). The probe is shared
+   * across concurrent calls and cached. Returns undefined on Windows
+   * remotes — there `pwd` is not a shell builtin and the tools use absolute
+   * paths (the agent is told the cwd in its briefing).
+   */
+  cwdWithFallback?: () => Promise<string | undefined>
   /** Ask the operator to approve a guarded action. 'timeout' = no response in time, NOT a disconnect. */
   confirm: (tool: string, detail: string) => Promise<ConfirmOutcome>
 }
@@ -48,6 +59,23 @@ const errorText = (s: string) => ({
 function posixCwd(getCwd?: () => string | undefined): string | undefined {
   const cwd = getCwd?.()
   return cwd && cwd.startsWith('/') ? cwd : undefined
+}
+
+/**
+ * Resolve the cwd for a tool call: OSC 7 first (cheap, synchronous), then the
+ * async `pwd` fallback on the existing SSH client when OSC 7 is silent.
+ * The fallback only fires when OSC 7 has not yet spoken, so the steady-state
+ * cost is zero; the cost on a brand-new session is one bounded `pwd` exec.
+ */
+async function resolveCwd(
+  getCwd: (() => string | undefined) | undefined,
+  cwdWithFallback: (() => Promise<string | undefined>) | undefined
+): Promise<string | undefined> {
+  const live = posixCwd(getCwd)
+  if (live) return live
+  if (!cwdWithFallback) return undefined
+  const probe = await cwdWithFallback()
+  return probe && probe.startsWith('/') ? probe : undefined
 }
 
 /** Single-quote a path for a POSIX shell: close, escaped literal quote, reopen. */
@@ -96,7 +124,7 @@ function wrapConfirm(
 }
 
 export function registerTools(mcp: McpServer, deps: ToolDeps): void {
-  const { ssh, sessionId, context, airGapped, policy, confirm, getCwd } = deps
+  const { ssh, sessionId, context, airGapped, policy, confirm, getCwd, cwdWithFallback } = deps
   // Pre-bound confirm wrapper that records bridge activity around every ask.
   const confirmWithActivity = (tool: string, detail: string) =>
     wrapConfirm(sessionId, tool, detail, confirm)
@@ -128,19 +156,24 @@ export function registerTools(mcp: McpServer, deps: ToolDeps): void {
     'get_host_context',
     {
       description:
-        'Facts about the connected host: hostname, OS, the operator\'s current working directory, and whether it is air-gapped.',
+        "Facts about the connected host: hostname, OS, the operator's current working directory, and whether it is air-gapped.",
       inputSchema: {}
     },
-    async () =>
-      text(
+    async () => {
+      // Probe the fallback cwd here too so a brand-new session on a host
+      // whose shell never installed the OSC 7 hook (sh/dash login, or a
+      // FreeBSD box) returns a real cwd on first call instead of `null`.
+      const cwd = (await resolveCwd(getCwd, cwdWithFallback)) ?? null
+      return text(
         JSON.stringify(
           {
             hostname: context.hostname,
             os: context.os,
             detail: context.detail,
             // The operator's live shell cwd — where run_command runs and where
-            // relative file paths resolve. null until the shell reports it.
-            cwd: getCwd?.() ?? null,
+            // relative file paths resolve. null until the shell reports it
+            // AND a one-shot `pwd` probe can't recover it either.
+            cwd,
             airGapped,
             note: airGapped
               ? 'AIR-GAPPED: no internet. Use local mirrors (Harbor/Skopeo/oc mirror), never yum/dnf/apt from the internet.'
@@ -150,6 +183,7 @@ export function registerTools(mcp: McpServer, deps: ToolDeps): void {
           2
         )
       )
+    }
   )
 
   mcp.registerTool(
@@ -193,8 +227,9 @@ export function registerTools(mcp: McpServer, deps: ToolDeps): void {
         // call and `cd` doesn't persist between them, so prefix one. With `&&`,
         // a missing cwd surfaces as a clear error instead of silently running in
         // the wrong directory. Policy still evaluates the agent's original
-        // `command`, never our prefix.
-        const cwd = posixCwd(getCwd)
+        // `command`, never our prefix. The fallback probe covers the case where
+        // OSC 7 has not yet spoken (sh/dash login, brand-new session, BSD host).
+        const cwd = await resolveCwd(getCwd, cwdWithFallback)
         const toRun = cwd ? `cd ${shQuote(cwd)} && ${command}` : command
         const { stdout, stderr, code, timedOut } = await ssh.exec(sessionId, toRun, ms)
         // A timeout is reported as a normal (non-error) result with explicit wording:
@@ -222,12 +257,15 @@ export function registerTools(mcp: McpServer, deps: ToolDeps): void {
       inputSchema: {
         path: z
           .string()
-          .describe("Remote directory path — absolute, or relative to the operator's current directory.")
+          .describe(
+            "Remote directory path — absolute, or relative to the operator's current directory."
+          )
       }
     },
     async ({ path }) => {
       try {
-        const target = resolvePosix(posixCwd(getCwd), path)
+        const cwd = await resolveCwd(getCwd, cwdWithFallback)
+        const target = resolvePosix(cwd, path)
         const sftp = await ssh.getSftp(sessionId)
         const listing = await listRemote(sftp, target)
         const lines = listing.entries.map(
@@ -247,7 +285,9 @@ export function registerTools(mcp: McpServer, deps: ToolDeps): void {
       inputSchema: {
         path: z
           .string()
-          .describe("Remote file path — absolute, or relative to the operator's current directory."),
+          .describe(
+            "Remote file path — absolute, or relative to the operator's current directory."
+          ),
         max_bytes: z
           .number()
           .int()
@@ -258,7 +298,8 @@ export function registerTools(mcp: McpServer, deps: ToolDeps): void {
     },
     async ({ path, max_bytes }) => {
       try {
-        const target = resolvePosix(posixCwd(getCwd), path)
+        const cwd = await resolveCwd(getCwd, cwdWithFallback)
+        const target = resolvePosix(cwd, path)
         const sftp = await ssh.getSftp(sessionId)
         const buf = await new Promise<Buffer>((resolve, reject) =>
           sftp.readFile(target, (err, data) => (err ? reject(err) : resolve(data as Buffer)))
@@ -282,12 +323,15 @@ export function registerTools(mcp: McpServer, deps: ToolDeps): void {
       inputSchema: {
         path: z
           .string()
-          .describe("Remote file path — absolute, or relative to the operator's current directory."),
+          .describe(
+            "Remote file path — absolute, or relative to the operator's current directory."
+          ),
         content: z.string().describe('Full file contents to write.')
       }
     },
     async ({ path, content }) => {
-      const target = resolvePosix(posixCwd(getCwd), path)
+      const cwd = await resolveCwd(getCwd, cwdWithFallback)
+      const target = resolvePosix(cwd, path)
       const v = policy.evaluateWrite()
       if (!v.allow)
         return errorText(
@@ -296,7 +340,10 @@ export function registerTools(mcp: McpServer, deps: ToolDeps): void {
             `Ask the operator to set it to 'confirm' or 'full' mode.`
         )
       if (v.needConfirm) {
-        const outcome = await confirmWithActivity('write_file', `${target} (${content.length} bytes)`)
+        const outcome = await confirmWithActivity(
+          'write_file',
+          `${target} (${content.length} bytes)`
+        )
         if (outcome === 'timeout')
           return errorText(
             `Approval timed out for write to ${target} — no operator response within 2 min. ` +

@@ -269,6 +269,19 @@ body,
   flex: 1;
   min-height: 0;
 }
+.agent-key-stale {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: color-mix(in srgb, var(--warning, #e0a52c) 12%, var(--bg));
+  border-bottom: 1px solid color-mix(in srgb, var(--warning, #e0a52c) 35%, transparent);
+  font-size: 12px;
+  color: var(--fg);
+}
+.agent-key-stale-text {
+  flex: 1 1 auto;
+}
 /* Live agent-bridge status pill. Shows the REAL host/bridge state so a
    confabulated "connection dropped" from the agent is visibly contradicted by
    ground truth (green dot = bridge ready, red = host actually down). */
@@ -2988,6 +3001,57 @@ textarea:focus {
   margin: -4px 0 2px;
 }
 
+/* --- Provider API keys (Settings → Provider API keys) --- */
+.provider-key-row {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+.provider-key-row .settings-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+.provider-key-badge {
+  font-size: 10.5px;
+  padding: 1px 6px;
+  border-radius: 6px;
+  letter-spacing: 0.02em;
+  font-weight: 500;
+}
+.provider-key-badge.is-set {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+}
+.provider-key-badge.is-unset {
+  background: color-mix(in srgb, var(--muted) 18%, transparent);
+  color: var(--muted);
+  border: 1px solid color-mix(in srgb, var(--muted) 30%, transparent);
+}
+.provider-key-control {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.provider-key-input {
+  flex: 1 1 220px;
+  min-width: 180px;
+  background: var(--input-bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+  font-size: 12px;
+}
+.provider-key-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
 /* --- Theme gallery (Settings → Theme) --- */
 .theme-grid {
   display: grid;
@@ -3575,6 +3639,50 @@ textarea:focus {
   font-variant-numeric: tabular-nums;
 }
 .reconnect-banner button.small {
+  padding: 3px 10px;
+  font-size: 11px;
+  border-radius: 4px;
+}
+
+/* --- Persistence-layer "session ended while away" banner --- */
+.ended-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 12px;
+  background: color-mix(in oklab, var(--muted) 25%, var(--panel));
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--fg);
+}
+.ended-banner-text {
+  flex: 1 1 auto;
+}
+.ended-banner button.small {
+  padding: 3px 10px;
+  font-size: 11px;
+  border-radius: 4px;
+}
+
+/* --- Phase 2: missing-tmux hint banner --- */
+.tmux-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  background: color-mix(in oklab, var(--accent) 18%, var(--panel));
+  border-bottom: 1px solid color-mix(in oklab, var(--accent) 40%, var(--border));
+  font-size: 12px;
+  color: var(--fg);
+}
+.tmux-banner-text {
+  flex: 1 1 auto;
+}
+.tmux-banner-text a {
+  color: var(--accent);
+  text-decoration: underline;
+}
+.tmux-banner button.small {
   padding: 3px 10px;
   font-size: 11px;
   border-radius: 4px;

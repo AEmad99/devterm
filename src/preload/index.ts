@@ -29,7 +29,12 @@ import {
   type TransferItemV2,
   type TransferEvent,
   type TransferListResult,
-  type BrowserDownloadItem
+  type BrowserDownloadItem,
+  type PersistentSession,
+  type LastSession,
+  type OpenShellOpts,
+  type TmuxStatus,
+  type ProviderKeyInfo
 } from '@shared/types'
 
 // Subscribe helper for per-id main->renderer channels.
@@ -53,13 +58,14 @@ const api: DevTermApi = {
   ssh: {
     connect: (profile: SSHProfile): Promise<SSHConnectResult> =>
       ipcRenderer.invoke(IPC.sshConnect, profile),
-    openShell: (id, cols, rows): Promise<void> =>
-      ipcRenderer.invoke(IPC.sshOpenShell, id, cols, rows),
+    openShell: (id, cols, rows, opts?: OpenShellOpts): Promise<void> =>
+      ipcRenderer.invoke(IPC.sshOpenShell, id, cols, rows, opts),
     input: (id, data) => ipcRenderer.send(IPC.sshInput, id, data),
     resize: (id, cols, rows) => ipcRenderer.send(IPC.sshResize, id, cols, rows),
     disconnect: (id) => ipcRenderer.send(IPC.sshDisconnect, id),
     cancelReconnect: (id: string) => ipcRenderer.send(IPC.sshCancelReconnect, id),
-    getReconnectPolicy: (): Promise<ReconnectPolicy> => ipcRenderer.invoke(IPC.sshGetReconnectPolicy),
+    getReconnectPolicy: (): Promise<ReconnectPolicy> =>
+      ipcRenderer.invoke(IPC.sshGetReconnectPolicy),
     setReconnectPolicy: (patch: Partial<ReconnectPolicy>): Promise<ReconnectPolicy> =>
       ipcRenderer.invoke(IPC.sshSetReconnectPolicy, patch),
     onData: (id, cb) => subscribe<string>(`${IPC.sshData}:${id}`, cb),
@@ -115,8 +121,7 @@ const api: DevTermApi = {
     open: (opts: AgentOpenOpts): Promise<AgentOpenResult> =>
       ipcRenderer.invoke(IPC.agentOpen, opts),
     close: (sessionId: string) => ipcRenderer.send(IPC.agentClose, sessionId),
-    setCwd: (sessionId: string, cwd: string) =>
-      ipcRenderer.send(IPC.agentSetCwd, sessionId, cwd),
+    setCwd: (sessionId: string, cwd: string) => ipcRenderer.send(IPC.agentSetCwd, sessionId, cwd),
     status: (sessionId: string): Promise<AgentBridgeStatus | null> =>
       ipcRenderer.invoke(IPC.agentStatus, sessionId),
     onBridgeStatus: (sessionId, cb) =>
@@ -131,6 +136,17 @@ const api: DevTermApi = {
       ipcRenderer.invoke(IPC.connectionsSave, conn),
     delete: (id: string): Promise<SavedConnection[]> =>
       ipcRenderer.invoke(IPC.connectionsDelete, id)
+  },
+  /**
+   * Provider API key store. Renderer never sees the plaintext — `list` only
+   * reports `isSet`. The agent PTY picks up the plaintext via
+   * `envForAgent()` in src/main/provider-keys.ts at launch time.
+   */
+  providerKeys: {
+    list: (): Promise<ProviderKeyInfo[]> => ipcRenderer.invoke(IPC.providerKeysList),
+    set: (id: string, key: string): Promise<void> =>
+      ipcRenderer.invoke(IPC.providerKeysSet, id, key),
+    clear: (id: string): Promise<void> => ipcRenderer.invoke(IPC.providerKeysClear, id)
   },
   workspaces: {
     list: (): Promise<Workspace[]> => ipcRenderer.invoke(IPC.workspacesList),
@@ -180,7 +196,8 @@ const api: DevTermApi = {
     list: (
       sessionId: string,
       opts?: { sinceMs?: number; limit?: number }
-    ): Promise<BridgeActivityEntry[]> => ipcRenderer.invoke(IPC.bridgeActivityList, sessionId, opts),
+    ): Promise<BridgeActivityEntry[]> =>
+      ipcRenderer.invoke(IPC.bridgeActivityList, sessionId, opts),
     clear: (sessionId: string): Promise<void> =>
       ipcRenderer.invoke(IPC.bridgeActivityClear, sessionId)
   },
@@ -267,9 +284,15 @@ const api: DevTermApi = {
       // Match the existing namespaces' shape: subscribe to the broadcast
       // channel, then ask for the initial snapshot.
       const off = subscribe<void>(IPC.transfersStatus, () => {
-        ipcRenderer.invoke(IPC.transfersList).then(cb).catch(() => undefined)
+        ipcRenderer
+          .invoke(IPC.transfersList)
+          .then(cb)
+          .catch(() => undefined)
       })
-      ipcRenderer.invoke(IPC.transfersList).then(cb).catch(() => undefined)
+      ipcRenderer
+        .invoke(IPC.transfersList)
+        .then(cb)
+        .catch(() => undefined)
       return off
     }
   },
@@ -295,7 +318,39 @@ const api: DevTermApi = {
   openBrowserDevtools: (webContentsId: number): Promise<void> =>
     ipcRenderer.invoke(IPC.browserDevtoolsOpen, webContentsId),
   setBrowserMuted: (webContentsId: number, muted: boolean): Promise<void> =>
-    ipcRenderer.invoke(IPC.browserMute, webContentsId, muted)
+    ipcRenderer.invoke(IPC.browserMute, webContentsId, muted),
+
+  // Phase 2: local tmux detection. The renderer asks once on launch and
+  // listens for changes (after a "Re-check" click on the missing-tmux banner).
+  tmux: {
+    status: (): Promise<TmuxStatus> => ipcRenderer.invoke(IPC.tmuxGetStatus),
+    refresh: (): Promise<TmuxStatus> => ipcRenderer.invoke(IPC.tmuxRefresh),
+    onStatusChange: (cb: (s: TmuxStatus) => void): (() => void) =>
+      subscribe<TmuxStatus>(IPC.tmuxOnStatusChanged, cb)
+  },
+
+  // Persistence layer (sessions.json + scrollback/<id>.log + last-session.json).
+  // See src/main/sessions/registry.ts and src/main/sessions/scrollback.ts.
+  sessions: {
+    open: (entry: PersistentSession): Promise<void> => ipcRenderer.invoke(IPC.sessionsOpen, entry),
+    touch: (patch: Partial<PersistentSession> & { persistentId: string }): Promise<void> =>
+      ipcRenderer.invoke(IPC.sessionsTouch, patch),
+    forget: (persistentId: string): Promise<void> =>
+      ipcRenderer.invoke(IPC.sessionsForget, persistentId),
+    list: (): Promise<PersistentSession[]> => ipcRenderer.invoke(IPC.sessionsList),
+    bindPty: (opts: { persistentId: string; ptyId: string }): Promise<void> =>
+      ipcRenderer.invoke(IPC.sessionsBindPty, opts),
+    unbindPty: (ptyId: string): Promise<void> => ipcRenderer.invoke(IPC.sessionsUnbindPty, ptyId),
+    scrollbackRead: (persistentId: string, maxBytes?: number): Promise<string> =>
+      ipcRenderer.invoke(IPC.sessionsScrollbackRead, persistentId, maxBytes),
+    scrollbackClear: (persistentId: string): Promise<void> =>
+      ipcRenderer.invoke(IPC.sessionsScrollbackClear, persistentId),
+    lastSessionRead: (): Promise<LastSession | null> =>
+      ipcRenderer.invoke(IPC.sessionsLastSessionRead),
+    lastSessionWrite: (snap: LastSession): Promise<void> =>
+      ipcRenderer.invoke(IPC.sessionsLastSessionWrite, snap),
+    lastSessionClear: (): Promise<void> => ipcRenderer.invoke(IPC.sessionsLastSessionClear)
+  }
 }
 
 contextBridge.exposeInMainWorld('devterm', api)

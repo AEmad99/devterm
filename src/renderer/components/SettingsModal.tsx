@@ -3,6 +3,7 @@ import { useSettings } from '../store/settings'
 import { THEMES, getTheme, applyTheme, type Theme } from '../lib/themes'
 import { chime } from '../lib/attention'
 import { IconClose } from './Icons'
+import ProviderKeysSection from './ProviderKeysSection'
 
 const FONT_PRESETS = [
   'Cascadia Code, Consolas, "Courier New", monospace',
@@ -286,10 +287,9 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
         <section className="settings-section">
           <h3>Notifications</h3>
           <div className="settings-sub-hint">
-            Get pulled back when a coding agent finishes or needs input — a chime, a
-            green tab dot, and (when DevTerm is in the background) an OS notification
-            with a taskbar flash. Only the agent pane is watched; normal terminals
-            never raise an alert.
+            Get pulled back when a coding agent finishes or needs input — a chime, a green tab dot,
+            and (when DevTerm is in the background) an OS notification with a taskbar flash. Only
+            the agent pane is watched; normal terminals never raise an alert.
           </div>
 
           <label className="settings-row">
@@ -316,7 +316,9 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
           </label>
 
           <label className="settings-row">
-            <span className="settings-label">Chime volume ({Math.round(attention.volume * 100)}%)</span>
+            <span className="settings-label">
+              Chime volume ({Math.round(attention.volume * 100)}%)
+            </span>
             <span className="settings-control">
               <input
                 type="range"
@@ -351,7 +353,9 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
           </label>
 
           <label className="settings-row">
-            <span className="settings-label">Treat an agent going quiet as &ldquo;finished&rdquo;</span>
+            <span className="settings-label">
+              Treat an agent going quiet as &ldquo;finished&rdquo;
+            </span>
             <span className="settings-control">
               <input
                 type="checkbox"
@@ -366,8 +370,8 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
         <section className="settings-section">
           <h3>Connection</h3>
           <div className="settings-sub-hint">
-            What to do when an SSH connection drops — DevTerm retries with
-            exponential backoff so a flaky network doesn&apos;t interrupt your work.
+            What to do when an SSH connection drops — DevTerm retries with exponential backoff so a
+            flaky network doesn&apos;t interrupt your work.
           </div>
 
           <label className="settings-row">
@@ -447,6 +451,8 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
             </span>
           </label>
         </section>
+
+        <ProviderKeysSection busy={busy} />
 
         <section className="settings-section">
           <h3>Background image</h3>

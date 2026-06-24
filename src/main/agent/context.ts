@@ -31,7 +31,15 @@ tracks their \`cd\` live — they don't need to spell out a path for "here". ${w
  */
 export function buildAgentsMd(context: HostContext, airGapped: boolean, cwd?: string): string {
   const osName =
-    context.os === 'windows' ? 'Windows' : context.os === 'mac' ? 'macOS' : context.os === 'linux' ? 'Linux' : 'unknown OS'
+    context.os === 'windows'
+      ? 'Windows'
+      : context.os === 'mac'
+        ? 'macOS'
+        : context.os === 'linux'
+          ? 'Linux'
+          : context.os === 'posix'
+            ? 'POSIX'
+            : 'unknown OS'
 
   return `# Connected host: ${context.hostname}
 
@@ -90,7 +98,15 @@ a command does before running anything that changes state.
  */
 export function buildClaudeMd(context: HostContext, airGapped: boolean, cwd?: string): string {
   const osName =
-    context.os === 'windows' ? 'Windows' : context.os === 'mac' ? 'macOS' : context.os === 'linux' ? 'Linux' : 'unknown OS'
+    context.os === 'windows'
+      ? 'Windows'
+      : context.os === 'mac'
+        ? 'macOS'
+        : context.os === 'linux'
+          ? 'Linux'
+          : context.os === 'posix'
+            ? 'POSIX'
+            : 'unknown OS'
 
   return `# Connected host: ${context.hostname}
 
@@ -146,7 +162,15 @@ a command does before running anything that changes state.
  */
 export function buildOpencodeMd(context: HostContext, airGapped: boolean, cwd?: string): string {
   const osName =
-    context.os === 'windows' ? 'Windows' : context.os === 'mac' ? 'macOS' : context.os === 'linux' ? 'Linux' : 'unknown OS'
+    context.os === 'windows'
+      ? 'Windows'
+      : context.os === 'mac'
+        ? 'macOS'
+        : context.os === 'linux'
+          ? 'Linux'
+          : context.os === 'posix'
+            ? 'POSIX'
+            : 'unknown OS'
 
   return `# Connected host: ${context.hostname}
 
