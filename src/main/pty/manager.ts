@@ -5,11 +5,23 @@ import { dirname, join } from 'path'
 import { createRequire } from 'node:module'
 import * as pty from 'node-pty'
 import type { IPty, IWindowsPtyForkOptions } from 'node-pty'
-import type { PtyCreateOptions, PtyCreated } from '@shared/types'
+import type {
+  DefaultShellPref,
+  PtyCreateOptions,
+  PtyCreated,
+  PtyStartupFailure
+} from '@shared/types'
 
 export interface PtyHandlers {
   onData: (id: string, data: string) => void
   onExit: (id: string, exitCode: number | undefined, signal?: number) => void
+  /**
+   * Fires at most once per spawn when the PTY exits without ever producing
+   * data — the "Windows PowerShell 5.1 failed to start" signature pattern.
+   * Optional; older callers omit it. Always paired with `onExit`, never in
+   * place of it.
+   */
+  onStartupFailure?: (id: string, info: PtyStartupFailure) => void
 }
 
 /**
@@ -35,18 +47,63 @@ export function shellArgs(shell: string): string[] {
 
 /**
  * Pick a sensible default interactive shell for the current platform.
- * On Windows we prefer PowerShell (pwsh 7 if installed, else Windows PowerShell)
- * over cmd.exe so familiar commands like `ls`, `cd`, `pwd`, `cat` work.
+ *
+ * On Windows we strongly prefer PowerShell 7 (`pwsh.exe`) — it doesn't have
+ * Windows PowerShell 5.1's managed-assembly signature check, which trips
+ * (0x8009001d / `NTE_BAD_SIGNATURE`) on boxes where antivirus has tampered
+ * with the PS DLLs or the .NET Framework install is broken. PowerShell 7
+ * also gives a real cross-platform shell with PSReadLine, oh-my-posh,
+ * and modern module support.
+ *
+ * If only Windows PowerShell 5.1 is on the box, that's the next pick —
+ * the startup-failure diagnostic in PtyManager.create detects the 0x8009001d
+ * case (and any other "process exited before producing data" case) and
+ * pushes a `pty:startup-failure` IPC so the renderer can show a targeted
+ * fix instead of a generic "[process exited]".
+ *
+ * As a last resort on Windows we use `%COMSPEC%` (cmd.exe). On non-Windows
+ * we use `$SHELL`.
  */
 export function defaultShell(): string {
   if (process.platform === 'win32') {
-    const pwsh7 = `${process.env.ProgramFiles}\\PowerShell\\7\\pwsh.exe`
-    if (existsSync(pwsh7)) return pwsh7
-    const winPs = `${process.env.SystemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`
+    for (const p of pwshCandidatePaths()) {
+      if (existsSync(p)) return p
+    }
+    const winPs = join(
+      process.env.SystemRoot ?? 'C:\\Windows',
+      'System32',
+      'WindowsPowerShell',
+      'v1.0',
+      'powershell.exe'
+    )
     if (existsSync(winPs)) return winPs
     return process.env.COMSPEC || 'cmd.exe'
   }
   return process.env.SHELL || '/bin/bash'
+}
+
+/**
+ * Every realistic install location for PowerShell 7. Checked in order; the
+ * first hit wins. We can't use the registry without an extra async call, so
+ * we sample the well-known filesystem paths — they cover the Microsoft
+ * Store, MSI (`%ProgramFiles%`), and per-user (`%LOCALAPPDATA%`) installs.
+ * Powershell 7 has been at `PowerShell\7\pwsh.exe` since GA.
+ */
+function pwshCandidatePaths(): string[] {
+  if (process.platform !== 'win32') return []
+  const programFiles = process.env.ProgramFiles ?? 'C:\\Program Files'
+  const programFilesX86 = process.env['ProgramFiles(x86)'] ?? 'C:\\Program Files (x86)'
+  const localAppData = process.env.LOCALAPPDATA ?? ''
+  return [
+    // The Microsoft Store / "Windows Store Edition" install — its root path
+    // varies, so we just check the well-known alias location.
+    join(localAppData, 'Microsoft', 'WindowsApps', 'pwsh.exe'),
+    // Per-user install (most common for the standalone MSI).
+    join(localAppData, 'Microsoft', 'PowerShell', '7', 'pwsh.exe'),
+    // System-wide MSI install (machine-wide, the default).
+    join(programFiles, 'PowerShell', '7', 'pwsh.exe'),
+    join(programFilesX86, 'PowerShell', '7', 'pwsh.exe')
+  ].filter((p) => p.length > 0)
 }
 
 /**
@@ -81,6 +138,23 @@ if (process.platform === 'win32' && !USE_CONPTY_DLL) {
 }
 
 /**
+ * Whether a PTY data chunk carries actual shell output, as opposed to just the
+ * terminal-mode handshake ConPTY emits on every spawn before the shell runs.
+ *
+ * ConPTY's pre-shell prefix is pure ANSI: `ESC[1t ESC[c ESC[?1004h ESC[?9001h`
+ * (title mode, DA1, focus reporting, VT input mode) — no printable bytes. A
+ * healthy shell adds a prompt or banner behind that handshake. The
+ * startup-failure diagnostic needs "did the shell ever render anything?", so we
+ * strip OSC/CSI escape sequences and control bytes and ask whether anything
+ * printable survives. The strip is deliberately cheap (one regex pass) since it
+ * runs on the first few chunks of every spawn.
+ */
+const ANSI_OR_CTRL = /\x1b\][^\x1b]*(?:\x07|\x1b\\)|\x1b\[[0-9;?<=>]*[!-/]*[@-~]|[\x00-\x1f\x7f]/g
+function hasRealOutput(data: string): boolean {
+  return data.replace(ANSI_OR_CTRL, '').length > 0
+}
+
+/**
  * Owns local node-pty processes. Phase 1 spawns the local shell; later phases
  * (agent pane) spawn the interactive `pi` CLI through this same manager.
  */
@@ -90,7 +164,7 @@ export class PtyManager {
   constructor(private handlers: PtyHandlers) {}
 
   create(opts: PtyCreateOptions & { args?: string[]; env?: Record<string, string> }): PtyCreated {
-    const shell = opts.shell || defaultShell()
+    const shell = resolveShell(opts.shellPref, opts.shell)
     const id = randomUUID()
     // Explicit args (e.g. launching `pi`) bypass the default prompt-injection.
     const args = opts.args ?? shellArgs(shell)
@@ -110,8 +184,38 @@ export class PtyManager {
     }
     const proc = pty.spawn(shell, args, ptyOpts)
 
-    proc.onData((data) => this.handlers.onData(id, data))
+    // Startup-failure diagnostic: if the shell exits before emitting any *real*
+    // output (Windows PowerShell 5.1's 0x8009001d is the canonical case — the
+    // process dies during managed-DLL load, before its prompt can render), emit
+    // a dedicated event so the renderer can show "Windows PowerShell failed to
+    // start — install PowerShell 7" instead of the generic exit banner. The
+    // regular `onData` / `onExit` handlers still run; this is in addition.
+    //
+    // "Real" output matters because ConPTY itself emits a fixed mode-setting
+    // handshake (`ESC[1t ESC[c ESC[?1004h ESC[?9001h`) on every spawn BEFORE the
+    // shell runs. When the shell then dies without ever rendering a prompt (the
+    // signature failure), that handshake is the ONLY data on the stream — and
+    // the naive "any onData ⇒ healthy" check would mark it healthy, masking the
+    // failure so the user just sees the generic "[process exited with code 1]".
+    // We strip ANSI escapes + control bytes and only declare healthy once some
+    // printable shell output survives.
+    //
+    // Note: there is intentionally NO "auto-healthy after N ms" timer. A shell
+    // that produced only the ConPTY prefix for several seconds and then exited
+    // is still a startup failure (the prompt never rendered); a fixed timeout
+    // that declared healthy would re-mask exactly the case this catches. The
+    // health flag flips only on real output; an exit without it is the failure.
+    let healthHealthy = false
+
+    proc.onData((data) => {
+      if (!healthHealthy && hasRealOutput(data)) healthHealthy = true
+      this.handlers.onData(id, data)
+    })
     proc.onExit(({ exitCode, signal }) => {
+      // If we never saw real output, this is a startup failure — surface it.
+      if (!healthHealthy && this.handlers.onStartupFailure) {
+        this.handlers.onStartupFailure(id, { shell, exitCode, signal })
+      }
       this.handlers.onExit(id, exitCode, signal)
       this.ptys.delete(id)
     })
@@ -154,4 +258,47 @@ export class PtyManager {
   killAll(): void {
     for (const id of [...this.ptys.keys()]) this.kill(id)
   }
+}
+
+/**
+ * Map a renderer's `shellPref` (or explicit `shell` override) to an absolute
+ * path. The precedence is:
+ *  - explicit `opts.shell` (a one-off override — the user picked this shell
+ *    for THIS terminal from the new-terminal picker);
+ *  - `opts.shellPref`: respects the user's setting, but only if the chosen
+ *    shell is actually installed. A user-set PowerShell 7 on a box that only
+ *    has 5.1 still falls back gracefully;
+ *  - defaultShell() — best installed shell on this OS.
+ *
+ * Returns the resolved path (never throws). The startup-failure diagnostic in
+ * `create()` catches the case where a non-empty `custom` path points at a
+ * missing/broken executable and reports it instead of crashing silently.
+ */
+export function resolveShell(pref: DefaultShellPref | undefined, explicit?: string): string {
+  if (explicit) return explicit
+  if (pref) {
+    switch (pref.kind) {
+      case 'custom':
+        if (pref.path) return pref.path
+        break
+      case 'pwsh':
+        for (const p of pwshCandidatePaths()) if (existsSync(p)) return p
+        break
+      case 'powershell':
+        return defaultShell().includes('WindowsPowerShell')
+          ? defaultShell()
+          : join(
+              process.env.SystemRoot ?? 'C:\\Windows',
+              'System32',
+              'WindowsPowerShell',
+              'v1.0',
+              'powershell.exe'
+            )
+      case 'cmd':
+        return process.env.COMSPEC || 'cmd.exe'
+      case 'auto':
+        break
+    }
+  }
+  return defaultShell()
 }

@@ -47,7 +47,37 @@ export function attachClipboard(term: Terminal, host: HTMLElement): () => void {
   const copySelection = () => {
     if (term.hasSelection()) window.devterm.clipboard.writeText(term.getSelection())
   }
-  const paste = () => window.devterm.clipboard.readText().then((t) => t && term.paste(t))
+
+  // Collapse a duplicate paste that lands within a couple of frames (some
+  // platforms fire two paste events for one Ctrl+Shift+V, "paste & match style").
+  let lastPasteText = ''
+  let lastPasteAt = 0
+  const pasteText = (text: string) => {
+    const now = Date.now()
+    if (text === lastPasteText && now - lastPasteAt < 80) return
+    lastPasteText = text
+    lastPasteAt = now
+    term.paste(text)
+  }
+
+  // Paste whatever the clipboard holds. Text wins; when there's no text the
+  // clipboard may hold an image (e.g. a screenshot) — save it to a temp file and
+  // paste the *path* so a coding agent running in the shell (claude / opencode /
+  // pi) can attach it. Falls back to a bridge text read (covers middle-click on
+  // platforms that don't populate the paste event's clipboardData).
+  const pasteFromClipboard = async () => {
+    try {
+      const imgPath = await window.devterm.clipboard.saveImage()
+      if (imgPath) {
+        pasteText(imgPath)
+        return
+      }
+    } catch {
+      /* fall through to text */
+    }
+    const t = await window.devterm.clipboard.readText()
+    if (t) pasteText(t)
+  }
 
   const selDisposable = term.onSelectionChange(() => {
     if (useSettings.getState().prefs.copyOnSelect) copySelection()
@@ -63,35 +93,30 @@ export function attachClipboard(term: Terminal, host: HTMLElement): () => void {
   // the command "streaming" in. We catch the paste in the CAPTURE phase (before
   // xterm's listeners), stop it reaching them (stopImmediatePropagation) and stop
   // the browser's default insert (preventDefault), then paste exactly once.
-  let lastPasteText = ''
-  let lastPasteAt = 0
   const onPaste = (e: ClipboardEvent) => {
     e.preventDefault()
     e.stopImmediatePropagation()
     const text = e.clipboardData?.getData('text/plain') ?? ''
-    if (!text) {
-      void paste() // no inline clipboard data — fall back to the bridge read
+    if (text) {
+      pasteText(text)
       return
     }
-    // Some platforms fire two paste events for one Ctrl+Shift+V ("paste & match
-    // style"); collapse an identical paste that lands within a couple of frames.
-    const now = Date.now()
-    if (text === lastPasteText && now - lastPasteAt < 80) return
-    lastPasteText = text
-    lastPasteAt = now
-    term.paste(text)
+    // No inline text — the clipboard may hold an image, or this is a platform
+    // that doesn't populate clipboardData on paste. Resolve via the bridge
+    // (image first, then text).
+    void pasteFromClipboard()
   }
   host.addEventListener('paste', onPaste, true) // capture: beat xterm's handlers
 
   const onContextMenu = (e: MouseEvent) => {
     e.preventDefault()
     if (useSettings.getState().prefs.rightClickPaste) {
-      void paste()
+      void pasteFromClipboard()
     } else if (term.hasSelection()) {
       copySelection()
       term.clearSelection()
     } else {
-      void paste()
+      void pasteFromClipboard()
     }
   }
   host.addEventListener('contextmenu', onContextMenu)

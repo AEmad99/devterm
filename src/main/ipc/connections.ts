@@ -63,8 +63,17 @@ async function readAll(): Promise<SavedConnection[]> {
 async function writeAll(list: SavedConnection[]): Promise<void> {
   const encrypted = list.map((c) => transform(c, encryptSecret))
   const tmp = storeFile() + '.tmp'
-  await fs.writeFile(tmp, JSON.stringify({ version: 1, connections: encrypted }, null, 2), 'utf8')
+  // Owner-only perms: this file can hold credentials (encrypted when the OS
+  // keychain is available, otherwise plaintext), so it must never be group/
+  // world-readable on POSIX. `mode` is a no-op on Windows (per-user %APPDATA%
+  // already isolates it); the trailing chmod tightens an entry that pre-existed
+  // with looser perms.
+  await fs.writeFile(tmp, JSON.stringify({ version: 1, connections: encrypted }, null, 2), {
+    encoding: 'utf8',
+    mode: 0o600
+  })
   await fs.rename(tmp, storeFile()) // atomic replace so a crash mid-write can't corrupt the store
+  await fs.chmod(storeFile(), 0o600).catch(() => {})
 }
 
 export function registerConnectionsIpc(): void {

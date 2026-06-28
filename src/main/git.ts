@@ -11,6 +11,7 @@
 import { spawn } from 'child_process'
 import type { Client } from 'ssh2'
 import type { GitFileStatus, GitStatus } from '@shared/types'
+import { quoteRemotePath } from './shell-quote'
 
 /** Cap how many file entries we expose per directory to keep the IPC payload sane. */
 const MAX_ENTRIES = 5000
@@ -198,9 +199,9 @@ export async function gitStatusRemote(
   path: string
 ): Promise<GitStatus> {
   // `cd` first so the porcelain output is path-relative (which the parser
-  // expects). Quote the path; POSIX doesn't need escaping here, but Windows
-  // OpenSSH server paths can include spaces.
-  const cmd = `cd "${path}" && git status --porcelain=1 --branch`
+  // expects). The path is untrusted (it follows the remote shell cwd), so it
+  // must be airtight-quoted — double quotes alone leave `$(...)`/backticks live.
+  const cmd = `cd ${quoteRemotePath(path)} && git status --porcelain=1 --branch`
   const res = await exec(cmd, 30000)
   if (res.code !== 0) return notARepo()
   return parsePorcelain(res.stdout)
@@ -234,9 +235,8 @@ export async function gitDiffRemote(
   path: string,
   file: string
 ): Promise<string> {
-  // POSIX-safe quoting for the file name. We escape double quotes only.
-  const safe = file.replace(/"/g, '\\"')
-  const cmd = `cd "${path}" && git diff -- "${safe}"`
+  // Airtight-quote both the directory and the filename (both untrusted).
+  const cmd = `cd ${quoteRemotePath(path)} && git diff -- ${quoteRemotePath(file)}`
   const res = await exec(cmd, 30000)
   return res.code === 0 ? res.stdout : ''
 }
@@ -266,7 +266,7 @@ export async function gitStatusViaClient(
   ) => Promise<{ stdout: string; code: number | null }>,
   path: string
 ): Promise<GitStatus> {
-  const cmd = `cd "${path}" && git status --porcelain=1 --branch`
+  const cmd = `cd ${quoteRemotePath(path)} && git status --porcelain=1 --branch`
   const res = await execOnClient(client, cmd, 30000)
   if (res.code !== 0) return notARepo()
   return parsePorcelain(res.stdout)

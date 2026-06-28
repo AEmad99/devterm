@@ -69,6 +69,54 @@ function testLocalShell(): Promise<void> {
   })
 }
 
+// --- Startup-failure diagnostic ----------------------------------------------
+// Regression guard for the bug where ConPTY's pre-shell mode-setting handshake
+// (`ESC[1t ESC[c ESC[?1004h ESC[?9001h`) was the ONLY data on a failed spawn and
+// the health check wrongly marked the PTY healthy — so a real Windows PowerShell
+// 5.1 managed-signature failure showed the generic "[process exited with code 1]"
+// instead of the targeted "failed to start" diagnostic. Spawns a shell that exits
+// before producing any real output and asserts `onStartupFailure` fires.
+function testStartupFailureDiagnostic(): Promise<void> {
+  return new Promise((resolve) => {
+    let fired = false
+    const mgr = new PtyManager({
+      onData: () => {},
+      onExit: () => {},
+      onStartupFailure: () => {
+        fired = true
+      }
+    })
+    // Pick a shell + args that exit immediately without a visible prompt. On
+    // Windows `powershell -Command "exit 1"` mirrors the real Windows PowerShell
+    // 5.1 managed-signature failure shape (process exits before a prompt, only
+    // ConPTY's mode-setting prefix — no printable bytes — is on the stream) and
+    // reliably tears the pseudo-console down. (`cmd /c exit 1` keeps ConPTY
+    // alive past the command, so its exit event is delayed.) Elsewhere `sh -c
+    // 'exit 1'`.
+    const isWin = process.platform === 'win32'
+    const shell = isWin
+      ? join(
+          process.env.SystemRoot ?? 'C:\\Windows',
+          'System32',
+          'WindowsPowerShell',
+          'v1.0',
+          'powershell.exe'
+        )
+      : process.env.SHELL || '/bin/sh'
+    mgr.create({
+      cols: 80,
+      rows: 24,
+      shell,
+      args: isWin ? ['-NoLogo', '-Command', 'exit 1'] : ['-c', 'exit 1']
+    })
+    setTimeout(() => {
+      check('startup-failure fires when shell exits before real output', fired)
+      mgr.killAll()
+      resolve()
+    }, 3500)
+  })
+}
+
 // --- SSH mock server --------------------------------------------------------
 type Scenario = 'linux' | 'windows'
 
@@ -140,7 +188,10 @@ async function testSshScenario(scenario: Scenario): Promise<void> {
       password: 'x'
     })
     check(`ssh connect (${scenario})`, true, `ctx.os=${context.os}`)
-    check(`host-key recorded on first use (${scenario})`, statuses.some((s) => s.type === 'hostkey-new'))
+    check(
+      `host-key recorded on first use (${scenario})`,
+      statuses.some((s) => s.type === 'hostkey-new')
+    )
     check(`OS detected as ${scenario}`, context.os === scenario, context.detail.split(/\r?\n/)[0])
 
     await mgr.openShell(sessionId, 80, 24)
@@ -188,8 +239,15 @@ async function testSftp(): Promise<void> {
     await mkdirRemote(sftp, join(root, 'made').replace(/\\/g, '/'))
     check('sftp mkdir', await exists(join(root, 'made')))
 
-    await renameRemote(sftp, join(root, 'made').replace(/\\/g, '/'), join(root, 'renamed').replace(/\\/g, '/'))
-    check('sftp rename', (await exists(join(root, 'renamed'))) && !(await exists(join(root, 'made'))))
+    await renameRemote(
+      sftp,
+      join(root, 'made').replace(/\\/g, '/'),
+      join(root, 'renamed').replace(/\\/g, '/')
+    )
+    check(
+      'sftp rename',
+      (await exists(join(root, 'renamed'))) && !(await exists(join(root, 'made')))
+    )
 
     await deleteRemote(sftp, join(root, 'renamed').replace(/\\/g, '/'))
     check('sftp delete', !(await exists(join(root, 'renamed'))))
@@ -200,12 +258,22 @@ async function testSftp(): Promise<void> {
       onProgress: () => {}
     })
     const remoteUpload = (root + '/uploaded.bin').replace(/\\/g, '/')
-    await runTransfer(tm, { direction: 'upload', sessionId, localPath: localUpload, remotePath: remoteUpload })
+    await runTransfer(tm, {
+      direction: 'upload',
+      sessionId,
+      localPath: localUpload,
+      remotePath: remoteUpload
+    })
     const uploaded = await fsp.readFile(join(root, 'uploaded.bin'))
     check('sftp upload integrity (256 KB)', uploaded.equals(payload))
 
     const localBack = join(dlDir, 'roundtrip.bin')
-    await runTransfer(tm, { direction: 'download', sessionId, localPath: localBack, remotePath: remoteUpload })
+    await runTransfer(tm, {
+      direction: 'download',
+      sessionId,
+      localPath: localBack,
+      remotePath: remoteUpload
+    })
     const back = await fsp.readFile(localBack)
     check('sftp download round-trip integrity', back.equals(payload))
 
@@ -213,7 +281,12 @@ async function testSftp(): Promise<void> {
     const bigLocal = join(dlDir, 'big.bin')
     const bigRemote = (root + '/big.bin').replace(/\\/g, '/')
     await fsp.writeFile(bigLocal, randomBytes(8 * 1024 * 1024))
-    await runTransfer(tm, { direction: 'upload', sessionId, localPath: bigLocal, remotePath: bigRemote })
+    await runTransfer(tm, {
+      direction: 'upload',
+      sessionId,
+      localPath: bigLocal,
+      remotePath: bigRemote
+    })
     const cancelResult = await new Promise<TransferProgress>((resolve) => {
       const tmC = new TransferManager({
         getSftp: (sid) => mgr.getSftp(sid),
@@ -222,9 +295,17 @@ async function testSftp(): Promise<void> {
           if (p.done) resolve(p)
         }
       })
-      tmC.start({ direction: 'download', sessionId, localPath: join(dlDir, 'big-dl.bin'), remotePath: bigRemote })
+      tmC.start({
+        direction: 'download',
+        sessionId,
+        localPath: join(dlDir, 'big-dl.bin'),
+        remotePath: bigRemote
+      })
     })
-    check('transfer cancel truly aborts', cancelResult.canceled === true && cancelResult.transferred < 8 * 1024 * 1024)
+    check(
+      'transfer cancel truly aborts',
+      cancelResult.canceled === true && cancelResult.transferred < 8 * 1024 * 1024
+    )
 
     mgr.disconnect(sessionId)
   } catch (e) {
@@ -255,7 +336,9 @@ function runTransfer(
     void id
     // Fallback timeout guard.
     const timer = setTimeout(() => reject(new Error('transfer timeout')), 15000)
-    const orig = (tm as unknown as { deps: { onProgress: (i: string, p: TransferProgress) => void } }).deps
+    const orig = (
+      tm as unknown as { deps: { onProgress: (i: string, p: TransferProgress) => void } }
+    ).deps
     const prev = orig.onProgress
     orig.onProgress = (i, p) => {
       prev(i, p)
@@ -366,14 +449,17 @@ async function testReconnect(): Promise<void> {
     /* expected */
   }
   // (4) cancelReconnect on a never-scheduled session must be a no-op.
-  check('reconnect: cancelReconnect on unknown id is a no-op', (() => {
-    try {
-      failMgr.cancelReconnect('does-not-exist')
-      return true
-    } catch {
-      return false
-    }
-  })())
+  check(
+    'reconnect: cancelReconnect on unknown id is a no-op',
+    (() => {
+      try {
+        failMgr.cancelReconnect('does-not-exist')
+        return true
+      } catch {
+        return false
+      }
+    })()
+  )
   // Drain background timers so the test process can exit cleanly even if
   // the manager still has a pending backoff timer somewhere.
   failMgr.disconnectAll()
@@ -392,9 +478,21 @@ function testPolicy(): void {
   check('policy: read-only allows ls', ro.evaluateCommand('ls -la /etc').allow === true)
   check('policy: read-only blocks write_file', ro.evaluateWrite().allow === false)
   const cf = new Policy('confirm')
-  check('policy: confirm gates run_command', cf.evaluateCommand('ls').needConfirm === true)
+  // Confirm mode asks only for mutating/destructive commands (and all writes);
+  // a plain read must run without a prompt — see CLAUDE.md policy semantics.
+  check(
+    'policy: confirm gates mutating command',
+    cf.evaluateCommand('rm -rf /tmp/x').needConfirm === true
+  )
+  check('policy: confirm runs reads without prompt', cf.evaluateCommand('ls').needConfirm === false)
+  check('policy: confirm gates write_file', cf.evaluateWrite().needConfirm === true)
   const full = new Policy('full')
-  check('policy: full forces confirm on destructive', full.evaluateCommand('mkfs /dev/sda').needConfirm === true)
+  // Full mode runs everything without DevTerm prompts (it is the bypass mode).
+  check(
+    'policy: full runs destructive without prompt',
+    full.evaluateCommand('mkfs /dev/sda').needConfirm === false
+  )
+  check('policy: full allows write_file without prompt', full.evaluateWrite().needConfirm === false)
 }
 
 // --- MCP bridge end-to-end via a real MCP client (5b acceptance) ------------
@@ -411,7 +509,12 @@ async function testBridge(): Promise<void> {
   let bridge: McpBridge | undefined
   let client: Client | undefined
   try {
-    const { sessionId } = await mgr.connect({ host: '127.0.0.1', port: srv.port, username: 'tester', password: 'x' })
+    const { sessionId } = await mgr.connect({
+      host: '127.0.0.1',
+      port: srv.port,
+      username: 'tester',
+      password: 'x'
+    })
     const context = mgr.getContext(sessionId)!
 
     bridge = new McpBridge({
@@ -423,7 +526,10 @@ async function testBridge(): Promise<void> {
       confirm: async () => 'approved' as const
     })
     const info = await bridge.start()
-    check('mcp bridge binds to 127.0.0.1 with token', info.url.startsWith('http://127.0.0.1:') && info.token.length > 0)
+    check(
+      'mcp bridge binds to 127.0.0.1 with token',
+      info.url.startsWith('http://127.0.0.1:') && info.token.length > 0
+    )
 
     // Wrong token must be rejected.
     const badResp = await fetch(info.url, {
@@ -442,18 +548,38 @@ async function testBridge(): Promise<void> {
 
     const tools = await client.listTools()
     const names = tools.tools.map((t) => t.name).sort()
-    check('mcp lists host tools', ['get_host_context', 'list_dir', 'read_file', 'run_command', 'write_file'].every((n) => names.includes(n)), names.join(','))
+    check(
+      'mcp lists host tools',
+      ['get_host_context', 'list_dir', 'read_file', 'run_command', 'write_file'].every((n) =>
+        names.includes(n)
+      ),
+      names.join(',')
+    )
 
-    const hostname = textOf(await client.callTool({ name: 'run_command', arguments: { command: 'hostname' } }))
-    check('mcp run_command("hostname") hits remote over same connection', hostname.includes('sftphost'), hostname.trim())
+    const hostname = textOf(
+      await client.callTool({ name: 'run_command', arguments: { command: 'hostname' } })
+    )
+    check(
+      'mcp run_command("hostname") hits remote over same connection',
+      hostname.includes('sftphost'),
+      hostname.trim()
+    )
 
     const ctxText = textOf(await client.callTool({ name: 'get_host_context', arguments: {} }))
-    check('mcp get_host_context reports air-gapped', ctxText.includes('"airGapped": true') && ctxText.includes('sftphost'))
+    check(
+      'mcp get_host_context reports air-gapped',
+      ctxText.includes('"airGapped": true') && ctxText.includes('sftphost')
+    )
 
     const ls = textOf(await client.callTool({ name: 'list_dir', arguments: { path: root } }))
     check('mcp list_dir lists remote files', ls.includes('hello.txt'))
 
-    const fileTxt = textOf(await client.callTool({ name: 'read_file', arguments: { path: (root + '/hello.txt').replace(/\\/g, '/') } }))
+    const fileTxt = textOf(
+      await client.callTool({
+        name: 'read_file',
+        arguments: { path: (root + '/hello.txt').replace(/\\/g, '/') }
+      })
+    )
     check('mcp read_file returns content', fileTxt.includes('hi from remote'))
 
     // Guardrail at the boundary: read-only bridge refuses a destructive command.
@@ -472,8 +598,14 @@ async function testBridge(): Promise<void> {
         requestInit: { headers: { Authorization: `Bearer ${roInfo.token}` } }
       })
     )
-    const blocked = await roClient.callTool({ name: 'run_command', arguments: { command: 'rm -rf /etc' } })
-    check('mcp read-only host blocks destructive run_command', (blocked as { isError?: boolean }).isError === true)
+    const blocked = await roClient.callTool({
+      name: 'run_command',
+      arguments: { command: 'rm -rf /etc' }
+    })
+    check(
+      'mcp read-only host blocks destructive run_command',
+      (blocked as { isError?: boolean }).isError === true
+    )
     await roClient.close()
     await roBridge.stop()
   } catch (e) {
@@ -489,6 +621,7 @@ async function testBridge(): Promise<void> {
 export async function runSelfTest(): Promise<boolean> {
   console.log('=== DevTerm self-test ===  defaultShell=' + defaultShell())
   await testLocalShell()
+  await testStartupFailureDiagnostic()
   await testSshScenario('linux')
   await testSshScenario('windows')
   await testSftp()

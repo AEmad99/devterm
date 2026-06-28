@@ -85,6 +85,11 @@ export async function writeFileLocal(
   content: string
 ): Promise<{ mtimeMs: number; size: number }> {
   const p = normalize(path)
+  // Cap writes at the same size the editor refuses to open. The renderer never
+  // legitimately saves above this, so bounding it here stops a runaway/hostile
+  // caller from allocating an unbounded Buffer and OOM-killing the main process.
+  if (Buffer.byteLength(content, 'utf8') > MAX_EDIT_BYTES)
+    throw new Error(`Refusing to write more than ${MAX_EDIT_BYTES / 1024 / 1024} MB`)
   const buf = encodeText(content)
   await fs.writeFile(p, buf)
   const st = await fs.stat(p)

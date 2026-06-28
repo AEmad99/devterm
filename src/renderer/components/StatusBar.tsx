@@ -50,7 +50,7 @@ export default function StatusBar() {
     void window.devterm.git.status({ path: active.cwd }).then((s) => {
       if (!cancelled) setGit(s)
     })
-    const off = window.devterm.git.onChange(active.cwd, (s) => {
+    const off = window.devterm.git.onChange({ path: active.cwd }, (s) => {
       if (!cancelled) setGit(s)
     })
     window.devterm.git.watch({ path: active.cwd })

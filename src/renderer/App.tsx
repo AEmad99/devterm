@@ -11,6 +11,7 @@ import WorkspacesManager from './components/WorkspacesManager'
 import SnippetsManager from './components/SnippetsManager'
 import CommandPalette from './components/CommandPalette'
 import ShortcutsModal from './components/ShortcutsModal'
+import { GlobalSearchModal } from './components/GlobalSearchModal'
 import SaveWorkspaceModal from './components/SaveWorkspaceModal'
 import SettingsModal from './components/SettingsModal'
 import StatusBar from './components/StatusBar'
@@ -65,7 +66,20 @@ function ContextBadge({ ctx }: { ctx?: HostContext }) {
 }
 
 export default function App() {
-  const { sessions, activeId, addLocal, addBrowser } = useSessions()
+  // Cluster B: App previously subscribed to the entire sessions array via
+  // `const { sessions, ... } = useSessions()`. That meant any guarded write
+  // (setCwd / setTitle / setAgentBridgeState / …) rebuilt the sessions array
+  // and re-rendered App.tsx + every child on every change — the single biggest
+  // render amplifier with several terminals + an agent open. Narrow selectors
+  // so App only re-renders when its own slices move: the session count (drives
+  // empty/active-group chrome), the active id (drives the status bar), and a
+  // few stable action handles that are referenced by the render.
+  const sessionCount = useSessions((s) => s.sessions.length)
+  const activeId = useSessions((s) => s.activeId)
+  const sessionsRef = useSessions((s) => s.sessions)
+  const addLocal = useSessions((s) => s.addLocal)
+  const addBrowser = useSessions((s) => s.addBrowser)
+  const [globalSearchOpen, setGlobalSearchOpen] = useState(false)
   const closeSession = useSessions((s) => s.close)
   const setSessionActive = useSessions((s) => s.setActive)
   const groups = useLayout((s) => s.groups)
@@ -130,7 +144,7 @@ export default function App() {
 
   useEffect(() => {
     window.devterm.localContext().then(setLocal)
-    if (sessions.length === 0) addLocal()
+    if (sessionCount === 0) addLocal()
     // Push the saved auto-reconnect policy into the main process once on
     // boot so the SSH manager's loop matches what the user has configured.
     // (The settings store also pushes on every change; this is the initial
@@ -316,6 +330,9 @@ export default function App() {
         case 'shortcuts':
           setShowShortcuts((v) => !v)
           break
+        case 'globalSearch':
+          setGlobalSearchOpen((v) => !v)
+          break
       }
     }
     window.addEventListener('keydown', onKey)
@@ -325,15 +342,15 @@ export default function App() {
 
   // Keep the per-group tiling layout reconciled with the live session list.
   const sessionKey = useMemo(
-    () => sessions.map((s) => `${s.id}@${s.groupId || DEFAULT_GROUP}`).join(','),
-    [sessions]
+    () => sessionsRef.map((s) => `${s.id}@${s.groupId || DEFAULT_GROUP}`).join(','),
+    [sessionsRef]
   )
   useEffect(() => {
-    syncLayout(sessions.map((s) => ({ id: s.id, groupId: s.groupId })))
+    syncLayout(sessionsRef.map((s) => ({ id: s.id, groupId: s.groupId })))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionKey])
 
-  const active = sessions.find((s) => s.id === activeId) || null
+  const active = sessionsRef.find((s) => s.id === activeId) || null
 
   // Switch the visible terminal group, focusing its active terminal.
   const switchGroup = (gid: string) => {
@@ -343,21 +360,23 @@ export default function App() {
   }
   // Close a whole group: close every terminal in it.
   const closeGroup = (gid: string) => {
-    sessions.filter((s) => (s.groupId || DEFAULT_GROUP) === gid).forEach((s) => closeSession(s.id))
+    sessionsRef
+      .filter((s) => (s.groupId || DEFAULT_GROUP) === gid)
+      .forEach((s) => closeSession(s.id))
   }
   const groupCount = (gid: string) =>
-    sessions.filter((s) => (s.groupId || DEFAULT_GROUP) === gid).length
+    sessionsRef.filter((s) => (s.groupId || DEFAULT_GROUP) === gid).length
 
   // Drag-drop a terminal tab onto a group tab: move that session into the group
   // (the layout sync reconciles the trees) and follow it there.
   const moveToGroup = (sid: string, gid: string) => {
-    if (!sid || !sessions.some((s) => s.id === sid)) return
+    if (!sid || !sessionsRef.some((s) => s.id === sid)) return
     useSessions.getState().setGroup(sid, gid)
     setActiveGroup(gid)
   }
   // Drag-drop onto the "+" zone: spin the dragged terminal off into a brand-new group.
   const spinOffGroup = (sid: string) => {
-    if (!sid || !sessions.some((s) => s.id === sid)) return
+    if (!sid || !sessionsRef.some((s) => s.id === sid)) return
     const gid = createGroup()
     useSessions.getState().setGroup(sid, gid)
   }
@@ -367,15 +386,15 @@ export default function App() {
   // new ungrouped one). An empty active group shows the "Empty group" prompt.
   const visibleGroups = groups
   // Terminals the active group can be saved as a workspace from.
-  const capturable = capturableSessions(sessions, activeGroupId)
+  const capturable = capturableSessions(sessionsRef, activeGroupId)
   // A freshly created group has no terminals yet — show a prompt to add one.
   const activeGroupCount = groupCount(activeGroupId)
   // The group bar now also hosts the "Save as workspace" action, so show it
   // whenever terminals are open (not just when there's more than one group).
-  const showGroupBar = !editorFocused && sessions.length > 0
+  const showGroupBar = !editorFocused && sessionCount > 0
 
   const saveWorkspace = async (name: string) => {
-    const { items, layout } = captureWorkspace(sessions, activeGroupId)
+    const { items, layout } = captureWorkspace(sessionsRef, activeGroupId)
     if (!items.length) return
     await window.devterm.workspaces.save({ id: '', name, items, layout })
     setShowSaveWs(false)
@@ -394,7 +413,7 @@ export default function App() {
     const list = await window.devterm.workspaces.list()
     const ws = list.find((w) => w.id === launchedFromId)
     if (!ws) return
-    const { items, layout } = captureWorkspace(sessions, activeGroupId)
+    const { items, layout } = captureWorkspace(sessionsRef, activeGroupId)
     if (!items.length) return
     await window.devterm.workspaces.save({
       ...ws,
@@ -653,10 +672,13 @@ export default function App() {
                       terminals sized and pauses their render loops; see view-pane above. */}
                   <div
                     className={`layout-wrap${
-                      editorFocused || sessions.length === 0 ? ' term-hidden' : ''
+                      editorFocused || sessionCount === 0 ? ' term-hidden' : ''
                     }`}
                   >
-                    <TerminalLayout sessions={sessions} onNewTerminal={() => setShowPicker(true)} />
+                    <TerminalLayout
+                      sessions={sessionsRef}
+                      onNewTerminal={() => setShowPicker(true)}
+                    />
                   </div>
                   {/*
                     The active tab has no terminals but others live in other groups —
@@ -665,7 +687,7 @@ export default function App() {
                     terminal always lands in the tab you're looking at. TerminalLayout
                     stays mounted regardless so other groups' PTYs live.
                   */}
-                  {!editorFocused && sessions.length > 0 && activeGroupCount === 0 && (
+                  {!editorFocused && sessionCount > 0 && activeGroupCount === 0 && (
                     <div className="empty empty-group-overlay">
                       <div className="empty-card">
                         <EmptyTerminalArt />
@@ -694,7 +716,7 @@ export default function App() {
                       <EditorView />
                     </div>
                   )}
-                  {sessions.length === 0 && !editorFocused && (
+                  {sessionCount === 0 && !editorFocused && (
                     <div className="empty">
                       <div className="empty-card">
                         <EmptyTerminalArt />
@@ -801,6 +823,18 @@ export default function App() {
       )}
       {showShortcuts && <ShortcutsModal onClose={() => setShowShortcuts(false)} />}
       <ConfirmActionModal />
+      <GlobalSearchModal
+        isOpen={globalSearchOpen}
+        onClose={() => setGlobalSearchOpen(false)}
+        onJump={(sid) => {
+          // Focus the session the match came from. Scrolling the xterm viewport
+          // to the exact line is a follow-up (xterm's SearchAddon finds it, but
+          // wiring per-pane scroll needs the SearchBar open in that pane).
+          setSessionActive(sid)
+          focusTerminal(sid)
+          setGlobalSearchOpen(false)
+        }}
+      />
     </div>
   )
 }

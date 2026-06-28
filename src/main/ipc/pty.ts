@@ -2,6 +2,7 @@ import { ipcMain, BrowserWindow } from 'electron'
 import { IPC, type PtyCreateOptions } from '@shared/types'
 import { PtyManager } from '../pty/manager'
 import { makeCoalescer } from './coalesce'
+import { globalSearchIndex } from '../search/index'
 
 /**
  * Registers PTY IPC handlers. Data/exit events are pushed to the renderer on
@@ -13,10 +14,33 @@ export function registerPtyIpc(getWindow: () => BrowserWindow | null): PtyManage
     if (win && !win.isDestroyed()) win.webContents.send(channel, ...args)
   }
 
-  const sendData = makeCoalescer((id, data) => send(`${IPC.ptyData}:${id}`, data))
+  const sendData = makeCoalescer((id, data) => {
+    // Feed live PTY output into global search index (MVP: split per line).
+    // A push can throw on a closed session (the index drops it); we never
+    // want a search-index glitch to break the live PTY data path.
+    try {
+      globalSearchIndex.pushLine(id, data)
+    } catch {
+      /* search index miss — keep streaming */
+    }
+    send(`${IPC.ptyData}:${id}`, data)
+  })
   const manager = new PtyManager({
-    onData: (id, data) => sendData(id, data),
-    onExit: (id, exitCode, signal) => send(`${IPC.ptyExit}:${id}`, { exitCode, signal })
+    onData: (id, data) => sendData.push(id, data),
+    onExit: (id, exitCode, signal) => {
+      // Flush any buffered output for this pty first so the exit event can't
+      // overtake the process's final bytes still sitting in the coalescer.
+      sendData.flush(id)
+      send(`${IPC.ptyExit}:${id}`, { exitCode, signal })
+    },
+    onStartupFailure: (id, info) => {
+      // Fired when a shell exits within the startup health window without
+      // ever producing data — the Windows PowerShell 5.1 0x8009001d case is
+      // the canonical example. Pushed to the renderer so its TerminalView can
+      // render a targeted diagnostic instead of the generic exit banner.
+      // Independent of the regular exit event; both fire.
+      send(`${IPC.ptyStartupFailure}:${id}`, info)
+    }
   })
 
   ipcMain.handle(IPC.ptyCreate, (_e, opts: PtyCreateOptions) => manager.create(opts))

@@ -132,7 +132,7 @@ export default function FileExplorer() {
     // Subscribe to live updates. The preload wrapper returns an unsubscribe
     // that also tells main to stop polling when no renderers care anymore.
     window.devterm.git.watch(target)
-    const off = window.devterm.git.onChange(p, (s) => {
+    const off = window.devterm.git.onChange(target, (s) => {
       if (!cancelled) setGitStatus(s)
     })
     return () => {

@@ -2,16 +2,55 @@
 // Keep this free of Electron/Node imports so both sides can import it.
 
 export interface PtyCreateOptions {
-  /** Optional shell override; main picks a sensible default per-OS when omitted. */
+  /** Optional shell override (absolute path); main picks a sensible default per-OS when omitted. */
   shell?: string
+  /**
+   * Optional user default-shell preference. The main process resolves this to
+   * an absolute path (preferring installed shells in the documented order),
+   * falling back to `shell` and then to the OS default. `auto` means "pick the
+   * best installed shell" — PowerShell 7 if present, else Windows PowerShell,
+   * else cmd.exe on Windows; on POSIX, `$SHELL`. `custom` is a free-form path
+   * (wsl.exe, Git Bash, nushell, …).
+   */
+  shellPref?: DefaultShellPref
   cwd?: string
   cols: number
   rows: number
 }
 
+/**
+ * User's preferred local shell. Mirrors the renderer's settings-store shape
+ * so the IPC can pass it through unchanged; `main/pty/manager.ts` resolves it
+ * to an absolute path. See `defaultShell()` for the auto-pick order.
+ */
+export type DefaultShellPref =
+  | { kind: 'auto' }
+  | { kind: 'pwsh' }
+  | { kind: 'powershell' }
+  | { kind: 'cmd' }
+  | { kind: 'custom'; path: string }
+
 export interface PtyCreated {
   id: string
   shell: string
+}
+
+/**
+ * Why a freshly-spawned PTY exited before emitting any data. Carries enough
+ * context for the renderer to render a targeted diagnostic instead of the
+ * generic "[process exited]" notice — Windows PowerShell 5.1's managed
+ * signature failure (`NTE_BAD_SIGNATURE` / 0x8009001d, often from antivirus
+ * tampering) shows up here. The main process watches for "no data, just an
+ * exit" within a short health window and fires this; the renderer matches
+ * it to its session id.
+ */
+export interface PtyStartupFailure {
+  /** The shell that was launched (absolute path). */
+  shell: string
+  /** Exit code reported by the process; undefined if ConPTY tore down without one. */
+  exitCode?: number
+  /** Signal that killed the process, if any. */
+  signal?: number
 }
 
 // ---------------------------------------------------------------------------
@@ -351,6 +390,13 @@ export const IPC = {
   ptyKill: 'pty:kill',
   ptyData: 'pty:data', // suffixed :<id>
   ptyExit: 'pty:exit', // suffixed :<id>
+  /**
+   * Fired when a freshly-spawned PTY exited without ever producing data —
+   * the typical Windows PowerShell 5.1 managed-signature failure
+   * (0x8009001d). Pairs with the renderer-side diagnostic that suggests
+   * installing PowerShell 7 or switching the default shell.
+   */
+  ptyStartupFailure: 'pty:startup-failure', // suffixed :<id>
 
   // local context
   localContext: 'ctx:local',
@@ -439,6 +485,7 @@ export const IPC = {
   // system clipboard
   clipboardWrite: 'clipboard:write',
   clipboardRead: 'clipboard:read',
+  clipboardSaveImage: 'clipboard:saveImage',
 
   // in-app browser: a guest page asked to open a new window → open it as a tab
   browserOpenTab: 'browser:open-tab',
@@ -488,7 +535,8 @@ export const IPC = {
   browserZoomReset: 'browser:zoom:reset',
   browserDevtoolsOpen: 'browser:devtools:open',
   browserMute: 'browser:mute',
-  browserDownloadsEvent: 'browser:downloads:event'
+  browserDownloadsEvent: 'browser:downloads:event',
+  searchQuery: 'search:query'
 } as const
 
 /** Typed surface exposed to the renderer via contextBridge (see preload). */
@@ -505,6 +553,15 @@ export interface DevTermApi {
       id: string,
       cb: (e: { exitCode: number | undefined; signal?: number }) => void
     ): () => void
+    /**
+     * Fires once if a fresh PTY exited without ever producing data — the
+     * classic "Windows PowerShell failed to start" pattern (typically the
+     * managed-signature 0x8009001d error). The renderer uses this to render
+     * a targeted diagnostic with a copy-pasteable fix instead of the generic
+     * exit notice. Always paired with `onExit`; the regular exit handler
+     * still fires so the pane can clean up.
+     */
+    onStartupFailure(id: string, cb: (info: PtyStartupFailure) => void): () => void
   }
   ssh: {
     connect(profile: SSHProfile): Promise<SSHConnectResult>
@@ -620,6 +677,13 @@ export interface DevTermApi {
   clipboard: {
     writeText(text: string): Promise<void>
     readText(): Promise<string>
+    /**
+     * If the system clipboard holds an image (e.g. a screenshot), save it to a
+     * temp PNG and return the absolute path; otherwise null. Used by terminal
+     * paste so a coding agent in the shell can attach a pasted image by path
+     * (xterm can't forward binary image data through the PTY).
+     */
+    saveImage(): Promise<string | null>
   }
   /** In-app browser pane plumbing. */
   browser: {
@@ -718,8 +782,11 @@ export interface DevTermApi {
     /**
      * Subscribe to status changes for a given working dir. The main process
      * polls every 5s and pushes an updated `GitStatus` whenever it changes.
+     * Pass the same `target` you pass to `watch()` so the subscription is scoped
+     * per session+path (a local and a remote repo at the same path don't collide)
+     * and the unsubscribe stops the right poll.
      */
-    onChange(path: string, cb: (status: GitStatus) => void): () => void
+    onChange(target: { sessionId?: string; path: string }, cb: (status: GitStatus) => void): () => void
     /**
      * Explicit "start polling" nudge for `path`. Pair with the unsubscribe
      * returned by `onChange`. Best-effort: a missing main process is fine.
@@ -785,6 +852,11 @@ export interface DevTermApi {
   openBrowserDevtools(webContentsId: number): Promise<void>
   /** Mute / unmute a <webview> guest identified by webContents id. */
   setBrowserMuted(webContentsId: number, muted: boolean): Promise<void>
+
+  /** Global terminal search (live + history). */
+  search: {
+    query(q: string): Promise<SearchResult[]>
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -995,5 +1067,18 @@ export interface BrowserDownloadItem {
 /** Per-origin zoom level (1 = 100%, 1.5 = 150%). */
 export interface BrowserZoomMap {
   [origin: string]: number
+}
+
+// ---------------------------------------------------------------------------
+// Global Terminal Search (MVP)
+// ---------------------------------------------------------------------------
+
+export interface SearchResult {
+  sessionId: string
+  sessionTitle: string
+  lineNumber: number
+  text: string
+  timestamp?: string
+  kind: 'live' | 'history' | 'detached'
 }
 

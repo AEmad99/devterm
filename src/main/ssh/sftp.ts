@@ -78,6 +78,10 @@ export async function writeFileRemote(
   content: string
 ): Promise<{ mtimeMs: number; size: number }> {
   const p = posix.normalize(path)
+  // Mirror the local write cap (and the editor's open limit) so a hostile or
+  // runaway caller can't push an unbounded buffer through the SFTP channel.
+  if (Buffer.byteLength(content, 'utf8') > MAX_EDIT_BYTES)
+    throw new Error(`Refusing to write more than ${MAX_EDIT_BYTES / 1024 / 1024} MB`)
   const buf = encodeText(content)
   await promise<void>((cb) => sftp.writeFile(p, buf, (err) => cb(err, undefined)))
   const st = await statRemote(sftp, p)

@@ -11,8 +11,13 @@ export function registerSshIpc(getWindow: () => BrowserWindow | null): SSHManage
 
   const sendData = makeCoalescer((id, data) => send(`${IPC.sshData}:${id}`, data))
   const manager = new SSHManager({
-    onData: (id, data) => sendData(id, data),
-    onExit: (id) => send(`${IPC.sshExit}:${id}`),
+    onData: (id, data) => sendData.push(id, data),
+    onExit: (id) => {
+      // Flush buffered shell output before the close event so the last bytes
+      // can't arrive after the "connection closed" banner.
+      sendData.flush(id)
+      send(`${IPC.sshExit}:${id}`)
+    },
     onStatus: (id, status: SSHStatus) => send(`${IPC.sshStatus}:${id}`, status)
   })
 

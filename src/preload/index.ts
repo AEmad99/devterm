@@ -48,7 +48,12 @@ const api: DevTermApi = {
     resize: (id, cols, rows) => ipcRenderer.send(IPC.ptyResize, id, cols, rows),
     kill: (id) => ipcRenderer.send(IPC.ptyKill, id),
     onData: (id, cb) => subscribe<string>(`${IPC.ptyData}:${id}`, cb),
-    onExit: (id, cb) => subscribe<{ exitCode: number; signal?: number }>(`${IPC.ptyExit}:${id}`, cb)
+    onExit: (id, cb) => subscribe<{ exitCode: number; signal?: number }>(`${IPC.ptyExit}:${id}`, cb),
+    onStartupFailure: (id, cb) =>
+      subscribe<import('@shared/types').PtyStartupFailure>(
+        `${IPC.ptyStartupFailure}:${id}`,
+        cb
+      )
   },
   ssh: {
     connect: (profile: SSHProfile): Promise<SSHConnectResult> =>
@@ -105,7 +110,10 @@ const api: DevTermApi = {
     unwatch: (watchId: string) => ipcRenderer.send(IPC.sftpUnwatch, watchId),
     onWatchEvent: (watchId, cb) => subscribe<DirListing>(`${IPC.sftpWatchEvent}:${watchId}`, cb)
   },
-  transfer: {
+  search: {
+      query: (q: string) => ipcRenderer.invoke(IPC.searchQuery, q)
+    },
+    transfer: {
     start: (opts: TransferStartOpts): Promise<string> =>
       ipcRenderer.invoke(IPC.transferStart, opts),
     cancel: (id: string) => ipcRenderer.send(IPC.transferCancel, id),
@@ -158,7 +166,8 @@ const api: DevTermApi = {
   },
   clipboard: {
     writeText: (text: string): Promise<void> => ipcRenderer.invoke(IPC.clipboardWrite, text),
-    readText: (): Promise<string> => ipcRenderer.invoke(IPC.clipboardRead)
+    readText: (): Promise<string> => ipcRenderer.invoke(IPC.clipboardRead),
+    saveImage: (): Promise<string | null> => ipcRenderer.invoke(IPC.clipboardSaveImage)
   },
   browser: {
     onOpenTab: (cb) => subscribe<{ sourceId: number; url: string }>(IPC.browserOpenTab, cb)
@@ -225,17 +234,22 @@ const api: DevTermApi = {
      * underlying source every 5s and only pushes when the snapshot changed.
      * Returns an unsubscribe; calling it is safe before the first event.
      */
-    onChange: (path: string, cb: (status: GitStatus) => void): (() => void) => {
-      // The renderer-side bookkeeping (which session owns the path) is open-
-      // coded here; the main side uses an `add` invoke to start polling and a
-      // `remove` to stop it. Path is the only renderer-side key.
-      const channel = `${IPC.gitOnChange}:${path}`
+    onChange: (
+      target: { sessionId?: string; path: string },
+      cb: (status: GitStatus) => void
+    ): (() => void) => {
+      // Channel key mirrors main's cacheKey(): scope by session so a local and a
+      // remote repo at the same path string don't cross-talk, and so the
+      // unsubscribe removes the exact entry `watch()` added (the old path-only
+      // key never matched remote watches, leaking a 5s SSH git poll per dir).
+      const key = target.sessionId ? `r:${target.sessionId}:${target.path}` : `l:${target.path}`
+      const channel = `${IPC.gitOnChange}:${key}`
       const off = subscribe<GitStatus>(channel, cb)
       return () => {
         off()
         // Best-effort: tell main we no longer care. Failure (e.g. main quit)
         // is fine — the next GC pass cleans the watch list.
-        ipcRenderer.send(`${IPC.gitOnChange}:remove`, { path })
+        ipcRenderer.send(`${IPC.gitOnChange}:remove`, target)
       }
     },
     /**

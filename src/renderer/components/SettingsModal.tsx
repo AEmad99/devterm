@@ -1,5 +1,6 @@
 import { useState, type CSSProperties } from 'react'
 import { useSettings } from '../store/settings'
+import type { DefaultShellPref } from '@shared/types'
 import { THEMES, getTheme, applyTheme, type Theme } from '../lib/themes'
 import { chime } from '../lib/attention'
 import { IconClose } from './Icons'
@@ -86,8 +87,33 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
   const attention = useSettings((s) => s.attention)
   const setAttention = useSettings((s) => s.setAttention)
   const reset = useSettings((s) => s.reset)
+  const defaultShell = useSettings((s) => s.defaultShell)
+  const setDefaultShell = useSettings((s) => s.setDefaultShell)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [shellHint, setShellHint] = useState<string | null>(null)
+  const [pwshBusy, setPwshBusy] = useState(false)
+
+  const copyText = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text)
+      setShellHint(`Copied: ${text}`)
+      window.setTimeout(() => setShellHint(null), 1800)
+    } catch {
+      setShellHint('Copy failed — select the text manually')
+      window.setTimeout(() => setShellHint(null), 2500)
+    }
+  }
+
+  const runShellPref = async (run: () => Promise<void>) => {
+    setShellHint(null)
+    setPwshBusy(true)
+    try {
+      await run()
+    } finally {
+      setPwshBusy(false)
+    }
+  }
 
   const pickTheme = (id: string) => {
     setThemeId(id)
@@ -361,6 +387,85 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
               />
             </span>
           </label>
+        </section>
+
+        <section className="settings-section">
+          <h3>Default local shell</h3>
+          <div className="settings-sub-hint">
+            What new local terminals spawn. <code>Auto</code> picks the best
+            installed shell — PowerShell 7 when present (avoids Windows
+            PowerShell 5.1&apos;s signature-check failure), else Windows
+            PowerShell, else cmd.exe. Pick a specific shell to force it.
+          </div>
+
+          <label className="settings-row">
+            <span className="settings-label">Shell</span>
+            <span className="settings-control">
+              <select
+                className="settings-select"
+                value={defaultShell.kind}
+                onChange={(e) => {
+                  const k = e.target.value as DefaultShellPref['kind']
+                  if (k === 'custom') {
+                    setDefaultShell({
+                      kind: 'custom',
+                      path:
+                        defaultShell.kind === 'custom' ? defaultShell.path : ''
+                    })
+                  } else {
+                    setDefaultShell({ kind: k } as DefaultShellPref)
+                  }
+                }}
+              >
+                <option value="auto">Auto (recommended)</option>
+                <option value="pwsh">PowerShell 7 (pwsh.exe)</option>
+                <option value="powershell">Windows PowerShell 5.1</option>
+                <option value="cmd">Command Prompt (cmd.exe)</option>
+                <option value="custom">Custom path…</option>
+              </select>
+            </span>
+          </label>
+
+          {defaultShell.kind === 'custom' && (
+            <label className="settings-row">
+              <span className="settings-label">Path</span>
+              <span className="settings-control">
+                <input
+                  className="settings-hex"
+                  type="text"
+                  spellCheck={false}
+                  placeholder="C:\Program Files\PowerShell\7\pwsh.exe"
+                  value={defaultShell.path}
+                  onChange={(e) => setDefaultShell({ kind: 'custom', path: e.target.value })}
+                />
+              </span>
+            </label>
+          )}
+
+          {window.devterm.platform === 'win32' && (
+            <div className="settings-row">
+              <span className="settings-label">Install PowerShell 7</span>
+              <span className="settings-control">
+                <button
+                  className="ghost small"
+                  disabled={pwshBusy}
+                  title="Copy the winget command to the clipboard"
+                  onClick={() =>
+                    runShellPref(async () => {
+                      await copyText('winget install Microsoft.PowerShell')
+                    })
+                  }
+                >
+                  Copy winget command
+                </button>
+                {shellHint && (
+                  <span className="settings-sub-hint" style={{ marginLeft: 8 }}>
+                    {shellHint}
+                  </span>
+                )}
+              </span>
+            </div>
+          )}
         </section>
 
         <section className="settings-section">

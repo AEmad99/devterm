@@ -16,12 +16,20 @@ export type RuleOutcome = 'allow' | 'deny' | 'ask'
 export type RuleMatcher = (sessionId: string, command: string) => Promise<{ outcome: RuleOutcome } | undefined>
 
 // Destructive operations are confirmed in "confirm" mode and allowed in "full".
+// NOTE: this is a defense-in-depth denylist over a *cooperative* agent, not a
+// hard sandbox — a determined model can obfuscate around any regex (base64,
+// `$IFS`, env indirection). `full` is the only honestly-unrestricted mode; treat
+// `read_only`/`confirm` as guardrails that catch the obvious cases. We match
+// `rm -f` as well as `rm -r`, `dd of=` (the writing form), and add shred /
+// find -delete / rsync --delete and more device nodes.
 const DESTRUCTIVE =
-  /(\brm\s+-[a-z]*r|\bmkfs\b|\bdd\s+if=|:\(\)\s*\{|\bshutdown\b|\breboot\b|\bsystemctl\s+(stop|disable|mask)\b|\b(oc|kubectl)\s+delete\b|\bdrop\s+(database|table)\b|>\s*\/dev\/sd)/i
+  /(\brm\s+-[a-z]*[rf]|\bmkfs\b|\bdd\b[^|;&]*\bof=|\bshred\b|\bfind\b.*\s-delete\b|\brsync\b.*\s--delete\b|:\(\)\s*\{|\bshutdown\b|\breboot\b|\bsystemctl\s+(stop|disable|mask)\b|\b(oc|kubectl)\s+delete\b|\bdrop\s+(database|table)\b|>\s*\/dev\/(sd|nvme|hd|vd|mapper))/i
 
-// Anything that mutates state is blocked outright on read-only hosts.
+// Anything that mutates state is blocked outright on read-only hosts. Adds the
+// in-place / truncating writers the old list missed (sed -i, truncate, unlink,
+// chattr) so read-only actually blocks file modification, not just `rm`/`>`.
 const MUTATING =
-  /(\b(rm|mv|cp|touch|mkdir|rmdir|chmod|chown|ln|kill|pkill|tee)\b|>>?|\b(yum|dnf|apt|apt-get|pip|npm)\s+(install|remove|update|upgrade)|\bsystemctl\s+(start|restart|enable)|\b(oc|kubectl)\s+(apply|create|scale|edit|patch)|\bgit\s+(push|reset|clean)|\bnpm\s+publish)/i
+  /(\b(rm|mv|cp|touch|mkdir|rmdir|chmod|chown|chattr|ln|kill|pkill|tee|truncate|unlink)\b|\bsed\s+-i|>>?|\b(yum|dnf|apt|apt-get|pip|npm)\s+(install|remove|update|upgrade)|\bsystemctl\s+(start|restart|enable)|\b(oc|kubectl)\s+(apply|create|scale|edit|patch)|\bgit\s+(push|reset|clean)|\bnpm\s+publish)/i
 
 /**
  * Per-host guardrail layer enforced at the MCP boundary. Read-only blocks

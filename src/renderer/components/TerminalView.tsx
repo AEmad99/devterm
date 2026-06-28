@@ -29,6 +29,56 @@ const EXIT_RESET =
   '\x1b[0m' + // reset colors/attributes
   '\x1b[?25h' // show the cursor
 
+/** True for any path under the in-box Windows PowerShell 5.1 install —
+ * the only shell DevTerm has a specific diagnostic for. */
+function isWindowsPowerShellPath(p: string): boolean {
+  return /[\\/]WindowsPowerShell[\\/]v1\.0[\\/]powershell\.exe$/i.test(p)
+}
+
+/** ANSI-colored, terminal-friendly diagnostic for Windows PowerShell 5.1's
+ * classic managed-signature failure (NTSTATUS 0x8009001d). The banner is
+ * written straight into xterm — the user can copy any line with the cursor.
+ * The "Install PowerShell 7" copy is the recommended fix because PowerShell
+ * 7 (pwsh.exe) ships its own managed runtime and doesn't trip the same
+ * signature check; it's a single `winget install` away. */
+function powershellFailureHelp(): string {
+  return [
+    '',
+    '\x1b[33mWindows PowerShell failed to start.\x1b[0m',
+    '\x1b[90mThis is almost always a managed-assembly signature failure\x1b[0m',
+    '\x1b[90m(0x8009001d / NTE_BAD_SIGNATURE) — commonly caused by antivirus\x1b[0m',
+    '\x1b[90mquarantining a PowerShell DLL, a corrupted .NET Framework install,\x1b[0m',
+    '\x1b[90mor an out-of-sync system clock.\x1b[0m',
+    '',
+    '\x1b[36mRecommended fix — install PowerShell 7:\x1b[0m',
+    '  winget install Microsoft.PowerShell',
+    '',
+    '\x1b[90mThen either:\x1b[0m',
+    '  1. open a new terminal (DevTerm auto-detects pwsh.exe), or',
+    '  2. Settings \u2192 General \u2192 Default local shell \u2192 PowerShell 7',
+    '',
+    '\x1b[90mIf you need Windows PowerShell back, repair the .NET Framework:\x1b[0m',
+    '  DISM /Online /Cleanup-Image /RestoreHealth',
+    '  sfc /scannow',
+    ''
+  ].join('\r\n') + '\r\n'
+}
+
+/** Fallback diagnostic for any other "shell exited before first prompt" case.
+ * Less specific — covers wsl.exe pointing at a missing distro, a `custom`
+ * shell path that's wrong, a 32/64-bit mismatch, etc. */
+function genericFailureHelp(shell: string): string {
+  return [
+    '',
+    '\x1b[33mThe shell exited before producing any output.\x1b[0m',
+    `\x1b[90m  Path: ${shell}\x1b[0m`,
+    '\x1b[90mCommon causes: missing executable, broken symlink, or a\x1b[0m',
+    '\x1b[90m32/64-bit mismatch. Settings \u2192 General \u2192 Default local shell\x1b[0m',
+    '\x1b[90mcan pick a different shell (cmd.exe, PowerShell 7, custom path).\x1b[0m',
+    ''
+  ].join('\r\n') + '\r\n'
+}
+
 /** Apply the user's background settings to the terminal host element (image + dim + colour). */
 function applyHostBg(host: HTMLElement, bg: TerminalBg, theme: Theme): void {
   host.style.backgroundColor = terminalHostColor(theme)
@@ -60,6 +110,13 @@ function TerminalView({ session }: { session: Session }) {
   const [findOpen, setFindOpen] = useState(false)
   const [suggestView, setSuggestView] = useState<SuggestView | null>(null)
   const suggestRef = useRef<AutosuggestController | null>(null)
+  // Cached bell setting, refreshed by the prefs effect below. Read on every PTY
+  // data chunk by writeData — a `useSettings.getState()` per chunk is cheap but
+  // compounds on a fast stream, and the chunk path is one of the few that runs
+  // in tight loops. Cache once, update on the existing prefs effect. Seed the
+  // ref with the current setting so the main effect's writeData closure sees
+  // the right value before the prefs effect's first run.
+  const bellOnRef = useRef(useSettings.getState().prefs.bell === 'visual')
 
   useEffect(() => {
     const host = hostRef.current
@@ -192,7 +249,11 @@ function TerminalView({ session }: { session: Session }) {
       window.setTimeout(() => host.classList.remove('bell-flash'), 160)
     }
     const writeData = (d: string) => {
-      if (d.indexOf('\x07') !== -1 && useSettings.getState().prefs.bell === 'visual') flashBell()
+      // Bell scan only runs when the user opted in. Skipping `indexOf('\x07')`
+      // when the cached setting is off skips a full-chunk scan on every PTY
+      // data chunk — the data path runs in tight loops during fast command
+      // output, so this micro-opt is worth it.
+      if (bellOnRef.current && d.indexOf('\x07') !== -1) flashBell()
       idleChime.feed(d)
       term.write(d)
     }
@@ -268,16 +329,53 @@ function TerminalView({ session }: { session: Session }) {
         const { id } = await window.devterm.pty.create({
           cols: term.cols,
           rows: term.rows,
-          cwd: session.startCwd
+          cwd: session.startCwd,
+          // Honor the user's default-shell setting on each new local terminal.
+          // The main process resolves the pref to an absolute path (or to its
+          // own default when the chosen shell isn't installed). Reading via
+          // getState() — the terminal mount path doesn't need to re-render on
+          // shell-pref changes; existing terminals keep their original pty.
+          shellPref: useSettings.getState().defaultShell
         })
         if (disposed) return window.devterm.pty.kill(id)
         cleanups.push(window.devterm.pty.onData(id, writeData))
+        // Startup-failure diagnostic: if the main process saw the shell exit
+        // before emitting any data (Windows PowerShell 5.1's 0x8009001d is the
+        // canonical case), capture the shell path here so the upcoming
+        // onExit can render a targeted fix instead of a generic notice. The
+        // diagnostic fires once and races the exit event; whichever wins last
+        // drives the message.
+        let startupShell: string | undefined
+        cleanups.push(
+          window.devterm.pty.onStartupFailure(id, (info) => {
+            startupShell = info.shell
+          })
+        )
         cleanups.push(
           window.devterm.pty.onExit(id, ({ exitCode }) => {
             // ConPTY can tear down without reporting a code (e.g. the console
             // host died under a misbehaving TUI) — don't print "code undefined".
             const code = typeof exitCode === 'number' ? ` with code ${exitCode}` : ''
-            term.write(`${EXIT_RESET}\r\n\x1b[90m[process exited${code}]\x1b[0m\r\n`)
+            if (startupShell) {
+              // Render a targeted diagnostic instead of the generic exit
+              // notice. The banner is plain ASCII + ANSI colour so it lands
+              // intact on whatever shell the user opens next (the pane is
+              // already terminal-shaped — a clipboard-friendly fix is more
+              // useful than a styled component here).
+              term.write(`${EXIT_RESET}\r\n`)
+              term.write(`\x1b[31m[Shell failed to start]\x1b[0m\r\n`)
+              term.write(`\x1b[90m  ${startupShell}\x1b[0m\r\n`)
+              term.write(
+                `\x1b[90m  Exit code: ${typeof exitCode === 'number' ? exitCode : 'unknown'}\x1b[0m\r\n`
+              )
+              term.write(
+                isWindowsPowerShellPath(startupShell)
+                  ? powershellFailureHelp()
+                  : genericFailureHelp(startupShell)
+              )
+            } else {
+              term.write(`${EXIT_RESET}\r\n\x1b[90m[process exited${code}]\x1b[0m\r\n`)
+            }
           })
         )
         sendInput = (d) => window.devterm.pty.input(id, d)
@@ -369,6 +467,9 @@ function TerminalView({ session }: { session: Session }) {
     if (fitRef.current && fitNow(fitRef.current, host)) {
       resizeRef.current?.(term.cols, term.rows)
     }
+    // Refresh the per-terminal bell cache so the writeData hot path can skip
+    // its indexOf scan when the user has bells disabled.
+    bellOnRef.current = prefs.bell === 'visual'
   }, [prefs])
 
   const reconnect = async () => {

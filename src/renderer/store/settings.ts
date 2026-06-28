@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { AgentKind } from '@shared/types'
+import type { AgentKind, DefaultShellPref } from '@shared/types'
 
 /**
  * User-facing settings for terminals. Persisted to localStorage (renderer-only,
@@ -64,6 +64,13 @@ export interface AppSettings {
    * also re-hide itself on session close.
    */
   transfersPanelOpen: boolean
+  /**
+   * Which local shell to spawn for new terminals. Defaults to `auto` so the
+   * main process picks PowerShell 7 when available (no signature-loading
+   * bug), else Windows PowerShell 5.1, else cmd.exe. Override here when
+   * you want a specific shell (e.g. `wsl.exe`, Git Bash, nushell).
+   */
+  defaultShell: DefaultShellPref
 }
 
 /**
@@ -142,7 +149,8 @@ const DEFAULTS: AppSettings = {
   showStatusBar: true,
   agentActivityCollapsed: false,
   agentKind: 'claude',
-  transfersPanelOpen: false
+  transfersPanelOpen: false,
+  defaultShell: { kind: 'auto' }
 }
 
 const STORAGE_KEY = 'devterm.settings.v1'
@@ -175,11 +183,30 @@ function load(): AppSettings {
       transfersPanelOpen:
         typeof parsed?.transfersPanelOpen === 'boolean'
           ? parsed.transfersPanelOpen
-          : DEFAULTS.transfersPanelOpen
+          : DEFAULTS.transfersPanelOpen,
+      defaultShell: normalizeDefaultShell(parsed?.defaultShell)
     }
   } catch {
     return DEFAULTS
   }
+}
+
+/**
+ * Validate the persisted defaultShell against the supported variants. Older
+ * saves (or hand-edited localStorage) with an unknown `kind` quietly fall back
+ * to `auto` so the renderer never hands the main process garbage.
+ */
+function normalizeDefaultShell(raw: unknown): DefaultShellPref {
+  if (raw && typeof raw === 'object') {
+    const r = raw as { kind?: unknown; path?: unknown }
+    if (r.kind === 'auto' || r.kind === 'pwsh' || r.kind === 'powershell' || r.kind === 'cmd') {
+      return { kind: r.kind }
+    }
+    if (r.kind === 'custom' && typeof r.path === 'string' && r.path.length > 0) {
+      return { kind: 'custom', path: r.path }
+    }
+  }
+  return DEFAULTS.defaultShell
 }
 
 interface SettingsState extends AppSettings {
@@ -192,6 +219,7 @@ interface SettingsState extends AppSettings {
   setAgentActivityCollapsed: (v: boolean) => void
   setAgentKind: (v: AgentKind) => void
   setTransfersPanelOpen: (v: boolean) => void
+  setDefaultShell: (pref: DefaultShellPref) => void
   reset: () => void
 }
 
@@ -208,7 +236,8 @@ function persist(state: AppSettings): void {
         showStatusBar: state.showStatusBar,
         agentActivityCollapsed: state.agentActivityCollapsed,
         agentKind: state.agentKind,
-        transfersPanelOpen: state.transfersPanelOpen
+        transfersPanelOpen: state.transfersPanelOpen,
+        defaultShell: state.defaultShell
       })
     )
   } catch {
@@ -270,6 +299,11 @@ export const useSettings = create<SettingsState>((set, get) => ({
     persist(snapshot(get()))
   },
 
+  setDefaultShell: (pref) => {
+    set({ defaultShell: pref })
+    persist(snapshot(get()))
+  },
+
   reset: () => {
     set({
       themeId: DEFAULTS.themeId,
@@ -280,7 +314,8 @@ export const useSettings = create<SettingsState>((set, get) => ({
       showStatusBar: DEFAULTS.showStatusBar,
       agentActivityCollapsed: DEFAULTS.agentActivityCollapsed,
       agentKind: DEFAULTS.agentKind,
-      transfersPanelOpen: DEFAULTS.transfersPanelOpen
+      transfersPanelOpen: DEFAULTS.transfersPanelOpen,
+      defaultShell: DEFAULTS.defaultShell
     })
     persist(DEFAULTS)
     void window.devterm.ssh.setReconnectPolicy?.(DEFAULTS.autoReconnect).catch(() => undefined)
@@ -299,6 +334,7 @@ function snapshot(s: SettingsState): AppSettings {
     showStatusBar: s.showStatusBar,
     agentActivityCollapsed: s.agentActivityCollapsed,
     agentKind: s.agentKind,
-    transfersPanelOpen: s.transfersPanelOpen
+    transfersPanelOpen: s.transfersPanelOpen,
+    defaultShell: s.defaultShell
   }
 }

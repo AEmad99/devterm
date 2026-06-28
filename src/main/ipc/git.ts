@@ -16,6 +16,7 @@ import {
   gitDiffLocal,
   parsePorcelainFromStdout
 } from '../git'
+import { quoteRemotePath } from '../shell-quote'
 import type { SSHManager } from '../ssh/manager'
 
 /** Per-directory cache entry. Expiry is 5s; changed snapshots are returned eagerly. */
@@ -53,7 +54,14 @@ async function resolveRemote(
   // never open a second connection. The shell-setup path uses the same exec
   // pattern for the OSC 7 probe, so this is the established way to ask the
   // host a one-shot question.
-  const r = await ssh.exec(sessionId, `cd "${path}" && git status --porcelain=1 --branch`, 30000)
+  // Quote the path: it comes from the file explorer's current directory, which
+  // follows the remote shell's cwd and can therefore be an attacker-influenced
+  // directory name. Plain double quotes do NOT stop `$(...)`/backtick expansion.
+  const r = await ssh.exec(
+    sessionId,
+    `cd ${quoteRemotePath(path)} && git status --porcelain=1 --branch`,
+    30000
+  )
   if (r.code !== 0) return { isRepo: false, branch: '', ahead: -1, behind: -1, entries: {} }
   return parsePorcelainFromStdout(r.stdout)
 }
@@ -90,9 +98,12 @@ export function registerGitIpc(ssh: SSHManager, getWindow: () => BrowserWindow |
     IPC.gitDiff,
     async (_e, target: { sessionId?: string; path: string; file: string }) => {
       if (target.sessionId) {
+        // Both the directory and the filename are untrusted; quote both with the
+        // POSIX-safe escaper rather than the old double-quote-only form (which
+        // left `$()`/backticks live).
         const r = await ssh.exec(
           target.sessionId,
-          `cd "${target.path}" && git diff -- "${target.file.replace(/"/g, '\\"')}"`,
+          `cd ${quoteRemotePath(target.path)} && git diff -- ${quoteRemotePath(target.file)}`,
           30000
         )
         return r.code === 0 ? r.stdout : ''
@@ -126,7 +137,10 @@ export function registerGitIpc(ssh: SSHManager, getWindow: () => BrowserWindow |
         const sig = signature(next)
         if (lastPushed.get(key) !== sig) {
           lastPushed.set(key, sig)
-          send(`${IPC.gitOnChange}:${path}`, next)
+          // Push on the session-scoped key (matches the preload subscription).
+          // Using path-only here let a local repo's updates land on a remote
+          // repo's listener at the same path, and vice versa.
+          send(`${IPC.gitOnChange}:${key}`, next)
         }
       } catch {
         /* ignore — git is best-effort */

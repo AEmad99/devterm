@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'http'
-import { randomBytes, randomUUID } from 'crypto'
+import { randomBytes, randomUUID, timingSafeEqual } from 'crypto'
 import type { AddressInfo } from 'net'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
@@ -206,7 +206,22 @@ export class McpBridge {
       res.writeHead(404).end()
       return
     }
-    if (req.headers['authorization'] !== `Bearer ${this.token}`) {
+    // Anti-DNS-rebinding / anti-cross-origin guard. The only legitimate client
+    // is the local agent CLI we spawn: it connects to 127.0.0.1:<port> and never
+    // sends an `Origin` header. A web page (e.g. the in-app browser pane, or any
+    // browser on the box after a DNS rebind) that tried to reach the bridge would
+    // carry an `Origin` and/or a non-loopback `Host`. The bundled MCP SDK ships
+    // no rebinding protection, so reject both here before touching the transport.
+    if (req.headers['origin']) {
+      res.writeHead(403, { 'content-type': 'text/plain' }).end('forbidden')
+      return
+    }
+    const host = req.headers['host']
+    if (host !== `127.0.0.1:${this.port}` && host !== `localhost:${this.port}`) {
+      res.writeHead(403, { 'content-type': 'text/plain' }).end('forbidden')
+      return
+    }
+    if (!safeBearerEqual(req.headers['authorization'], `Bearer ${this.token}`)) {
       res.writeHead(401, { 'content-type': 'text/plain' }).end('unauthorized')
       return
     }
@@ -264,6 +279,20 @@ export class McpBridge {
     }
     this.http?.close()
   }
+}
+
+/**
+ * Constant-time compare of the `Authorization` header against the expected
+ * `Bearer <token>` value. Avoids the early-exit timing side-channel of `!==`.
+ * Returns false on a missing header or length mismatch (length itself is not
+ * secret — the token is fixed-width).
+ */
+function safeBearerEqual(actual: string | undefined, expected: string): boolean {
+  if (typeof actual !== 'string') return false
+  const a = Buffer.from(actual)
+  const b = Buffer.from(expected)
+  if (a.length !== b.length) return false
+  return timingSafeEqual(a, b)
 }
 
 /**

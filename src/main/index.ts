@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, MenuItemConstructorOptions, clipboard, session, shell, dialog } from 'electron'
+import { BrowserWindow, Menu, MenuItemConstructorOptions, app, clipboard, dialog, ipcMain, session, shell } from 'electron'
 import { join } from 'path'
 
 // Pin Chromium's disk cache, GPU shader cache, and service-worker storage
@@ -64,6 +64,8 @@ process.on('uncaughtException', (err) => {
   }
 })
 import { registerPtyIpc } from './ipc/pty'
+import { IPC } from '@shared/types'
+import { globalSearchIndex } from './search/index'
 import { registerSshIpc } from './ipc/ssh'
 import { registerContextIpc } from './ipc/context'
 import { registerFileIpc } from './ipc/files'
@@ -79,11 +81,29 @@ import { registerFoundationIpc } from './foundation-ipc'
 import { registerGitIpc } from './ipc/git'
 import { registerTransfersIpc } from './ipc/transfers'
 import { registerBrowserIpc } from './ipc/browser'
-import { IPC } from '@shared/types'
 import { initAutoUpdater } from './updater'
 import type { PtyManager } from './pty/manager'
 import type { SSHManager } from './ssh/manager'
 import type { FileController } from './ipc/files'
+
+/**
+ * Hand a URL to the OS browser only when it uses a safe web scheme. `window.open`
+ * targets and guest link URLs are attacker-influenced; `shell.openExternal` will
+ * happily dispatch `file://`, `smb://`, or custom protocol-handler URIs to the OS
+ * (NTLM leaks via UNC paths, protocol-handler argument-injection RCE, etc.), so
+ * allow only http/https/mailto through.
+ */
+function openExternalSafe(url: string | undefined): void {
+  if (!url) return
+  try {
+    const { protocol } = new URL(url)
+    if (protocol === 'http:' || protocol === 'https:' || protocol === 'mailto:') {
+      void shell.openExternal(url)
+    }
+  } catch {
+    /* not a parseable URL — ignore */
+  }
+}
 
 let mainWindow: BrowserWindow | null = null
 let ptyManager: PtyManager | null = null
@@ -140,10 +160,29 @@ function createWindow(): void {
   // can never get stuck on after focus returns).
   mainWindow.on('focus', () => mainWindow?.flashFrame(false))
 
-  // Open external links in the OS browser, never in-app.
+  // Open external links in the OS browser, never in-app (and only safe schemes).
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url)
+    openExternalSafe(url)
     return { action: 'deny' }
+  })
+
+  // Lock the top frame to the app bundle. The main window's preload exposes the
+  // full DevTerm bridge (SSH, SFTP, local fs read/write, clipboard, agent); if
+  // the top frame were ever navigated away from our own document — a stray
+  // `location =`, a dropped link, a future regression — that hostile page would
+  // inherit the bridge. The in-app browser lives in an isolated <webview>, so
+  // the app frame itself should never navigate anywhere but reload itself.
+  const isAppUrl = (url: string): boolean => {
+    if (process.env.ELECTRON_RENDERER_URL) return url.startsWith(process.env.ELECTRON_RENDERER_URL)
+    return url.startsWith('file://')
+  }
+  mainWindow.webContents.on('will-navigate', (e, url) => {
+    if (isAppUrl(url)) return
+    e.preventDefault()
+    openExternalSafe(url)
+  })
+  mainWindow.webContents.on('will-redirect', (e, url) => {
+    if (!isAppUrl(url)) e.preventDefault()
   })
 
   if (process.env.ELECTRON_RENDERER_URL) {
@@ -171,6 +210,9 @@ function registerIpc(): void {
   // Cluster D: persistent transfer queue + in-app browser enhancements.
   transfersController = registerTransfersIpc(sshManager, () => mainWindow)
   browserController = registerBrowserIpc(() => mainWindow)
+
+  // Global search handler (MVP)
+  ipcMain.handle(IPC.searchQuery, (_e, q: string) => globalSearchIndex.query(q))
 }
 
 // Headless self-test entrypoint: `electron . --self-test`.
@@ -209,6 +251,20 @@ if (process.argv.includes('--self-test')) {
         .replace(/ Electron\/[^ ]+/, '')
     )
 
+    // The browser pane loads arbitrary untrusted pages. Without a handler,
+    // camera/mic/geolocation/notifications/USB/serial/HID prompts fall through to
+    // Chromium defaults and surface attributed to "DevTerm". Default-deny the
+    // sensitive ones; allow only the handful a normal browsing pane needs.
+    const ALLOWED_PERMISSIONS = new Set(['fullscreen', 'clipboard-sanitized-write'])
+    browserSession.setPermissionRequestHandler((_wc, permission, callback) => {
+      callback(ALLOWED_PERMISSIONS.has(permission))
+    })
+    browserSession.setPermissionCheckHandler((_wc, permission) =>
+      ALLOWED_PERMISSIONS.has(permission)
+    )
+    // WebUSB / WebSerial / WebHID device access is never needed in the pane.
+    browserSession.setDevicePermissionHandler(() => false)
+
     // Harden every <webview> guest (the browser pane loads untrusted web pages):
     // strip any preload + force node integration off on attach, and route the
     // guest's popups to the OS browser instead of letting it spawn in-app windows.
@@ -225,6 +281,20 @@ if (process.argv.includes('--self-test')) {
         contents.setWindowOpenHandler(({ url }) => {
           mainWindow?.webContents.send(IPC.browserOpenTab, { sourceId: contents.id, url })
           return { action: 'deny' }
+        })
+        // Keep guests on the web. A guest is meant for http(s) browsing, not for
+        // reaching `file://`/`chrome://`/`devtools://` — those would let untrusted
+        // web content read the local filesystem from a web origin. Allow http(s)
+        // and about:blank; send anything else to the OS browser (if it's safe).
+        const guestNavOk = (url: string): boolean =>
+          /^https?:\/\//i.test(url) || url === 'about:blank'
+        contents.on('will-navigate', (evt, url) => {
+          if (guestNavOk(url)) return
+          evt.preventDefault()
+          openExternalSafe(url)
+        })
+        contents.on('will-redirect', (evt, url) => {
+          if (!guestNavOk(url)) evt.preventDefault()
         })
         // The app has no application menu, so the guest gets no edit accelerators or
         // default context menu. Build one on right-click, driving the guest's own
@@ -259,7 +329,7 @@ if (process.argv.includes('--self-test')) {
             { type: 'separator' },
             {
               label: 'Open in system browser',
-              click: () => shell.openExternal(params.linkURL || params.pageURL)
+              click: () => openExternalSafe(params.linkURL || params.pageURL)
             }
           )
           Menu.buildFromTemplate(template).popup()
