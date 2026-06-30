@@ -63,6 +63,29 @@ process.on('uncaughtException', (err) => {
     /* dialog may be unavailable before app is ready */
   }
 })
+// Mirror uncaughtException for promise rejections. Newer Node defaults
+// `--unhandled-rejections=throw`, which means a single async rejection in the
+// MCP bridge / SSH manager / anywhere else can terminate the entire Electron
+// main process and take every terminal and agent down with it. Swallow the
+// same benign noise (EPIPE, disposed webframe) and surface the rest through
+// the same error box so real failures stay visible.
+process.on('unhandledRejection', (reason) => {
+  const err = reason instanceof Error ? reason : new Error(String(reason))
+  const msg = err.message || String(reason)
+  if (msg.includes('Render frame was disposed before WebFrameMain could be accessed')) {
+    return
+  }
+  if ((err as NodeJS.ErrnoException).code === 'EPIPE') {
+    console.warn('Ignored EPIPE rejection (pty/socket already gone):', msg)
+    return
+  }
+  console.error('Unhandled promise rejection in main process:', err)
+  try {
+    dialog.showErrorBox('An async error occurred in the main process', msg)
+  } catch {
+    /* dialog may be unavailable before app is ready */
+  }
+})
 import { registerPtyIpc } from './ipc/pty'
 import { IPC } from '@shared/types'
 import { globalSearchIndex } from './search/index'

@@ -14,7 +14,17 @@ export type ConfirmOutcome = 'approved' | 'denied' | 'timeout'
 export interface ToolDeps {
   sessionId: string
   ssh: SSHManager
-  context: HostContext
+  /**
+   * Live getter for the SSH session's host context. Returns the current
+   * context from the SSH manager so it refreshes across reconnects; falls
+   * back to the snapshot taken at bridge start if the session is briefly
+   * between disconnect and reconnect. The bridge used to freeze the context
+   * at start time, which left `ping` / `get_host_context` reporting a stale
+   * hostname after a successful reconnect.
+   */
+  getContext: () => HostContext
+  /** True while the SSH session is disconnected or reconnecting. */
+  sshDown: () => boolean
   airGapped: boolean
   policy: Policy
   /**
@@ -36,6 +46,19 @@ const errorText = (s: string) => ({
   content: [{ type: 'text' as const, text: s }],
   isError: true
 })
+
+/**
+ * Wording for the "SSH is down" branch shared by every tool that touches the
+ * remote host. Surfaces as a non-fatal `isError: true` result so the agent
+ * pauses and retries instead of interpreting a stream of "unknown session"
+ * errors as a hard failure and crashing. Wording deliberately distinguishes
+ * the policy block / approval-timeout / SSH-down cases the agent used to
+ * conflate.
+ */
+const sshDownMessage = () =>
+  'SSH is temporarily disconnected (auto-reconnect in progress). ' +
+  'Retry this call shortly — the connection will come back on its own. ' +
+  'Do NOT interpret this as a permanent failure or exit.'
 
 /**
  * The operator's live cwd, but only when it is a POSIX path (`/...`). SSH exec
@@ -97,7 +120,7 @@ function wrapConfirm(
 }
 
 export function registerTools(mcp: McpServer, deps: ToolDeps): void {
-  const { ssh, sessionId, context, airGapped, policy, confirm, getCwd } = deps
+  const { ssh, sessionId, getContext, sshDown, airGapped, policy, confirm, getCwd } = deps
   // Pre-bound confirm wrapper that records bridge activity around every ask.
   const confirmWithActivity = (tool: string, detail: string) =>
     wrapConfirm(sessionId, tool, detail, confirm)
@@ -109,11 +132,15 @@ export function registerTools(mcp: McpServer, deps: ToolDeps): void {
         'Check whether the DevTerm MCP bridge and remote SSH session are still reachable.',
       inputSchema: {}
     },
-    async () =>
-      text(
+    async () => {
+      const context = getContext()
+      const status = sshDown()
+        ? { ok: false, reason: 'SSH temporarily disconnected (reconnecting). Retry shortly.' }
+        : { ok: true }
+      return text(
         JSON.stringify(
           {
-            ok: true,
+            ...status,
             sessionId,
             hostname: context.hostname,
             policyMode: policy.mode,
@@ -123,6 +150,7 @@ export function registerTools(mcp: McpServer, deps: ToolDeps): void {
           2
         )
       )
+    }
   )
 
   mcp.registerTool(
@@ -132,8 +160,9 @@ export function registerTools(mcp: McpServer, deps: ToolDeps): void {
         'Facts about the connected host: hostname, OS, the operator\'s current working directory, and whether it is air-gapped.',
       inputSchema: {}
     },
-    async () =>
-      text(
+    async () => {
+      const context = getContext()
+      return text(
         JSON.stringify(
           {
             hostname: context.hostname,
@@ -151,6 +180,7 @@ export function registerTools(mcp: McpServer, deps: ToolDeps): void {
           2
         )
       )
+    }
   )
 
   mcp.registerTool(
@@ -172,6 +202,7 @@ export function registerTools(mcp: McpServer, deps: ToolDeps): void {
       }
     },
     async ({ command, timeout_ms }) => {
+      if (sshDown()) return errorText(sshDownMessage())
       const v = await policy.evaluateCommandAsync(sessionId, command)
       if (!v.allow)
         return errorText(
@@ -227,6 +258,7 @@ export function registerTools(mcp: McpServer, deps: ToolDeps): void {
       }
     },
     async ({ path }) => {
+      if (sshDown()) return errorText(sshDownMessage())
       try {
         const target = resolvePosix(posixCwd(getCwd), path)
         const sftp = await ssh.getSftp(sessionId)
@@ -258,6 +290,7 @@ export function registerTools(mcp: McpServer, deps: ToolDeps): void {
       }
     },
     async ({ path, max_bytes }) => {
+      if (sshDown()) return errorText(sshDownMessage())
       try {
         const target = resolvePosix(posixCwd(getCwd), path)
         const sftp = await ssh.getSftp(sessionId)
@@ -299,6 +332,7 @@ export function registerTools(mcp: McpServer, deps: ToolDeps): void {
       }
     },
     async ({ path, content }) => {
+      if (sshDown()) return errorText(sshDownMessage())
       const target = resolvePosix(posixCwd(getCwd), path)
       const v = policy.evaluateWrite()
       if (!v.allow)

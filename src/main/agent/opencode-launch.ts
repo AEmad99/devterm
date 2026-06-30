@@ -78,25 +78,30 @@ export function prepareOpencodeLaunch(hostContextMd: string, bridge: BridgeInfo)
         }
       }
     },
-    // Scope the agent to MCP tools only. OpenCode ships its own bash/read/
-    // write/edit/list/glob/grep/webfetch/todoread/todowrite/task; turning
-    // them all off means every host action has to go through `devterm_*`,
-    // which the bridge policy-gates. The MCP server's tools stay enabled
-    // because the `tools` section matches by exact tool name, not pattern.
+    // Scope the agent to MCP tools only. OpenCode ships these built-in tools
+    // (https://opencode.ai/docs/tools/) — turning every one off means every
+    // host action has to go through `devterm_*`, which the bridge policy-gates.
+    // Earlier revisions named `patch`, `task`, `todoread` and missed
+    // `apply_patch` / `websearch` / `lsp` / `question`: the real tool is
+    // `apply_patch` (NOT `patch` — opencode explicitly distinguishes them in
+    // its tool-execute hooks), `task` / `todoread` are not built-in tool names
+    // at all, and the schema rejects unknown keys the same way it rejects
+    // `server.port: 0` (see the comment on `server` below). The `tools`
+    // section matches by exact tool name, not pattern.
     tools: {
       bash: false,
       read: false,
       write: false,
       edit: false,
-      patch: false,
-      list: false,
+      apply_patch: false,
       glob: false,
       grep: false,
+      lsp: false,
       webfetch: false,
-      task: false,
-      todoread: false,
+      websearch: false,
+      skill: false,
       todowrite: false,
-      skill: false
+      question: false
     },
     // The bridge is a 5-second-lived localhost HTTP endpoint. autoupdate
     // would interrupt the session with a download prompt; sharing would try

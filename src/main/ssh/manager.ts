@@ -127,6 +127,9 @@ export interface SSHHandlers {
   onStatus: (sessionId: string, status: SSHStatus) => void
 }
 
+/** Listener registered via `addStatusListener`; called for every status event. */
+export type SSHStatusListener = (status: SSHStatus) => void
+
 /**
  * Owns SSH sessions. One ssh2 client per session; the human shell is one
  * channel on it (SFTP and the MCP bridge will open further channels on the
@@ -136,8 +139,51 @@ export class SSHManager {
   private sessions = new Map<string, Session>()
   /** Active reconnect policy; mutated by the renderer via `setReconnectPolicy`. */
   private policy: ReconnectPolicy = { ...DEFAULT_RECONNECT_POLICY }
+  /**
+   * Extra per-process status listeners (the agent bridge subscribes here so
+   * it can pause tools and surface a reconnecting status when SSH drops).
+   * Registered via {@link addStatusListener}; fired alongside the primary
+   * `handlers.onStatus` from {@link fireStatus}.
+   */
+  private statusListeners = new Map<string, Set<SSHStatusListener>>()
 
   constructor(private handlers: SSHHandlers) {}
+
+  /**
+   * Subscribe to status events for a single SSH session. Returns a disposer.
+   * The agent IPC uses this to learn about `closed` / `reconnecting` /
+   * `reconnected` so tool calls can return a clear "retry shortly" message
+   * instead of the generic "unknown session" the disconnected session
+   * previously surfaced (the symptom that made the agent give up and crash).
+   */
+  addStatusListener(sessionId: string, cb: SSHStatusListener): () => void {
+    let set = this.statusListeners.get(sessionId)
+    if (!set) {
+      set = new Set()
+      this.statusListeners.set(sessionId, set)
+    }
+    set.add(cb)
+    return () => {
+      const s = this.statusListeners.get(sessionId)
+      if (!s) return
+      s.delete(cb)
+      if (s.size === 0) this.statusListeners.delete(sessionId)
+    }
+  }
+
+  /** Central status dispatch — fires the primary handler AND every per-session listener. */
+  private fireStatus(sessionId: string, status: SSHStatus): void {
+    this.handlers.onStatus(sessionId, status)
+    const set = this.statusListeners.get(sessionId)
+    if (!set) return
+    for (const cb of set) {
+      try {
+        cb(status)
+      } catch (err) {
+        console.error('[ssh] status listener threw:', err)
+      }
+    }
+  }
 
   /** Update the auto-reconnect policy in effect for future drops. */
   setReconnectPolicy(patch: Partial<ReconnectPolicy>): void {
@@ -150,7 +196,7 @@ export class SSHManager {
 
   async connect(profile: SSHProfile): Promise<SSHConnectResult> {
     const id = profile.id || randomUUID()
-    const onStatus = (s: SSHStatus) => this.handlers.onStatus(id, s)
+    const onStatus = (s: SSHStatus) => this.fireStatus(id, s)
 
     const { client, jump } = await establish(
       {
@@ -250,7 +296,7 @@ export class SSHManager {
     })
     clearTimeout(state.timer)
     state.timer = setTimeout(() => void this.runReconnect(sessionId, state), initialDelay)
-    this.handlers.onStatus(sessionId, {
+    this.fireStatus(sessionId, {
       type: 'reconnecting',
       attempt: 1,
       maxAttempts,
@@ -292,7 +338,7 @@ export class SSHManager {
       // The client is now alive; re-wire the close handler to schedule the
       // next reconnect if it drops again.
       client.on('close', () => {
-        this.handlers.onStatus(sessionId, { type: 'closed' })
+        this.fireStatus(sessionId, { type: 'closed' })
         this.handlers.onExit(sessionId)
         const cur = this.sessions.get(sessionId)
         if (!cur) return
@@ -311,14 +357,14 @@ export class SSHManager {
         profile,
         reconnect: state
       })
-      this.handlers.onStatus(sessionId, { type: 'reconnected', attempt: state.attempt })
+      this.fireStatus(sessionId, { type: 'reconnected', attempt: state.attempt })
     } catch (err) {
       const reason = (err as Error).message || String(err)
       state.lastError = reason
       if (state.attempt >= state.maxAttempts) {
         delete this.sessions.get(sessionId)?.reconnect
         this.sessions.delete(sessionId)
-        this.handlers.onStatus(sessionId, {
+        this.fireStatus(sessionId, {
           type: 'reconnect-failed',
           attempts: state.attempt,
           reason
@@ -326,7 +372,7 @@ export class SSHManager {
         return
       }
       const delay = this.computeDelay(state.attempt, state.policy)
-      this.handlers.onStatus(sessionId, {
+      this.fireStatus(sessionId, {
         type: 'reconnecting',
         attempt: state.attempt + 1,
         maxAttempts: state.maxAttempts,

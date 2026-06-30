@@ -6,11 +6,36 @@ import type { BridgeInfo } from '../mcp/server'
 import type { AgentLaunchSpec } from './launch'
 import { buildClaudeMd } from './context'
 
-/** Resolve the interactive `claude` binary. Never invoked with -p / SDK mode. */
+/**
+ * Resolve the interactive `claude` binary. Never invoked with -p / SDK mode.
+ *
+ * Same Windows quirk as the pi / opencode resolvers: npm writes a POSIX-shell
+ * `claude` shim alongside the Windows `.cmd` shim, and CreateProcessW can't
+ * run the POSIX one (error 193). Prefer the `.cmd` / `.bat` / `.exe` shim on
+ * Windows so node-pty can actually launch it.
+ */
 export function resolveClaudeBin(): string {
-  const cmd = process.platform === 'win32' ? 'where claude' : 'command -v claude'
+  if (process.platform === 'win32') {
+    try {
+      const out = execSync('where claude', { encoding: 'utf8' })
+        .split(/\r?\n/)
+        .map((l) => l.trim())
+        .filter(Boolean)
+      const winShim = out.find(
+        (p) =>
+          p.toLowerCase().endsWith('.cmd') ||
+          p.toLowerCase().endsWith('.bat') ||
+          p.toLowerCase().endsWith('.exe')
+      )
+      if (winShim) return winShim
+      if (out[0]) return out[0]
+    } catch {
+      /* claude not on PATH; fall through to literal name */
+    }
+    return 'claude.cmd'
+  }
   try {
-    const out = execSync(cmd, { encoding: 'utf8' })
+    const out = execSync('command -v claude', { encoding: 'utf8' })
       .split(/\r?\n/)
       .find((l) => l.trim())
     if (out && out.trim()) return out.trim()
@@ -55,8 +80,21 @@ export function prepareClaudeLaunch(claudeMd: string, bridge: BridgeInfo): Agent
       '--permission-mode',
       'bypassPermissions',
       '--dangerously-skip-permissions',
+      // `--allowedTools` takes repeated positional values — one rule per arg.
+      // The earlier single comma-string form was parsed by Claude as one glob
+      // pattern ('mcp__devterm__*,Read,Write,Edit') that matched no actual tool
+      // name, so every MCP tool call was rejected and the agent looked broken.
+      // The glob `mcp__devterm__*` matches every DevTerm MCP tool (Claude's
+      // docs describe its --allowedTools as accepting pattern matching); Read
+      // / Write / Edit stay enabled for the agent's local CLAUDE.md scratch.
       '--allowedTools',
-      'mcp__devterm__*,Read,Write,Edit'
+      'mcp__devterm__*',
+      '--allowedTools',
+      'Read',
+      '--allowedTools',
+      'Write',
+      '--allowedTools',
+      'Edit'
     ],
     cwd,
     env: {},

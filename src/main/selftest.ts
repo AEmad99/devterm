@@ -520,7 +520,8 @@ async function testBridge(): Promise<void> {
     bridge = new McpBridge({
       sessionId,
       ssh: mgr,
-      context,
+      getContext: () => context,
+      sshDown: () => false,
       airGapped: true,
       policy: new Policy('full'),
       confirm: async () => 'approved' as const
@@ -586,7 +587,8 @@ async function testBridge(): Promise<void> {
     const roBridge = new McpBridge({
       sessionId,
       ssh: mgr,
-      context,
+      getContext: () => context,
+      sshDown: () => false,
       airGapped: true,
       policy: new Policy('read_only'),
       confirm: async () => 'approved' as const

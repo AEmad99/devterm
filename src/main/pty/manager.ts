@@ -24,6 +24,9 @@ export interface PtyHandlers {
   onStartupFailure?: (id: string, info: PtyStartupFailure) => void
 }
 
+/** Listener registered via `addExitListener`; called when a specific PTY exits. */
+export type PtyExitListener = (exitCode: number | undefined, signal?: number) => void
+
 /**
  * Startup args for the chosen shell. For PowerShell we inject a `prompt`
  * function that emits, on every prompt:
@@ -160,8 +163,33 @@ function hasRealOutput(data: string): boolean {
  */
 export class PtyManager {
   private ptys = new Map<string, IPty>()
+  /**
+   * Per-id exit listeners. The agent IPC subscribes here so an agent PTY
+   * exit can tear down the MCP bridge + temp dir immediately instead of
+   * leaving them orphaned until the user manually closes the pane.
+   */
+  private exitListeners = new Map<string, Set<PtyExitListener>>()
 
   constructor(private handlers: PtyHandlers) {}
+
+  /**
+   * Subscribe to the exit of a single PTY. Returns a disposer. Fired from
+   * the same `proc.onExit` callback as `handlers.onExit`, in addition.
+   */
+  addExitListener(id: string, cb: PtyExitListener): () => void {
+    let set = this.exitListeners.get(id)
+    if (!set) {
+      set = new Set()
+      this.exitListeners.set(id, set)
+    }
+    set.add(cb)
+    return () => {
+      const s = this.exitListeners.get(id)
+      if (!s) return
+      s.delete(cb)
+      if (s.size === 0) this.exitListeners.delete(id)
+    }
+  }
 
   create(opts: PtyCreateOptions & { args?: string[]; env?: Record<string, string> }): PtyCreated {
     const shell = resolveShell(opts.shellPref, opts.shell)
@@ -218,6 +246,17 @@ export class PtyManager {
       }
       this.handlers.onExit(id, exitCode, signal)
       this.ptys.delete(id)
+      const set = this.exitListeners.get(id)
+      if (set) {
+        this.exitListeners.delete(id)
+        for (const cb of set) {
+          try {
+            cb(exitCode, signal)
+          } catch (err) {
+            console.error('[pty] exit listener threw:', err)
+          }
+        }
+      }
     })
 
     this.ptys.set(id, proc)

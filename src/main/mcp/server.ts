@@ -87,7 +87,15 @@ export class McpBridge {
       this.emit('error', error.message)
       console.error('[mcp] transport error:', error)
     }
-    this.transport.onclose = () => this.emit('stopped', 'MCP transport closed')
+    // Transport close is recoverable: the HTTP server is still listening and a
+    // restarted agent can reconnect through `initialize` again. Surface as
+    // 'disconnected' so the renderer's Restart button can drive a reconnect
+    // without the bridge having torn itself down. (Explicit `stop()` emits
+    // 'stopped' separately.)
+    this.transport.onclose = () => {
+      if (this.stopped) return
+      this.emit('disconnected', 'MCP transport closed')
+    }
     await this.mcp.connect(this.transport)
 
     this.http = createServer((req, res) => void this.handle(req, res))
