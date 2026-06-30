@@ -3,6 +3,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { HostContext } from '@shared/types'
 import type { SSHManager } from '../ssh/manager'
 import { listRemote } from '../ssh/sftp'
+import { looksBinary } from '../fs/content'
 import { Policy } from './policy'
 import { recordBridgeActivity } from '../foundation-ipc'
 import { sanitizeDetail } from './server'
@@ -263,6 +264,17 @@ export function registerTools(mcp: McpServer, deps: ToolDeps): void {
         const buf = await new Promise<Buffer>((resolve, reject) =>
           sftp.readFile(target, (err, data) => (err ? reject(err) : resolve(data as Buffer)))
         )
+        // Guard against binary files: decoding arbitrary bytes as UTF-8 emits
+        // U+FFFD noise which the agent then prints into its terminal — the
+        // "random gibberish" symptom. Force the agent to use SFTP download for
+        // binary content instead.
+        if (looksBinary(buf)) {
+          return errorText(
+            `read_file failed: ${target} appears to be a binary file ` +
+              `(detected by NUL/non-text bytes in the first scan window). ` +
+              `Use SFTP download instead of read_file for binary content.`
+          )
+        }
         const cap = max_bytes ?? 200000
         const truncated = buf.length > cap
         return text(

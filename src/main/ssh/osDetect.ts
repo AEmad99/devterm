@@ -21,17 +21,19 @@ function exec(
         clearTimeout(timer)
         return done({ stdout: '', stderr: String(err.message || err), code: null })
       }
-      let stdout = ''
-      let stderr = ''
-      let code: number | null = null
+      const stdoutChunks: Buffer[] = []
+      const stderrChunks: Buffer[] = []
       stream
         .on('close', (c: number) => {
           clearTimeout(timer)
-          code = c ?? code
-          done({ stdout, stderr, code })
+          // Decode once on completion so multi-byte UTF-8 split across ssh2
+          // data chunks isn't mangled into U+FFFD.
+          const stdout = Buffer.concat(stdoutChunks).toString('utf8')
+          const stderr = Buffer.concat(stderrChunks).toString('utf8')
+          done({ stdout, stderr, code: c ?? null })
         })
-        .on('data', (d: Buffer) => (stdout += d.toString()))
-        .stderr.on('data', (d: Buffer) => (stderr += d.toString()))
+        .on('data', (d: Buffer) => stdoutChunks.push(d))
+        .stderr.on('data', (d: Buffer) => stderrChunks.push(d))
     })
   })
 }

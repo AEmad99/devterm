@@ -9,6 +9,17 @@ interface Session {
   client: Client
   jump?: Client
   shell?: ClientChannel
+  /**
+   * Streaming UTF-8 decoder for the shell channel. ssh2 emits data in
+   * arbitrary byte boundaries, and a multi-byte UTF-8 codepoint split across
+   * two `data` events decodes to U+FFFD if each chunk is `.toString()`'d on
+   * its own. Feeding every chunk through one `TextDecoder` with
+   * `{ stream: true }` carries the partial sequence across the boundary so
+   * box-drawing, emoji, and accented filenames render correctly in the
+   * terminal. One decoder covers stdout and stderr together (they merge into
+   * the same visible stream and ssh2 emits them in byte order).
+   */
+  shellDecoder?: TextDecoder
   sftp?: SFTPWrapper
   context: HostContext
   /**
@@ -90,16 +101,19 @@ async function probeWindowsShell(client: Client): Promise<boolean> {
         clearTimeout(timer)
         return done(false)
       }
-      let stdout = ''
+      const stdoutChunks: Buffer[] = []
       stream
         .on('close', () => {
           clearTimeout(timer)
           // PowerShell renders the table as a multi-line ASCII string starting
           // with the header line "Name                           Value"; cmd.exe
           // just prints "$PSVersionTable" verbatim. Match the table header.
+          // Decode once on completion so multi-byte UTF-8 split across ssh2
+          // data chunks isn't mangled into U+FFFD.
+          const stdout = Buffer.concat(stdoutChunks).toString('utf8')
           done(/^\s*Name\s+Value/m.test(stdout))
         })
-        .on('data', (d: Buffer) => (stdout += d.toString()))
+        .on('data', (d: Buffer) => stdoutChunks.push(d))
         .stderr.on('data', () => {
           /* ignore — probe failure is non-fatal */
         })
@@ -347,13 +361,29 @@ export class SSHManager {
       s.client.shell({ term: 'xterm-256color', cols, rows }, (err, channel) => {
         if (err) return reject(err)
         s.shell = channel
+        // Stream every chunk through a per-session UTF-8 decoder so multi-byte
+        // codepoints split across ssh2 data events decode correctly instead
+        // of turning into U+FFFD. The close handler flushes any trailing bytes
+        // the decoder buffered (the final incomplete codepoint renders as a
+        // single replacement char).
+        s.shellDecoder = new TextDecoder('utf-8', { fatal: false })
+        const dec = s.shellDecoder
         channel
-          .on('data', (d: Buffer) => this.handlers.onData(sessionId, d.toString()))
+          .on('data', (d: Buffer) => {
+            this.handlers.onData(sessionId, dec.decode(d, { stream: true }))
+          })
           .on('close', () => {
             this.handlers.onExit(sessionId)
             s.shell = undefined
+            if (s.shellDecoder) {
+              const tail = s.shellDecoder.decode()
+              if (tail) this.handlers.onData(sessionId, tail)
+              s.shellDecoder = undefined
+            }
           })
-        channel.stderr.on('data', (d: Buffer) => this.handlers.onData(sessionId, d.toString()))
+        channel.stderr.on('data', (d: Buffer) => {
+          this.handlers.onData(sessionId, dec.decode(d, { stream: true }))
+        })
 
         // Best-effort OSC 7 cwd reporting for POSIX remotes so the file explorer
         // can follow `cd`. The hook must be wired per-shell: bash re-runs
@@ -448,15 +478,24 @@ export class SSHManager {
     if (!s) return Promise.reject(new Error('unknown session'))
     return new Promise((resolve, reject) => {
       let settled = false
-      let stdout = ''
-      let stderr = ''
+      const stdoutChunks: Buffer[] = []
+      const stderrChunks: Buffer[] = []
+      // Decode once on completion so multi-byte UTF-8 codepoints split across
+      // ssh2 data chunks aren't turned into U+FFFD by per-chunk `.toString()`.
+      const snapshot = () => ({
+        stdout: Buffer.concat(stdoutChunks).toString('utf8'),
+        stderr: Buffer.concat(stderrChunks).toString('utf8')
+      })
       const finish = (r: { stdout: string; stderr: string; code: number | null; timedOut: boolean }) => {
         if (!settled) {
           settled = true
           resolve(r)
         }
       }
-      const timer = setTimeout(() => finish({ stdout, stderr, code: null, timedOut: true }), timeoutMs)
+      const timer = setTimeout(
+        () => finish({ ...snapshot(), code: null, timedOut: true }),
+        timeoutMs
+      )
       s.client.exec(command, (err, stream) => {
         if (err) {
           clearTimeout(timer)
@@ -465,10 +504,10 @@ export class SSHManager {
         stream
           .on('close', (c: number) => {
             clearTimeout(timer)
-            finish({ stdout, stderr, code: c ?? null, timedOut: false })
+            finish({ ...snapshot(), code: c ?? null, timedOut: false })
           })
-          .on('data', (d: Buffer) => (stdout += d.toString()))
-          .stderr.on('data', (d: Buffer) => (stderr += d.toString()))
+          .on('data', (d: Buffer) => stdoutChunks.push(d))
+          .stderr.on('data', (d: Buffer) => stderrChunks.push(d))
       })
     })
   }

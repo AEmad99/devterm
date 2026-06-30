@@ -144,6 +144,19 @@ export default function AgentPane({
           window.devterm.pty.onExit(ptyId, ({ exitCode }) => {
             setBridge('exited')
             setBridgeMessage(`${label} exited with code ${exitCode}`)
+            // Reset xterm modes BEFORE the notice: a TUI that died ungracefully
+            // (opencode / claude / pi on Ctrl+C, etc.) can leave xterm stuck in
+            // alternate-screen + mouse + hidden-cursor modes; the exit line then
+            // lands overlapped on the stale TUI frame. The escape sequence is
+            // identical to TerminalView's `EXIT_RESET`.
+            term.write(
+              '\x1b[?1049l' +
+                '\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l' +
+                '\x1b[?2004l' +
+                '\x1b[?1004l' +
+                '\x1b[0m' +
+                '\x1b[?25h'
+            )
             term.write(`\r\n\x1b[90m[${kind} exited with code ${exitCode}]\x1b[0m\r\n`)
           })
         )
