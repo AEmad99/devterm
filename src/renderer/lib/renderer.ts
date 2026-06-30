@@ -29,6 +29,15 @@ export function attachRenderer(term: Terminal): () => void {
 }
 
 /**
+ * Normalize pasted line endings so the shell doesn't see \r\n as two Enter
+ * presses (Windows clipboard) or treat \n as a literal newline when bracketed
+ * paste is off. xterm's paste() wants \r for the Enter key.
+ */
+function sanitizePasteText(text: string): string {
+  return text.replace(/\r\n/g, '\r').replace(/(?<!\r)\n/g, '\r')
+}
+
+/**
  * Wire mouse + selection clipboard behavior into a terminal. The app has no
  * application menu (so no native edit accelerators), and the renderer is
  * sandboxed — clipboard access goes through the `window.devterm.clipboard` bridge.
@@ -37,11 +46,16 @@ export function attachRenderer(term: Terminal): () => void {
  * - **Paste**: a single capture-phase `paste` listener owns every keyboard/native
  *   paste (Ctrl+V, Ctrl+Shift+V, middle-click) so it happens exactly once — see
  *   the comment on the listener for why xterm's own handler double-fires.
- * - **Right-click**: pastes when "right-click paste" is on; otherwise the classic
- *   gesture — copy the selection if there is one, else paste.
+ * - **Right-click**: opens a Copy / Paste / Select All / Clear context menu
+ *   positioned at the cursor. The previous implementation did an immediate
+ *   silent copy-or-paste and even cleared the selection — surprising and
+ *   impossible to discover.
  *
- * The Ctrl+Shift+C copy binding lives in TerminalView's single custom key handler
- * (xterm only allows one); paste is owned here. Returns a disposer.
+ * The Ctrl+Shift+C copy and Ctrl/Cmd+C-when-selected bindings live in
+ * TerminalView's single custom key handler (xterm only allows one); paste
+ * ownership is split between TerminalView (which suppresses xterm's default
+ * for Ctrl+V/Cmd+V) and this listener (which performs the actual paste).
+ * Returns a disposer.
  */
 export function attachClipboard(term: Terminal, host: HTMLElement): () => void {
   const copySelection = () => {
@@ -53,11 +67,12 @@ export function attachClipboard(term: Terminal, host: HTMLElement): () => void {
   let lastPasteText = ''
   let lastPasteAt = 0
   const pasteText = (text: string) => {
+    const clean = sanitizePasteText(text)
     const now = Date.now()
     if (text === lastPasteText && now - lastPasteAt < 80) return
     lastPasteText = text
     lastPasteAt = now
-    term.paste(text)
+    term.paste(clean)
   }
 
   // Paste whatever the clipboard holds. Text wins; when there's no text the
@@ -96,9 +111,9 @@ export function attachClipboard(term: Terminal, host: HTMLElement): () => void {
   const onPaste = (e: ClipboardEvent) => {
     e.preventDefault()
     e.stopImmediatePropagation()
-    const text = e.clipboardData?.getData('text/plain') ?? ''
-    if (text) {
-      pasteText(text)
+    const raw = e.clipboardData?.getData('text/plain') ?? ''
+    if (raw) {
+      pasteText(raw)
       return
     }
     // No inline text — the clipboard may hold an image, or this is a platform
@@ -108,21 +123,91 @@ export function attachClipboard(term: Terminal, host: HTMLElement): () => void {
   }
   host.addEventListener('paste', onPaste, true) // capture: beat xterm's handlers
 
+  // Right-click context menu: replaces the previous silent immediate
+  // copy-or-paste with a real menu so Copy / Paste are discoverable and the
+  // selection is never destroyed without the user's intent.
+  let menuEl: HTMLDivElement | null = null
+  const closeMenu = () => {
+    if (menuEl) {
+      menuEl.remove()
+      menuEl = null
+    }
+  }
+  const onDocDown = (ev: MouseEvent) => {
+    if (!menuEl) return
+    if (ev.target instanceof Node && menuEl.contains(ev.target)) return
+    closeMenu()
+  }
+  const onDocKey = (ev: KeyboardEvent) => {
+    if (ev.key === 'Escape') closeMenu()
+  }
+  const onWinBlur = () => closeMenu()
+  document.addEventListener('mousedown', onDocDown, true)
+  document.addEventListener('keydown', onDocKey)
+  window.addEventListener('blur', onWinBlur)
+
+  const openContextMenu = (x: number, y: number) => {
+    closeMenu()
+    const hasSelection = term.hasSelection()
+    const menu = document.createElement('div')
+    menu.className = 'term-context-menu'
+    menu.style.left = `${x}px`
+    menu.style.top = `${y}px`
+    menu.setAttribute('role', 'menu')
+    const items: Array<{ label: string; disabled?: boolean; onClick: () => void }> = [
+      {
+        label: 'Copy',
+        disabled: !hasSelection,
+        onClick: () => copySelection()
+      },
+      {
+        label: 'Paste',
+        onClick: () => void pasteFromClipboard()
+      },
+      {
+        label: 'Select All',
+        onClick: () => term.selectAll()
+      },
+      {
+        label: 'Clear selection',
+        disabled: !hasSelection,
+        onClick: () => term.clearSelection()
+      }
+    ]
+    for (const it of items) {
+      const btn = document.createElement('button')
+      btn.type = 'button'
+      btn.className = 'term-context-menu-item'
+      btn.textContent = it.label
+      btn.disabled = !!it.disabled
+      btn.addEventListener('click', () => {
+        closeMenu()
+        if (!it.disabled) it.onClick()
+      })
+      menu.appendChild(btn)
+    }
+    document.body.appendChild(menu)
+    // Keep the menu on-screen if the click was near the right/bottom edge.
+    const rect = menu.getBoundingClientRect()
+    const overflowX = rect.right - window.innerWidth
+    const overflowY = rect.bottom - window.innerHeight
+    if (overflowX > 0) menu.style.left = `${Math.max(4, x - overflowX - 4)}px`
+    if (overflowY > 0) menu.style.top = `${Math.max(4, y - overflowY - 4)}px`
+    menuEl = menu
+  }
+
   const onContextMenu = (e: MouseEvent) => {
     e.preventDefault()
-    if (useSettings.getState().prefs.rightClickPaste) {
-      void pasteFromClipboard()
-    } else if (term.hasSelection()) {
-      copySelection()
-      term.clearSelection()
-    } else {
-      void pasteFromClipboard()
-    }
+    openContextMenu(e.clientX, e.clientY)
   }
   host.addEventListener('contextmenu', onContextMenu)
   return () => {
     selDisposable.dispose()
     host.removeEventListener('paste', onPaste, true)
     host.removeEventListener('contextmenu', onContextMenu)
+    document.removeEventListener('mousedown', onDocDown, true)
+    document.removeEventListener('keydown', onDocKey)
+    window.removeEventListener('blur', onWinBlur)
+    closeMenu()
   }
 }

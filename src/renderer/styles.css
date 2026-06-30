@@ -638,6 +638,44 @@ body,
   overflow: hidden;
 }
 
+/* Right-click context menu for terminals. Sits above the app chrome (z-index
+   above modals is fine here — modals have their own backdrop that already
+   dismisses it). Visual style mirrors the rest of the dark UI but uses the
+   app's surface tokens so it picks up theme changes. */
+.term-context-menu {
+  position: fixed;
+  z-index: 1000;
+  min-width: 160px;
+  padding: 4px;
+  background: var(--bg-elev, #1c1f26);
+  color: var(--fg, #e6e8ee);
+  border: 1px solid var(--border, #2a2e38);
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.term-context-menu-item {
+  appearance: none;
+  background: transparent;
+  color: inherit;
+  border: 0;
+  padding: 6px 10px;
+  text-align: left;
+  font: inherit;
+  font-size: 13px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.term-context-menu-item:hover:not(:disabled) {
+  background: var(--bg-hover, #262a33);
+}
+.term-context-menu-item:disabled {
+  color: var(--fg-muted, #6b7280);
+  cursor: default;
+}
+
 .terminal-host .xterm {
   height: 100%;
 }
@@ -1962,6 +2000,14 @@ body,
   flex-direction: column;
   gap: 2px;
   margin: 6px 0 4px;
+}
+.shortcuts-subhead {
+  margin: 14px 0 0;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--fg-muted, #8b909a);
 }
 .shortcut-row {
   display: flex;

@@ -174,23 +174,45 @@ function TerminalView({ session }: { session: Session }) {
       if (e.type !== 'keydown') return true
       // The autocomplete popup gets first crack at Tab/→/Esc while it's open.
       if (suggest.handleKey(e)) return false
-      if (e.ctrlKey && e.shiftKey && !e.altKey) {
-        const k = e.key.toLowerCase()
-        if (k === 'c') {
-          // Copy the selection. preventDefault keeps the chord off the shell as a
-          // control byte; returning false stops xterm's own handling.
+      const k = e.key.toLowerCase()
+      // Primary copy chord on Windows: Ctrl+Shift+C always copies. This is
+      // unconditional (not selection-gated) because Ctrl+Shift+C never sends
+      // a control byte to the shell — it's the dedicated copy binding.
+      if (e.ctrlKey && e.shiftKey && !e.altKey && k === 'c') {
+        e.preventDefault()
+        if (term.hasSelection()) window.devterm.clipboard.writeText(term.getSelection())
+        return false
+      }
+      // Paste chords (Ctrl+Shift+V / Ctrl+V / Cmd+V). All three route through
+      // the capture-phase `paste` listener in attachClipboard; we only stop
+      // xterm from emitting the control byte — crucially we do NOT
+      // preventDefault, so the native paste event still reaches that listener.
+      // Returning false keeps xterm's own paste handler (which double-fires in
+      // the sandboxed renderer) from running.
+      if (
+        !e.altKey &&
+        !e.shiftKey &&
+        ((e.ctrlKey && k === 'v') || (e.metaKey && k === 'v'))
+      ) {
+        return false
+      }
+      // Copy-or-SIGINT on Ctrl+C / Cmd+C. With text selected, copy and swallow
+      // the chord; otherwise let xterm send \x03 (SIGINT) as every other
+      // terminal does. This is the binding Windows Terminal / VS Code ship and
+      // is the primary reason "copy doesn't work" got reported — Ctrl+C used
+      // to always send SIGINT.
+      if (
+        !e.altKey &&
+        !e.shiftKey &&
+        ((e.ctrlKey && k === 'c') || (e.metaKey && k === 'c'))
+      ) {
+        if (term.hasSelection()) {
           e.preventDefault()
-          if (term.hasSelection()) window.devterm.clipboard.writeText(term.getSelection())
+          window.devterm.clipboard.writeText(term.getSelection())
           return false
         }
-        if (k === 'v') {
-          // Don't paste here. Paste (Ctrl+V and Ctrl+Shift+V alike) is owned by
-          // the single capture-phase `paste` listener in attachClipboard, which
-          // fires once per native paste event. We only stop xterm from turning
-          // the chord into a control byte — crucially we do NOT preventDefault,
-          // so the native paste event still reaches that listener.
-          return false
-        }
+        // No selection: let xterm handle (it sends \x03 for SIGINT).
+        return true
       }
       const id = matchHotkey(e)
       if (id === 'find') {
