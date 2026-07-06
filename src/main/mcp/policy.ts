@@ -13,7 +13,10 @@ export type RuleOutcome = 'allow' | 'deny' | 'ask'
  * approval rule for `(sessionId, command)`, or undefined if no rule applies.
  * The longest-prefix match is computed by the host (see `approval-rules.ts`).
  */
-export type RuleMatcher = (sessionId: string, command: string) => Promise<{ outcome: RuleOutcome } | undefined>
+export type RuleMatcher = (
+  sessionId: string,
+  command: string
+) => Promise<{ outcome: RuleOutcome } | undefined>
 
 // Destructive operations are confirmed in "confirm" mode and allowed in "full".
 // NOTE: this is a defense-in-depth denylist over a *cooperative* agent, not a

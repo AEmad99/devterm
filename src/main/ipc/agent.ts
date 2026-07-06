@@ -15,6 +15,7 @@ import { Policy } from '../mcp/policy'
 import * as approvalRules from '../approval-rules'
 import { buildAgentsMd, prepareAgentLaunch } from '../agent/launch'
 import { buildClaudeMd, prepareClaudeLaunch } from '../agent/claude-launch'
+import { buildKimiMd, prepareKimiLaunch } from '../agent/kimi-launch'
 import { buildOpencodeMd, prepareOpencodeLaunch } from '../agent/opencode-launch'
 import type { SSHManager } from '../ssh/manager'
 import type { PtyManager } from '../pty/manager'
@@ -173,18 +174,29 @@ export function registerAgentIpc(
       }
     )
 
-    let spec: ReturnType<typeof prepareAgentLaunch> | undefined
+    let spec: Awaited<ReturnType<typeof prepareAgentLaunch>> | undefined
     try {
       const info = await bridge.start()
       spec =
         opts.kind === 'claude'
-          ? prepareClaudeLaunch(buildClaudeMd(context, airGapped, cwds.get(opts.sessionId)), info)
-          : opts.kind === 'opencode'
-            ? prepareOpencodeLaunch(
-                buildOpencodeMd(context, airGapped, cwds.get(opts.sessionId)),
+          ? await prepareClaudeLaunch(
+              buildClaudeMd(context, airGapped, cwds.get(opts.sessionId)),
+              info
+            )
+          : opts.kind === 'kimi'
+            ? await prepareKimiLaunch(
+                buildKimiMd(context, airGapped, cwds.get(opts.sessionId)),
                 info
               )
-            : prepareAgentLaunch(buildAgentsMd(context, airGapped, cwds.get(opts.sessionId)), info)
+            : opts.kind === 'opencode'
+              ? await prepareOpencodeLaunch(
+                  buildOpencodeMd(context, airGapped, cwds.get(opts.sessionId)),
+                  info
+                )
+              : await prepareAgentLaunch(
+                  buildAgentsMd(context, airGapped, cwds.get(opts.sessionId)),
+                  info
+                )
       const { id: ptyId } = pty.create({
         shell: spec.bin,
         args: spec.args,

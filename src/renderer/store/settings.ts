@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { AgentKind, DefaultShellPref } from '@shared/types'
+import type { HotkeyId } from '../lib/hotkeys'
 
 /**
  * User-facing settings for terminals. Persisted to localStorage (renderer-only,
@@ -71,6 +72,13 @@ export interface AppSettings {
    * you want a specific shell (e.g. `wsl.exe`, Git Bash, nushell).
    */
   defaultShell: DefaultShellPref
+  /**
+   * Custom keyboard shortcuts. Only overrides are stored; missing ids fall back
+   * to the built-in defaults in lib/hotkeys.ts.
+   */
+  keybindings: Partial<
+    Record<HotkeyId, { mod?: boolean; shift?: boolean; alt?: boolean; key: string }>
+  >
 }
 
 /**
@@ -150,7 +158,8 @@ const DEFAULTS: AppSettings = {
   agentActivityCollapsed: false,
   agentKind: 'claude',
   transfersPanelOpen: false,
-  defaultShell: { kind: 'auto' }
+  defaultShell: { kind: 'auto' },
+  keybindings: {}
 }
 
 const STORAGE_KEY = 'devterm.settings.v1'
@@ -177,14 +186,16 @@ function load(): AppSettings {
       agentKind:
         parsed?.agentKind === 'claude' ||
         parsed?.agentKind === 'pi' ||
-        parsed?.agentKind === 'opencode'
+        parsed?.agentKind === 'opencode' ||
+        parsed?.agentKind === 'kimi'
           ? parsed.agentKind
           : DEFAULTS.agentKind,
       transfersPanelOpen:
         typeof parsed?.transfersPanelOpen === 'boolean'
           ? parsed.transfersPanelOpen
           : DEFAULTS.transfersPanelOpen,
-      defaultShell: normalizeDefaultShell(parsed?.defaultShell)
+      defaultShell: normalizeDefaultShell(parsed?.defaultShell),
+      keybindings: normalizeKeybindings(parsed?.keybindings)
     }
   } catch {
     return DEFAULTS
@@ -209,6 +220,23 @@ function normalizeDefaultShell(raw: unknown): DefaultShellPref {
   return DEFAULTS.defaultShell
 }
 
+function normalizeKeybindings(raw: unknown): AppSettings['keybindings'] {
+  if (!raw || typeof raw !== 'object') return DEFAULTS.keybindings
+  const out: AppSettings['keybindings'] = {}
+  for (const [id, combo] of Object.entries(raw as Record<string, unknown>)) {
+    if (!combo || typeof combo !== 'object') continue
+    const c = combo as { mod?: unknown; shift?: unknown; alt?: unknown; key?: unknown }
+    if (typeof c.key !== 'string' || c.key.length === 0) continue
+    out[id as HotkeyId] = {
+      mod: c.mod === true,
+      shift: c.shift === true,
+      alt: c.alt === true,
+      key: c.key
+    }
+  }
+  return out
+}
+
 interface SettingsState extends AppSettings {
   setThemeId: (id: string) => void
   setTerminalBg: (patch: Partial<TerminalBg>) => void
@@ -220,6 +248,11 @@ interface SettingsState extends AppSettings {
   setAgentKind: (v: AgentKind) => void
   setTransfersPanelOpen: (v: boolean) => void
   setDefaultShell: (pref: DefaultShellPref) => void
+  setKeybinding: (
+    id: HotkeyId,
+    combo: { mod?: boolean; shift?: boolean; alt?: boolean; key: string } | null
+  ) => void
+  resetKeybindings: () => void
   reset: () => void
 }
 
@@ -237,7 +270,8 @@ function persist(state: AppSettings): void {
         agentActivityCollapsed: state.agentActivityCollapsed,
         agentKind: state.agentKind,
         transfersPanelOpen: state.transfersPanelOpen,
-        defaultShell: state.defaultShell
+        defaultShell: state.defaultShell,
+        keybindings: state.keybindings
       })
     )
   } catch {
@@ -304,6 +338,19 @@ export const useSettings = create<SettingsState>((set, get) => ({
     persist(snapshot(get()))
   },
 
+  setKeybinding: (id, combo) => {
+    const keybindings = { ...get().keybindings }
+    if (combo) keybindings[id] = combo
+    else delete keybindings[id]
+    set({ keybindings })
+    persist(snapshot(get()))
+  },
+
+  resetKeybindings: () => {
+    set({ keybindings: DEFAULTS.keybindings })
+    persist(snapshot(get()))
+  },
+
   reset: () => {
     set({
       themeId: DEFAULTS.themeId,
@@ -315,7 +362,8 @@ export const useSettings = create<SettingsState>((set, get) => ({
       agentActivityCollapsed: DEFAULTS.agentActivityCollapsed,
       agentKind: DEFAULTS.agentKind,
       transfersPanelOpen: DEFAULTS.transfersPanelOpen,
-      defaultShell: DEFAULTS.defaultShell
+      defaultShell: DEFAULTS.defaultShell,
+      keybindings: DEFAULTS.keybindings
     })
     persist(DEFAULTS)
     void window.devterm.ssh.setReconnectPolicy?.(DEFAULTS.autoReconnect).catch(() => undefined)
@@ -335,6 +383,7 @@ function snapshot(s: SettingsState): AppSettings {
     agentActivityCollapsed: s.agentActivityCollapsed,
     agentKind: s.agentKind,
     transfersPanelOpen: s.transfersPanelOpen,
-    defaultShell: s.defaultShell
+    defaultShell: s.defaultShell,
+    keybindings: s.keybindings
   }
 }

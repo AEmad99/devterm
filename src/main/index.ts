@@ -1,4 +1,14 @@
-import { BrowserWindow, Menu, MenuItemConstructorOptions, app, clipboard, dialog, ipcMain, session, shell } from 'electron'
+import {
+  BrowserWindow,
+  Menu,
+  MenuItemConstructorOptions,
+  app,
+  clipboard,
+  dialog,
+  ipcMain,
+  session,
+  shell
+} from 'electron'
 import { join } from 'path'
 
 // Pin Chromium's disk cache, GPU shader cache, and service-worker storage
@@ -228,7 +238,7 @@ function registerIpc(): void {
   registerClipboardIpc()
   registerWindowIpc(() => mainWindow)
   registerContextIpc()
-  registerFoundationIpc(() => mainWindow)
+  registerFoundationIpc(() => mainWindow, sshManager!)
   registerGitIpc(sshManager, () => mainWindow)
   // Cluster D: persistent transfer queue + in-app browser enhancements.
   transfersController = registerTransfersIpc(sshManager, () => mainWindow)
@@ -236,6 +246,9 @@ function registerIpc(): void {
 
   // Global search handler (MVP)
   ipcMain.handle(IPC.searchQuery, (_e, q: string) => globalSearchIndex.query(q))
+  ipcMain.handle(IPC.searchSeed, (_e, sessionId: string, lines: string[]) => {
+    globalSearchIndex.seedLines(sessionId, lines, sessionId)
+  })
 }
 
 // Headless self-test entrypoint: `electron . --self-test`.

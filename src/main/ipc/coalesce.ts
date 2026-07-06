@@ -48,7 +48,10 @@ export function makeCoalescer(sink: (id: string, data: string) => void, delayMs 
       }
       q.push(data)
       if (timers.has(id)) return
-      timers.set(id, setTimeout(() => emit(id), delayMs))
+      timers.set(
+        id,
+        setTimeout(() => emit(id), delayMs)
+      )
     },
     flush: (id) => emit(id)
   }

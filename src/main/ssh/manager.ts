@@ -3,6 +3,7 @@ import type { Client, ClientChannel, SFTPWrapper } from 'ssh2'
 import type { HostContext, SSHConnectResult, SSHProfile, SSHStatus } from '@shared/types'
 import { establish } from './connection'
 import { detectRemoteContext } from './osDetect'
+import { PortForwardManager } from './port-forward'
 
 interface Session {
   id: string
@@ -38,6 +39,8 @@ interface Session {
    * `null` = unknown / not yet probed. `true` = PowerShell detected.
    */
   isWindowsPowerShell?: boolean
+  /** Pending shell-setup write timers; cleared on disconnect. */
+  setupTimers?: Set<NodeJS.Timeout>
 }
 
 interface ReconnectState {
@@ -146,6 +149,8 @@ export class SSHManager {
    * `handlers.onStatus` from {@link fireStatus}.
    */
   private statusListeners = new Map<string, Set<SSHStatusListener>>()
+  /** Port forwards bound to live SSH sessions. */
+  forwardManager = new PortForwardManager((sessionId) => this.sessions.get(sessionId)?.client)
 
   constructor(private handlers: SSHHandlers) {}
 
@@ -268,11 +273,7 @@ export class SSHManager {
    * new uuid; we then update our internal `Session.id` to match, so callers
    * that have already obtained the new id can still look it up.
    */
-  private scheduleReconnect(
-    sessionId: string,
-    profile: SSHProfile,
-    userInitiated = false
-  ): void {
+  private scheduleReconnect(sessionId: string, profile: SSHProfile, userInitiated = false): void {
     const policy = { ...this.policy }
     if (!policy.enabled && !userInitiated) return
     const maxAttempts = Math.max(1, policy.maxAttempts)
@@ -459,7 +460,12 @@ export class SSHManager {
             `if [ -n "$BASH_VERSION" ]; then case "$PS1" in *133*) ;; *) PS1="\\[$__dtA\\]$PS1\\[$__dtB\\]";; esac; fi; ` +
             `fi; ` +
             `stty echo 2>/dev/null; clear; __dt7\n`
-          setTimeout(() => s.shell?.write(setup), 700)
+          const t = setTimeout(() => {
+            if (s.setupTimers) s.setupTimers.delete(t)
+            if (s.shell && this.sessions.has(sessionId)) s.shell.write(setup)
+          }, 700)
+          if (!s.setupTimers) s.setupTimers = new Set()
+          s.setupTimers.add(t)
         } else if (s.context.os === 'windows') {
           // Windows remote: probe whether the open shell is PowerShell (the
           // OpenSSH server default on Server 2019+ and most modern Windows
@@ -478,7 +484,12 @@ export class SSHManager {
               `Write-Host -NoNewline ($e + ']133;A' + $b + $e + ']7;file:///' + $u + $b); ` +
               `('PS ' + $p + '> ' + $e + ']133;B' + $b) }; ` +
               `Clear-Host; prompt\n`
-            setTimeout(() => s.shell?.write(setup), 700)
+            const t = setTimeout(() => {
+              if (s.setupTimers) s.setupTimers.delete(t)
+              if (s.shell && this.sessions.has(sessionId)) s.shell.write(setup)
+            }, 700)
+            if (!s.setupTimers) s.setupTimers = new Set()
+            s.setupTimers.add(t)
           })
         }
         resolve()
@@ -532,7 +543,12 @@ export class SSHManager {
         stdout: Buffer.concat(stdoutChunks).toString('utf8'),
         stderr: Buffer.concat(stderrChunks).toString('utf8')
       })
-      const finish = (r: { stdout: string; stderr: string; code: number | null; timedOut: boolean }) => {
+      const finish = (r: {
+        stdout: string
+        stderr: string
+        code: number | null
+        timedOut: boolean
+      }) => {
         if (!settled) {
           settled = true
           resolve(r)
@@ -569,6 +585,11 @@ export class SSHManager {
   disconnect(sessionId: string): void {
     const s = this.sessions.get(sessionId)
     if (!s) return
+    // Cancel any pending shell-setup timers so they don't write to a closed channel.
+    if (s.setupTimers) {
+      for (const t of s.setupTimers) clearTimeout(t)
+      s.setupTimers.clear()
+    }
     // Cancel any in-flight reconnect loop first so the close handler does
     // not race a new attempt. Use the same flag the close handler checks
     // (`s.reconnect`) — clearTimeout + delete it from the session record.
@@ -590,6 +611,7 @@ export class SSHManager {
   }
 
   private cleanup(sessionId: string): void {
+    this.forwardManager.removeBySession(sessionId)
     this.sessions.delete(sessionId)
   }
 

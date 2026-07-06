@@ -196,12 +196,21 @@ export class PtyManager {
     const id = randomUUID()
     // Explicit args (e.g. launching `pi`) bypass the default prompt-injection.
     const args = opts.args ?? shellArgs(shell)
+    // Inherit the OS environment but strip Electron/node-specific variables so
+    // user shells don't detect/depend on the app runtime.
+    const baseEnv: Record<string, string> = {}
+    for (const [k, v] of Object.entries(process.env)) {
+      if (v == null) continue
+      if (k.startsWith('ELECTRON_') || k.startsWith('NODE_') || k === 'VITE_DEV_SERVER_URL')
+        continue
+      baseEnv[k] = v
+    }
     const ptyOpts: IWindowsPtyForkOptions = {
       name: 'xterm-256color',
       cols: opts.cols || 80,
       rows: opts.rows || 24,
       cwd: opts.cwd || os.homedir(),
-      env: { ...(process.env as Record<string, string>), ...(opts.env ?? {}) },
+      env: { ...baseEnv, ...(opts.env ?? {}) },
       // Use the ConPTY bundled with node-pty (the Windows Terminal one) instead
       // of the in-box conhost ConPTY: the OS copy has known TUI repaint
       // corruption and teardown bugs, and the bundled-dll path also skips the

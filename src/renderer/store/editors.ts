@@ -103,7 +103,14 @@ export const useEditors = create<EditorState>((set, get) => ({
         set((s) => ({
           docs: s.docs.map((d) =>
             d.id === id
-              ? { ...d, state: 'ready', content, savedContent: content, eol: fc.eol, mtimeMs: fc.mtimeMs }
+              ? {
+                  ...d,
+                  state: 'ready',
+                  content,
+                  savedContent: content,
+                  eol: fc.eol,
+                  mtimeMs: fc.mtimeMs
+                }
               : d
           )
         }))
@@ -146,7 +153,13 @@ export const useEditors = create<EditorState>((set, get) => ({
       set((s) => ({
         docs: s.docs.map((d) =>
           d.id === id
-            ? { ...d, saving: false, savedContent: d.content, mtimeMs: res.mtimeMs, error: undefined }
+            ? {
+                ...d,
+                saving: false,
+                savedContent: d.content,
+                mtimeMs: res.mtimeMs,
+                error: undefined
+              }
             : d
         )
       }))

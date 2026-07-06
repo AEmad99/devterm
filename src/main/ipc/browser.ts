@@ -1,4 +1,11 @@
-import { app, BrowserWindow, ipcMain, session as electronSession, webContents } from 'electron'
+import {
+  app,
+  BrowserWindow,
+  ipcMain,
+  session as electronSession,
+  shell,
+  webContents
+} from 'electron'
 import type { DownloadItem } from 'electron'
 import { join } from 'path'
 import { IPC, type BrowserDownloadItem } from '@shared/types'
@@ -140,6 +147,17 @@ export function registerBrowserIpc(getWindow: () => BrowserWindow | null): {
     if (!wc) return
     wc.setAudioMuted(muted)
   })
+  ipcMain.handle(IPC.browserOpenExternal, (_e, url: string) => {
+    if (!url) return
+    try {
+      const { protocol } = new URL(url)
+      if (protocol === 'http:' || protocol === 'https:' || protocol === 'mailto:') {
+        void shell.openExternal(url)
+      }
+    } catch {
+      /* ignore malformed URLs */
+    }
+  })
 
   return {
     shutdown: async () => {
@@ -156,7 +174,9 @@ function synthId(): string {
   return `dl-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
 }
 
-function mapState(s: 'completed' | 'cancelled' | 'interrupted' | 'progressing'): BrowserDownloadItem['state'] {
+function mapState(
+  s: 'completed' | 'cancelled' | 'interrupted' | 'progressing'
+): BrowserDownloadItem['state'] {
   if (s === 'completed') return 'completed'
   if (s === 'cancelled') return 'cancelled'
   if (s === 'interrupted') return 'interrupted'

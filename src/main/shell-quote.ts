@@ -19,16 +19,23 @@ export function shQuote(p: string): string {
   return `'${p.replace(/'/g, `'\\''`)}'`
 }
 
-/** A path looks like a POSIX absolute path (vs a Windows `C:\…` path). */
+/** A path looks like a POSIX absolute path (vs a Windows `C:\…` or `C:/…` path). */
 export function isPosixPath(p: string): boolean {
-  return p.startsWith('/')
+  return p.startsWith('/') && !/^[a-zA-Z]:\//.test(p)
+}
+
+/** PowerShell single-argument escape: double single quotes embed a literal quote. */
+function psQuote(p: string): string {
+  return `'${p.replace(/'/g, "''")}'`
 }
 
 /**
- * Quote a path for safe interpolation into a remote shell command. POSIX paths
- * get airtight single-quoting; non-POSIX (Windows) paths keep double quotes with
- * any embedded double-quote characters removed.
+ * Quote a path for safe interpolation into a remote shell command.
+ *  - POSIX paths get airtight single-quoting.
+ *  - Windows paths get PowerShell single-quoting (safe for cmd.exe callers that
+ *    forward to PowerShell) with embedded single quotes doubled.
  */
 export function quoteRemotePath(p: string): string {
-  return isPosixPath(p) ? shQuote(p) : `"${p.replace(/"/g, '')}"`
+  if (isPosixPath(p)) return shQuote(p)
+  return psQuote(p)
 }

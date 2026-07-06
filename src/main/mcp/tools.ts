@@ -157,7 +157,7 @@ export function registerTools(mcp: McpServer, deps: ToolDeps): void {
     'get_host_context',
     {
       description:
-        'Facts about the connected host: hostname, OS, the operator\'s current working directory, and whether it is air-gapped.',
+        "Facts about the connected host: hostname, OS, the operator's current working directory, and whether it is air-gapped.",
       inputSchema: {}
     },
     async () => {
@@ -254,7 +254,9 @@ export function registerTools(mcp: McpServer, deps: ToolDeps): void {
       inputSchema: {
         path: z
           .string()
-          .describe("Remote directory path — absolute, or relative to the operator's current directory.")
+          .describe(
+            "Remote directory path — absolute, or relative to the operator's current directory."
+          )
       }
     },
     async ({ path }) => {
@@ -280,7 +282,9 @@ export function registerTools(mcp: McpServer, deps: ToolDeps): void {
       inputSchema: {
         path: z
           .string()
-          .describe("Remote file path — absolute, or relative to the operator's current directory."),
+          .describe(
+            "Remote file path — absolute, or relative to the operator's current directory."
+          ),
         max_bytes: z
           .number()
           .int()
@@ -327,7 +331,9 @@ export function registerTools(mcp: McpServer, deps: ToolDeps): void {
       inputSchema: {
         path: z
           .string()
-          .describe("Remote file path — absolute, or relative to the operator's current directory."),
+          .describe(
+            "Remote file path — absolute, or relative to the operator's current directory."
+          ),
         content: z.string().describe('Full file contents to write.')
       }
     },
@@ -342,7 +348,10 @@ export function registerTools(mcp: McpServer, deps: ToolDeps): void {
             `Ask the operator to set it to 'confirm' or 'full' mode.`
         )
       if (v.needConfirm) {
-        const outcome = await confirmWithActivity('write_file', `${target} (${content.length} bytes)`)
+        const outcome = await confirmWithActivity(
+          'write_file',
+          `${target} (${content.length} bytes)`
+        )
         if (outcome === 'timeout')
           return errorText(
             `Approval timed out for write to ${target} — no operator response within 2 min. ` +

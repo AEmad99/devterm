@@ -8,7 +8,8 @@
 // Ctrl+<letter> (which collides with readline) by using Shift variants, except
 // the command palette which is intentionally Ctrl/Cmd+K.
 
-export type HotkeyId = | 'globalSearch'
+export type HotkeyId =
+  | 'globalSearch'
   | 'palette'
   | 'paletteAlt'
   | 'newTerminal'
@@ -77,11 +78,27 @@ interface Keyish {
   key: string
 }
 
-/** Return the id of the hotkey this event matches, or null. */
-export function matchHotkey(e: Keyish): HotkeyId | null {
+/** Build the effective hotkey list by layering custom overrides onto defaults. */
+export function resolveHotkeys(
+  custom: Partial<Record<HotkeyId, { mod?: boolean; shift?: boolean; alt?: boolean; key: string }>>
+): Hotkey[] {
+  const byId = new Map<HotkeyId, Hotkey>(HOTKEYS.map((h) => [h.id, h]))
+  for (const [id, combo] of Object.entries(custom) as [
+    HotkeyId,
+    { mod?: boolean; shift?: boolean; alt?: boolean; key: string }
+  ][]) {
+    const base = byId.get(id)
+    if (!base) continue
+    byId.set(id, { ...base, mod: combo.mod, shift: combo.shift, alt: combo.alt, key: combo.key })
+  }
+  return Array.from(byId.values())
+}
+
+/** Return the id of the hotkey this event matches against the provided list, or null. */
+export function matchHotkey(e: Keyish, hotkeys: Hotkey[] = HOTKEYS): HotkeyId | null {
   const mod = e.ctrlKey || e.metaKey
   const key = e.key.length === 1 ? e.key.toLowerCase() : e.key
-  for (const h of HOTKEYS) {
+  for (const h of hotkeys) {
     if (
       Boolean(h.mod) === mod &&
       Boolean(h.shift) === e.shiftKey &&
@@ -92,6 +109,23 @@ export function matchHotkey(e: Keyish): HotkeyId | null {
     }
   }
   return null
+}
+
+/** Convert a raw keydown event into a hotkey combo descriptor. Ignores bare modifiers. */
+export function captureCombo(
+  e: KeyboardEvent
+): { mod?: boolean; shift?: boolean; alt?: boolean; key: string } | null {
+  if (['Control', 'Shift', 'Alt', 'Meta', 'CapsLock', 'Tab'].includes(e.key)) return null
+  const mod = e.ctrlKey || e.metaKey
+  const shift = e.shiftKey
+  const alt = e.altKey
+  if (!mod && !shift && !alt) return null
+  return {
+    mod: mod || undefined,
+    shift: shift || undefined,
+    alt: alt || undefined,
+    key: e.key.length === 1 ? e.key.toLowerCase() : e.key
+  }
 }
 
 function prettyKey(key: string): string {

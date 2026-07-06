@@ -45,7 +45,7 @@ export class TransferManager {
     const sftp = await this.deps.getSftp(opts.sessionId)
     const download = opts.direction === 'download'
     const total = download
-      ? (await statRemote(sftp, opts.remotePath)).size ?? 0
+      ? ((await statRemote(sftp, opts.remotePath)).size ?? 0)
       : (await fs.stat(opts.localPath)).size
 
     const read: Readable = download

@@ -216,21 +216,21 @@ All renderer-to-main capabilities must be represented in `src/shared/types.ts`, 
 | SSH connection setup | `src/main/ssh/connection.ts` |
 | SFTP helpers | `src/main/ssh/sftp.ts` |
 | File APIs and local watch | `src/main/fs/*` |
-| Transfer queue | `src/main/transfer.ts`, `src/renderer/components/TransferQueue.tsx` |
-| Terminal layout | `src/renderer/components/TerminalLayout.tsx` |
-| Terminal view | `src/renderer/components/TerminalView.tsx` |
-| Remote shell/files/agent wrapper | `src/renderer/components/RemoteSessionView.tsx` |
-| Agent pane | `src/renderer/components/AgentPane.tsx` |
+| Transfer queue | `src/main/transfer.ts`, `src/main/transfers/queue.ts`, `src/renderer/components/transfers/TransfersPanel.tsx` |
+| Terminal layout | `src/renderer/components/terminal/TerminalLayout.tsx` |
+| Terminal view | `src/renderer/components/terminal/TerminalView.tsx` |
+| Remote shell/files/agent wrapper | `src/renderer/components/terminal/RemoteSessionView.tsx` |
+| Agent pane | `src/renderer/components/agent/AgentPane.tsx`, `AgentActivityPanel.tsx` |
 | MCP bridge and tools | `src/main/mcp/server.ts`, `src/main/mcp/tools.ts`, `src/main/mcp/policy.ts` |
 | Agent launch/context | `src/main/agent/launch.ts`, `src/main/agent/context.ts`, `src/main/agent/extension.ts`, `src/main/agent/claude-launch.ts`, `src/main/agent/opencode-launch.ts` |
-| Browser pane | `src/renderer/components/BrowserPane.tsx` |
-| File explorer/tree | `src/renderer/components/FileExplorer.tsx`, `FileTree.tsx` |
-| SFTP browser | `src/renderer/components/SftpBrowser.tsx`, `FilePane.tsx` |
-| Editor | `src/renderer/components/EditorView.tsx` |
-| Workspaces | `src/main/ipc/workspaces.ts`, `src/renderer/lib/workspace.ts`, `WorkspacesManager.tsx` |
-| Connections | `src/main/ipc/connections.ts`, `ConnectionForm.tsx`, `ConnectionsManager.tsx` |
-| Snippets | `src/main/ipc/snippets.ts`, `SnippetsManager.tsx`, `SnippetForm.tsx` |
-| Command palette and hotkeys | `CommandPalette.tsx`, `src/renderer/lib/hotkeys.ts` |
+| Browser pane | `src/renderer/components/terminal/BrowserPane.tsx` |
+| File explorer/tree | `src/renderer/components/files/FileExplorer.tsx`, `FileTree.tsx` |
+| SFTP browser | `src/renderer/components/files/SftpBrowser.tsx`, `FilePane.tsx` |
+| Editor | `src/renderer/components/files/EditorView.tsx` |
+| Workspaces | `src/main/ipc/workspaces.ts`, `src/renderer/lib/workspace.ts`, `src/renderer/components/workspaces/WorkspacesManager.tsx`, `SaveWorkspaceModal.tsx` |
+| Connections | `src/main/ipc/connections.ts`, `src/renderer/components/connections/ConnectionForm.tsx`, `ConnectionsManager.tsx` |
+| Snippets | `src/main/ipc/snippets.ts`, `src/renderer/components/snippets/SnippetsManager.tsx`, `SnippetForm.tsx` |
+| Command palette and hotkeys | `src/renderer/components/modals/CommandPalette.tsx`, `src/renderer/lib/hotkeys.ts` |
 | Themes | `src/renderer/lib/themes.ts`, `src/renderer/styles.css` |
 | Window appearance hook | `src/main/ipc/window.ts` |
 | Packaging | `electron-builder.yml`, `package.json`, `scripts/setup-native.mjs` |

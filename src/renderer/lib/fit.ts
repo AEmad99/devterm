@@ -18,13 +18,19 @@ export function fitNow(fit: FitAddon, host: HTMLElement): boolean {
 
 /**
  * Retry fits across a few animation frames after mount/visibility changes, since
- * flex/absolute layout may not have settled on the first call.
+ * flex/absolute layout may not have settled on the first call. Returns a
+ * disposer that cancels any pending animation frames — call it in the effect
+ * cleanup to avoid running `onFit` after unmount.
  */
-export function fitSoon(fit: FitAddon, host: HTMLElement, onFit: () => void): void {
+export function fitSoon(fit: FitAddon, host: HTMLElement, onFit: () => void): () => void {
   let tries = 0
+  let raf = 0
   const tick = () => {
     if (fitNow(fit, host)) onFit()
-    if (++tries < 6) requestAnimationFrame(tick)
+    if (++tries < 6) raf = requestAnimationFrame(tick)
   }
-  requestAnimationFrame(tick)
+  raf = requestAnimationFrame(tick)
+  return () => {
+    if (raf) cancelAnimationFrame(raf)
+  }
 }

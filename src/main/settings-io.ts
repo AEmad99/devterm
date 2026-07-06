@@ -118,7 +118,10 @@ async function readConnectionsSanitized(): Promise<SavedConnection[]> {
   // `src/main/ipc/connections.ts`). Even if a field is unencrypted (RAW
   // prefix) it gets stripped by `stripSecrets` — we never want plaintext
   // secrets in the export bundle.
-  const raw = await readJson<{ connections?: Array<Record<string, unknown>> }>(connectionsFile(), {})
+  const raw = await readJson<{ connections?: Array<Record<string, unknown>> }>(
+    connectionsFile(),
+    {}
+  )
   if (!Array.isArray(raw.connections)) return []
   return raw.connections.map((c) => {
     const out = stripSecrets(c)
@@ -265,9 +268,7 @@ export async function exportToPath(getWindow: () => BrowserWindow | null): Promi
   return result.filePath
 }
 
-export async function importFromPath(
-  getWindow: () => BrowserWindow | null
-): Promise<ImportResult> {
+export async function importFromPath(getWindow: () => BrowserWindow | null): Promise<ImportResult> {
   const win = getWindow()
   const opts = {
     title: 'Import DevTerm settings',
@@ -290,7 +291,10 @@ export async function importFromPath(
     const parsed = JSON.parse(raw) as SettingsExportBundle
     bundle = parsed
   } catch (err) {
-    return { ok: false, error: 'Invalid JSON: ' + (err instanceof Error ? err.message : String(err)) }
+    return {
+      ok: false,
+      error: 'Invalid JSON: ' + (err instanceof Error ? err.message : String(err))
+    }
   }
   // The dialog-driven import always uses 'merge' so the user can't accidentally
   // wipe their existing data. A 'replace' mode is available via the file API

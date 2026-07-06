@@ -149,7 +149,8 @@ export function registerHistoryIpc(ssh: SSHManager): void {
     if (!cmd || cmd.length > 2000 || looksSensitive(cmd)) return
     const entries = await readStore()
     const idx = entries.findIndex((x) => x.command === cmd && x.scope === scope)
-    if (idx >= 0) entries[idx] = { ...entries[idx], count: entries[idx].count + 1, last: Date.now() }
+    if (idx >= 0)
+      entries[idx] = { ...entries[idx], count: entries[idx].count + 1, last: Date.now() }
     else entries.push({ command: cmd, count: 1, last: Date.now(), scope })
     entries.sort((a, b) => b.last - a.last) // keep the most-recently-used within the cap
     await writeStore(entries.slice(0, MAX_STORE))

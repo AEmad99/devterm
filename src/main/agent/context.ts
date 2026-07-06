@@ -31,7 +31,13 @@ tracks their \`cd\` live — they don't need to spell out a path for "here". ${w
  */
 export function buildAgentsMd(context: HostContext, airGapped: boolean, cwd?: string): string {
   const osName =
-    context.os === 'windows' ? 'Windows' : context.os === 'mac' ? 'macOS' : context.os === 'linux' ? 'Linux' : 'unknown OS'
+    context.os === 'windows'
+      ? 'Windows'
+      : context.os === 'mac'
+        ? 'macOS'
+        : context.os === 'linux'
+          ? 'Linux'
+          : 'unknown OS'
 
   return `# Connected host: ${context.hostname}
 
@@ -90,7 +96,13 @@ a command does before running anything that changes state.
  */
 export function buildClaudeMd(context: HostContext, airGapped: boolean, cwd?: string): string {
   const osName =
-    context.os === 'windows' ? 'Windows' : context.os === 'mac' ? 'macOS' : context.os === 'linux' ? 'Linux' : 'unknown OS'
+    context.os === 'windows'
+      ? 'Windows'
+      : context.os === 'mac'
+        ? 'macOS'
+        : context.os === 'linux'
+          ? 'Linux'
+          : 'unknown OS'
 
   return `# Connected host: ${context.hostname}
 
@@ -146,7 +158,13 @@ a command does before running anything that changes state.
  */
 export function buildOpencodeMd(context: HostContext, airGapped: boolean, cwd?: string): string {
   const osName =
-    context.os === 'windows' ? 'Windows' : context.os === 'mac' ? 'macOS' : context.os === 'linux' ? 'Linux' : 'unknown OS'
+    context.os === 'windows'
+      ? 'Windows'
+      : context.os === 'mac'
+        ? 'macOS'
+        : context.os === 'linux'
+          ? 'Linux'
+          : 'unknown OS'
 
   return `# Connected host: ${context.hostname}
 
@@ -177,6 +195,73 @@ The path you see on launch is a temp dir DevTerm uses only to hold the
 \`opencode.json\` config and this briefing — it is **not** a checkout of the
 remote host. Anything that looks like a local path is on your machine, not the
 host; use the \`devterm_*\` tools for everything on the connected host.
+
+${
+  airGapped
+    ? `## ⚠ AIR-GAPPED HOST — NO INTERNET
+This host has **no outbound internet**. NEVER run \`yum\`/\`dnf\`/\`apt\`/\`pip\`/\`npm\`
+against internet repos, and never \`curl\`/\`wget\` from the internet. Use the
+**local mirrors only**: Harbor registry, Skopeo, \`oc mirror\`, and pre-staged
+local repos. If something isn't mirrored, say so rather than attempting an
+internet fetch.`
+    : `## Network
+This host has outbound internet, but prefer local/organisational mirrors when available.`
+}
+
+## Safety
+Destructive operations are gated by an operator-approval guardrail. Explain what
+a command does before running anything that changes state.
+`
+}
+
+/**
+ * Per-session AGENTS.md describing the host for the Kimi Code CLI.
+ *
+ * Kimi auto-loads `AGENTS.md` from the working directory (and walks up the
+ * project hierarchy). It exposes the bridge's tools as `mcp__devterm__*`
+ * (the MCP server is named `devterm`). The briefing tells the agent to use
+ * those tools for host work and to treat the launch cwd as a throwaway temp
+ * dir, not a checkout of the remote host.
+ */
+export function buildKimiMd(context: HostContext, airGapped: boolean, cwd?: string): string {
+  const osName =
+    context.os === 'windows'
+      ? 'Windows'
+      : context.os === 'mac'
+        ? 'macOS'
+        : context.os === 'linux'
+          ? 'Linux'
+          : 'unknown OS'
+
+  return `# Connected host: ${context.hostname}
+
+You are operating on a **remote ${osName}** host through DevTerm's MCP bridge.
+
+- Host: \`${context.hostname}\`
+- OS: ${osName}
+- Details: ${context.detail || '(unknown)'}
+
+## How to act on this host
+Kimi exposes the bridge's tools as \`mcp__devterm__*\` (the MCP server is named
+\`devterm\`). Use them — they run on THIS host over the existing SSH connection.
+Do not \`ssh\` elsewhere, do not try to use a local checkout, and do not use any
+built-in read/write/edit/bash tool for host work.
+- \`mcp__devterm__run_command\` — run a shell command here.
+- \`mcp__devterm__read_file\` / \`mcp__devterm__write_file\` / \`mcp__devterm__list_dir\` — files on this host.
+- \`mcp__devterm__get_host_context\` — re-read these facts.
+- \`mcp__devterm__ping\` — confirm the bridge is still alive.
+
+The DevTerm MCP bridge is a real HTTP server on localhost; the \`mcp.json\` it
+loaded contains the bearer token. The bridge enforces the operator's policy
+(read-only / confirm / full) before running any tool, and destructive
+operations may prompt the operator for approval.
+
+${workingDirSection(cwd)}
+## Your working directory is a throwaway
+The path you see on launch is a temp dir DevTerm uses only to hold the
+\`.kimi-code/mcp.json\` config and this briefing — it is **not** a checkout of
+the remote host. Anything that looks like a local path is on your machine, not
+the host; use the \`mcp__devterm__*\` tools for everything on the connected host.
 
 ${
   airGapped

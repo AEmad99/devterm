@@ -32,7 +32,8 @@ export function initAutoUpdater(getWindow: () => BrowserWindow | null): void {
       cancelId: 1,
       title: 'Update ready',
       message: `DevTerm ${info.version} is ready to install.`,
-      detail: 'Restart now to apply it, or it will be installed automatically the next time you quit.'
+      detail:
+        'Restart now to apply it, or it will be installed automatically the next time you quit.'
     }
     const { response } = win
       ? await dialog.showMessageBox(win, opts)

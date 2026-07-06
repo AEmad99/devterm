@@ -310,7 +310,10 @@ function safeBearerEqual(actual: string | undefined, expected: string): boolean 
  * never floods the log or the renderer's row layout.
  */
 export function sanitizeDetail(s: string): string {
-  const flat = s.replace(/[\r\n]+/g, ' ⏎ ').replace(/\s+/g, ' ').trim()
+  const flat = s
+    .replace(/[\r\n]+/g, ' ⏎ ')
+    .replace(/\s+/g, ' ')
+    .trim()
   if (flat.length <= 200) return flat
   return flat.slice(0, 197) + '…'
 }

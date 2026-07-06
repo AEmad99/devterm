@@ -121,7 +121,8 @@ export function record(entry: Omit<BridgeActivityEntry, 'id' | 'ts'>): BridgeAct
   }
   const s = getOrCreate(full.sessionId)
   s.ring.push(full)
-  const evicted = s.ring.length > IN_MEMORY_CAP ? s.ring.splice(0, s.ring.length - IN_MEMORY_CAP) : []
+  const evicted =
+    s.ring.length > IN_MEMORY_CAP ? s.ring.splice(0, s.ring.length - IN_MEMORY_CAP) : []
   if (evicted.length > 0) scheduleAppend(evicted)
   // Invalidate any cached tail-on-disk result so the next `list` re-reads.
   tailCache = null

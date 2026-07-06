@@ -48,13 +48,23 @@ export function deriveTabStatus(s: SessionStatusInput): TabStatus {
   // 1. Errors first — a hard failure (handshake failed, reconnect exhausted,
   //    host key mismatch, etc.) is the most important signal.
   if (isErrorStatus(s.status)) {
-    return { tone: 'error', reason: s.status, bridgeState: s.agentBridgeState, pendingApproval: s.agentPendingApproval }
+    return {
+      tone: 'error',
+      reason: s.status,
+      bridgeState: s.agentBridgeState,
+      pendingApproval: s.agentPendingApproval
+    }
   }
   // 2. Pending approval (yellow) — the agent is waiting on the operator, even
   //    if the underlying connection is otherwise fine. This is the most
   //    "action required" state the dot can show.
   if (s.agentPendingApproval) {
-    return { tone: 'warn', reason: 'Agent awaiting approval', bridgeState: s.agentBridgeState, pendingApproval: true }
+    return {
+      tone: 'warn',
+      reason: 'Agent awaiting approval',
+      bridgeState: s.agentBridgeState,
+      pendingApproval: true
+    }
   }
   // 3. Needs attention (green) — an agent finished or a bell rang and the
   //    operator hasn't looked yet. Below a blocking approval but above the

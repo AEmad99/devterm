@@ -285,9 +285,7 @@ export const useSessions = create<SessionState>((set, get) => ({
       const cur = s.sessions.find((x) => x.id === id)
       if (!cur || cur.agentPendingApproval === pending) return s
       return {
-        sessions: s.sessions.map((x) =>
-          x.id === id ? { ...x, agentPendingApproval: pending } : x
-        )
+        sessions: s.sessions.map((x) => (x.id === id ? { ...x, agentPendingApproval: pending } : x))
       }
     }),
 

@@ -11,11 +11,7 @@
 
 import { BrowserWindow, ipcMain } from 'electron'
 import { IPC, type GitStatus } from '@shared/types'
-import {
-  gitStatusLocal,
-  gitDiffLocal,
-  parsePorcelainFromStdout
-} from '../git'
+import { gitStatusLocal, gitDiffLocal, parsePorcelainFromStdout } from '../git'
 import { quoteRemotePath } from '../shell-quote'
 import type { SSHManager } from '../ssh/manager'
 
@@ -43,11 +39,7 @@ async function resolveLocal(path: string): Promise<GitStatus> {
   return gitStatusLocal(path)
 }
 
-async function resolveRemote(
-  ssh: SSHManager,
-  sessionId: string,
-  path: string
-): Promise<GitStatus> {
+async function resolveRemote(ssh: SSHManager, sessionId: string, path: string): Promise<GitStatus> {
   const ctx = ssh.getContext(sessionId)
   if (!ctx) return { isRepo: false, branch: '', ahead: -1, behind: -1, entries: {} }
   // Run git over the session's existing exec channel (SSHManager.exec), so we
@@ -79,14 +71,19 @@ export function registerGitIpc(ssh: SSHManager, getWindow: () => BrowserWindow |
     const cur = cache.get(key)
     if (cur && now - cur.ts < CACHE_TTL_MS) return cur.status
     if (cur?.inflight) return cur.inflight
-    const inflight = (target.sessionId
-      ? resolveRemote(ssh, target.sessionId, target.path)
-      : resolveLocal(target.path)
+    const inflight = (
+      target.sessionId
+        ? resolveRemote(ssh, target.sessionId, target.path)
+        : resolveLocal(target.path)
     ).finally(() => {
       const e = cache.get(key)
       if (e) delete e.inflight
     })
-    cache.set(key, { status: { isRepo: false, branch: '', ahead: -1, behind: -1, entries: {} }, ts: now, inflight })
+    cache.set(key, {
+      status: { isRepo: false, branch: '', ahead: -1, behind: -1, entries: {} },
+      ts: now,
+      inflight
+    })
     const status = await inflight
     cache.set(key, { status, ts: Date.now() })
     return status
@@ -156,12 +153,15 @@ export function registerGitIpc(ssh: SSHManager, getWindow: () => BrowserWindow |
     watched.add(cacheKey(target.sessionId, target.path))
     return true
   })
-  ipcMain.handle(`${IPC.gitOnChange}:remove`, (_e, target: { sessionId?: string; path: string }) => {
-    const k = cacheKey(target.sessionId, target.path)
-    watched.delete(k)
-    lastPushed.delete(k)
-    return true
-  })
+  ipcMain.handle(
+    `${IPC.gitOnChange}:remove`,
+    (_e, target: { sessionId?: string; path: string }) => {
+      const k = cacheKey(target.sessionId, target.path)
+      watched.delete(k)
+      lastPushed.delete(k)
+      return true
+    }
+  )
 
   // Clear the polling timer on app quit; the main process tears the ipcMain
   // down for us, but a stray setInterval would keep this process alive.

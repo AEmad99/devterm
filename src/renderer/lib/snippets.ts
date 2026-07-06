@@ -70,7 +70,11 @@ export function getCachedPlaceholder(
       Date.now() - parsed.t > PLACEHOLDER_CACHE_TTL_MS
     ) {
       // Expired — drop it lazily so the storage doesn't grow without bound.
-      try { storage.removeItem(key) } catch { /* ignore */ }
+      try {
+        storage.removeItem(key)
+      } catch {
+        /* ignore */
+      }
       return undefined
     }
     return parsed.v
@@ -99,9 +103,7 @@ export function setCachedPlaceholder(
     // wipe the lot without scanning every `devterm.placeholder.v1.` prefix
     // (some platforms are slow at full-key iteration).
     const indexRaw = storage.getItem(CACHE_INDEX_KEY)
-    const index = new Set<string>(
-      indexRaw ? (JSON.parse(indexRaw) as string[]) : []
-    )
+    const index = new Set<string>(indexRaw ? (JSON.parse(indexRaw) as string[]) : [])
     index.add(key)
     storage.setItem(CACHE_INDEX_KEY, JSON.stringify(Array.from(index)))
   } catch {
@@ -125,10 +127,14 @@ export function clearCachedPlaceholders(
       try {
         storage.removeItem(k)
         removed++
-      } catch { /* ignore individual failures */ }
+      } catch {
+        /* ignore individual failures */
+      }
     }
     storage.removeItem(CACHE_INDEX_KEY)
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
   return removed
 }
 

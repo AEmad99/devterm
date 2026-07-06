@@ -309,10 +309,11 @@ export type PolicyMode = 'read_only' | 'confirm' | 'full'
  * (Anthropic-only, native MCP via --mcp-config); `pi` runs the pi coding agent
  * (more models/subscriptions, MCP via a loaded extension); `opencode` runs the
  * OpenCode TUI (sst/opencode) wired to the bridge through a per-session
- * `opencode.json` with a remote MCP server entry. All three reach this host
- * only through DevTerm's MCP bridge.
+ * `opencode.json` with a remote MCP server entry; `kimi` runs the Kimi Code CLI
+ * (Moonshot AI) wired through a per-session `.kimi-code/mcp.json`. All four
+ * reach this host only through DevTerm's MCP bridge.
  */
-export type AgentKind = 'claude' | 'pi' | 'opencode'
+export type AgentKind = 'claude' | 'pi' | 'opencode' | 'kimi'
 
 export interface AgentOpenOpts {
   sessionId: string
@@ -504,6 +505,7 @@ export const IPC = {
   // foundation cluster: settings export/import
   settingsIoExport: 'settings-io:export',
   settingsIoImport: 'settings-io:import',
+  settingsImported: 'settings:imported',
 
   // foundation cluster: approval rules (action-style single channel)
   approvalRules: 'approval-rules',
@@ -535,8 +537,10 @@ export const IPC = {
   browserZoomReset: 'browser:zoom:reset',
   browserDevtoolsOpen: 'browser:devtools:open',
   browserMute: 'browser:mute',
+  browserOpenExternal: 'browser:open-external',
   browserDownloadsEvent: 'browser:downloads:event',
-  searchQuery: 'search:query'
+  searchQuery: 'search:query',
+  searchSeed: 'search:seed'
 } as const
 
 /** Typed surface exposed to the renderer via contextBridge (see preload). */
@@ -735,11 +739,13 @@ export interface DevTermApi {
    * versioned (see `SettingsExportBundle`) and secrets are stripped on export.
    */
   settingsIo: {
-    export(): Promise<void>
+    export(): Promise<string | null>
     import(): Promise<{
       ok: boolean
+      error?: string
       counts?: { settings: boolean; snippets: number; workspaces: number; approvalRules: number }
     }>
+    onImported(cb: () => void): () => void
   }
   /**
    * Approval rules for the agent guardrail. Scoped per-session or global
@@ -786,7 +792,10 @@ export interface DevTermApi {
      * per session+path (a local and a remote repo at the same path don't collide)
      * and the unsubscribe stops the right poll.
      */
-    onChange(target: { sessionId?: string; path: string }, cb: (status: GitStatus) => void): () => void
+    onChange(
+      target: { sessionId?: string; path: string },
+      cb: (status: GitStatus) => void
+    ): () => void
     /**
      * Explicit "start polling" nudge for `path`. Pair with the unsubscribe
      * returned by `onChange`. Best-effort: a missing main process is fine.
@@ -810,8 +819,16 @@ export interface DevTermApi {
      * Enqueue a single upload. The main process allocates the id, persists
      * the item, and starts it through the producer/consumer queue.
      */
-    enqueueUpload(opts: { sessionId: string; localPath: string; remotePath: string }): Promise<TransferItemV2>
-    enqueueDownload(opts: { sessionId: string; localPath: string; remotePath: string }): Promise<TransferItemV2>
+    enqueueUpload(opts: {
+      sessionId: string
+      localPath: string
+      remotePath: string
+    }): Promise<TransferItemV2>
+    enqueueDownload(opts: {
+      sessionId: string
+      localPath: string
+      remotePath: string
+    }): Promise<TransferItemV2>
     /** Mark a queued or running transfer as canceled. */
     cancel(id: string): Promise<void>
     /**
@@ -852,10 +869,13 @@ export interface DevTermApi {
   openBrowserDevtools(webContentsId: number): Promise<void>
   /** Mute / unmute a <webview> guest identified by webContents id. */
   setBrowserMuted(webContentsId: number, muted: boolean): Promise<void>
+  /** Open a URL in the system browser after a scheme safety check. */
+  openExternal(url: string): Promise<void>
 
   /** Global terminal search (live + history). */
   search: {
     query(q: string): Promise<SearchResult[]>
+    seed(sessionId: string, lines: string[]): Promise<void>
   }
 }
 
@@ -961,12 +981,7 @@ export interface PortForward {
 }
 
 /** Status badge for a tab (reconnecting, error, etc.). */
-export type TabStatus =
-  | 'normal'
-  | 'reconnecting'
-  | 'disconnected'
-  | 'agent_pending'
-  | 'error'
+export type TabStatus = 'normal' | 'reconnecting' | 'disconnected' | 'agent_pending' | 'error'
 
 /** A single recent host the user quick-connected to (for autocomplete). */
 export interface QuickConnectEntry {
@@ -1036,7 +1051,15 @@ export interface GitStatus {
 /** Live status update for a single in-flight transfer item (mirrors TransferItemV2). */
 export type TransferEvent =
   | { kind: 'progress'; id: string; transferred: number; total: number; done: boolean }
-  | { kind: 'done'; id: string; transferred: number; total: number; canceled?: boolean; error?: string; finishedAt: number }
+  | {
+      kind: 'done'
+      id: string
+      transferred: number
+      total: number
+      canceled?: boolean
+      error?: string
+      finishedAt: number
+    }
 
 /** What the user gets back from `transfers.list()`. */
 export type TransferListResult = TransferItemV2[]
@@ -1081,4 +1104,3 @@ export interface SearchResult {
   timestamp?: string
   kind: 'live' | 'history' | 'detached'
 }
-

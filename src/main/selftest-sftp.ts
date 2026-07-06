@@ -1,5 +1,18 @@
 import { generateKeyPairSync } from 'crypto'
-import { closeSync, fstatSync, openSync, readSync, writeSync, readdirSync, statSync, lstatSync, mkdirSync, renameSync, unlinkSync, rmdirSync } from 'fs'
+import {
+  closeSync,
+  fstatSync,
+  openSync,
+  readSync,
+  writeSync,
+  readdirSync,
+  statSync,
+  lstatSync,
+  mkdirSync,
+  renameSync,
+  unlinkSync,
+  rmdirSync
+} from 'fs'
 import type { Stats } from 'fs'
 import { normalize } from 'path'
 import type { AddressInfo } from 'net'
@@ -56,7 +69,10 @@ export function startSftpServer(root: string): Promise<{ port: number; close: ()
           const fileHandles = new Map<number, number>() // handle -> fd
           const mkHandle = () => {
             const id = handleSeq++
-            return { id, buf: Buffer.from([id & 0xff, (id >> 8) & 0xff, (id >> 16) & 0xff, (id >> 24) & 0xff]) }
+            return {
+              id,
+              buf: Buffer.from([id & 0xff, (id >> 8) & 0xff, (id >> 16) & 0xff, (id >> 24) & 0xff])
+            }
           }
           const idOf = (h: Buffer) => h.readUInt32LE(0)
 

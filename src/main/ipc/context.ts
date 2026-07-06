@@ -16,10 +16,13 @@ function localOS(): HostOS {
 }
 
 export function registerContextIpc(): void {
-  ipcMain.handle(IPC.localContext, (): HostContext => ({
-    kind: 'local',
-    os: localOS(),
-    detail: `${os.type()} ${os.release()} (${os.arch()})`,
-    hostname: os.hostname()
-  }))
+  ipcMain.handle(
+    IPC.localContext,
+    (): HostContext => ({
+      kind: 'local',
+      os: localOS(),
+      detail: `${os.type()} ${os.release()} (${os.arch()})`,
+      hostname: os.hostname()
+    })
+  )
 }

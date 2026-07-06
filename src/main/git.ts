@@ -26,7 +26,11 @@ function pickStatus(index: string, worktree: string): GitFileStatus {
   // Untracked / ignored — porcelain emits '?' / '!' in the second column.
   if (worktree === '?' || worktree === '!') return '?'
   // Conflicts ('U'/'AA'/'DD' etc.) — surface as 'U' for the badge.
-  if (worktree === 'U' || index === 'U' || (index !== ' ' && worktree !== ' ' && index !== worktree))
+  if (
+    worktree === 'U' ||
+    index === 'U' ||
+    (index !== ' ' && worktree !== ' ' && index !== worktree)
+  )
     return 'U'
   // Rename (worktree 'R') — only the short path is parsed below; the badge
   // matches git's own collapsed view.

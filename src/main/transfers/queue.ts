@@ -197,7 +197,9 @@ export class TransferQueue {
     let sftp: SFTPWrapper | null = null
     try {
       sftp = await this.getSftp(item.sessionId)
-      total = isDownload ? (await statRemote(sftp, item.remotePath)).size ?? 0 : (await fs.stat(item.localPath)).size
+      total = isDownload
+        ? ((await statRemote(sftp, item.remotePath)).size ?? 0)
+        : (await fs.stat(item.localPath)).size
     } catch (err) {
       await this.finishItem(id, 0, total, false, String((err as Error)?.message || err))
       return

@@ -18,14 +18,10 @@
 
 import { BrowserWindow, ipcMain } from 'electron'
 import { IPC } from '@shared/types'
+import type { SSHManager } from './ssh/manager'
 import * as bridgeActivity from './bridge-activity'
 import * as approvalRules from './approval-rules'
 import * as settingsIo from './settings-io'
-
-// In-memory port-forward registry. Cluster B will replace this with real
-// ssh2.Server / channel-forwarding wiring; until then, list() returns the
-// registered forwards and add/remove always reject.
-const portForwards = new Map<string, import('@shared/types').PortForward>()
 
 function pushBridgeActivity(
   getWindow: () => BrowserWindow | null,
@@ -36,7 +32,10 @@ function pushBridgeActivity(
   win?.webContents.send(`${IPC.bridgeActivityEvent}:${sessionId}`, entry)
 }
 
-export function registerFoundationIpc(getWindow: () => BrowserWindow | null): void {
+export function registerFoundationIpc(
+  getWindow: () => BrowserWindow | null,
+  sshManager: SSHManager
+): void {
   // -------------------------------------------------------------------------
   // bridge-activity
   // -------------------------------------------------------------------------
@@ -71,7 +70,12 @@ export function registerFoundationIpc(getWindow: () => BrowserWindow | null): vo
   })
 
   ipcMain.handle(IPC.settingsIoImport, async () => {
-    return settingsIo.importFromPath(getWindow)
+    const result = await settingsIo.importFromPath(getWindow)
+    if (result.ok) {
+      const win = getWindow()
+      if (win && !win.isDestroyed()) win.webContents.send(IPC.settingsImported)
+    }
+    return result
   })
 
   // -------------------------------------------------------------------------
@@ -105,22 +109,27 @@ export function registerFoundationIpc(getWindow: () => BrowserWindow | null): vo
   )
 
   // -------------------------------------------------------------------------
-  // port-forward (stubs for Cluster B)
+  // port-forward
   // -------------------------------------------------------------------------
   ipcMain.handle(IPC.portForwardList, async (_e, sessionId?: string) => {
-    const all = Array.from(portForwards.values())
-    if (sessionId == null) return all
-    return all.filter((f) => f.sessionId === sessionId)
+    return sshManager.forwardManager.list(sessionId)
   })
 
-  ipcMain.handle(IPC.portForwardAdd, async () => {
-    // FOUNDATION: Cluster B will implement
-    throw new Error('portForward not implemented yet')
-  })
+  ipcMain.handle(
+    IPC.portForwardAdd,
+    async (_e, req: Omit<import('@shared/types').PortForward, 'id' | 'createdAt' | 'bytes'>) => {
+      return sshManager.forwardManager.add(
+        req.sessionId,
+        req.kind,
+        req.localPort,
+        req.remoteHost,
+        req.remotePort
+      )
+    }
+  )
 
-  ipcMain.handle(IPC.portForwardRemove, async () => {
-    // FOUNDATION: Cluster B will implement
-    throw new Error('portForward not implemented yet')
+  ipcMain.handle(IPC.portForwardRemove, async (_e, id: string) => {
+    await sshManager.forwardManager.remove(id)
   })
 }
 

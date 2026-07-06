@@ -139,17 +139,8 @@ export class TransferStore {
 
   /** Coalesce frequent patches (progress) into a single flush. */
   private scheduleFlush(): void {
-    if (this.writeTimer || !this.dirty) {
-      this.dirty = true
-      if (!this.writeTimer) {
-        this.writeTimer = setTimeout(() => {
-          this.writeTimer = null
-          if (this.dirty) void this.flushNow()
-        }, 250)
-      }
-      return
-    }
     this.dirty = true
+    if (this.writeTimer) return
     this.writeTimer = setTimeout(() => {
       this.writeTimer = null
       if (this.dirty) void this.flushNow()

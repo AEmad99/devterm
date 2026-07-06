@@ -1,8 +1,8 @@
-import { execSync } from 'child_process'
 import { mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import type { BridgeInfo } from '../mcp/server'
+import { resolveCached } from './launch'
 import type { AgentLaunchSpec } from './launch'
 import { buildOpencodeMd } from './context'
 
@@ -15,35 +15,8 @@ import { buildOpencodeMd } from './context'
  * back to whatever `where` finds first if only the POSIX shim is present so
  * the user gets a clear 193 to fix rather than a silent wrong pick.
  */
-export function resolveOpencodeBin(): string {
-  if (process.platform === 'win32') {
-    try {
-      const out = execSync('where opencode', { encoding: 'utf8' })
-        .split(/\r?\n/)
-        .map((l) => l.trim())
-        .filter(Boolean)
-      const winShim = out.find(
-        (p) =>
-          p.toLowerCase().endsWith('.cmd') ||
-          p.toLowerCase().endsWith('.bat') ||
-          p.toLowerCase().endsWith('.exe')
-      )
-      if (winShim) return winShim
-      if (out[0]) return out[0]
-    } catch {
-      /* opencode not on PATH; fall through to literal name */
-    }
-    return 'opencode.cmd'
-  }
-  try {
-    const out = execSync('command -v opencode', { encoding: 'utf8' })
-      .split(/\r?\n/)
-      .find((l) => l.trim())
-    if (out && out.trim()) return out.trim()
-  } catch {
-    /* fall through */
-  }
-  return 'opencode'
+export async function resolveOpencodeBin(): Promise<string> {
+  return resolveCached('opencode', 'opencode.cmd', 'opencode')
 }
 
 /**
@@ -62,7 +35,10 @@ export function resolveOpencodeBin(): string {
  * noise) and share/upload defaults, and pins the server port so the agent
  * can't claim another host's address book.
  */
-export function prepareOpencodeLaunch(hostContextMd: string, bridge: BridgeInfo): AgentLaunchSpec {
+export async function prepareOpencodeLaunch(
+  hostContextMd: string,
+  bridge: BridgeInfo
+): Promise<AgentLaunchSpec> {
   const cwd = mkdtempSync(join(tmpdir(), 'devterm-opencode-'))
   writeFileSync(join(cwd, 'AGENTS.md'), hostContextMd, { mode: 0o600 })
 
@@ -118,14 +94,12 @@ export function prepareOpencodeLaunch(hostContextMd: string, bridge: BridgeInfo)
       port: 0
     }
   }
-  writeFileSync(
-    join(cwd, 'opencode.json'),
-    JSON.stringify(opencodeConfig, null, 2),
-    { mode: 0o600 }
-  )
+  writeFileSync(join(cwd, 'opencode.json'), JSON.stringify(opencodeConfig, null, 2), {
+    mode: 0o600
+  })
 
   return {
-    bin: resolveOpencodeBin(),
+    bin: await resolveOpencodeBin(),
     // `opencode [project]` is the default command — when no subcommand is
     // given, opencode starts the TUI against the project at `[project]` (or
     // cwd). The TUI loads the bridge MCP server from `opencode.json` in cwd.

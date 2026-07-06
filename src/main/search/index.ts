@@ -9,14 +9,12 @@ export interface SearchResult {
   sessionTitle: string
   lineNumber: number
   text: string
-  timestamp?: string
   kind: 'live' | 'history' | 'detached'
 }
 
 interface StoredLine {
   text: string
   lineNumber: number
-  timestamp?: string
 }
 
 const MAX_LINES_PER_SESSION = 2000
@@ -42,16 +40,29 @@ export class SearchIndex {
       this.index.set(sessionId, rec)
     }
     const lineNumber = rec.lines.length + 1
-    rec.lines.push({ text, lineNumber, timestamp: new Date().toISOString() })
+    rec.lines.push({ text, lineNumber })
     if (rec.lines.length > MAX_LINES_PER_SESSION) {
       rec.lines.shift()
-      // renumber? we accept off-by-N for MVP.
+      for (let i = 0; i < rec.lines.length; i++) rec.lines[i].lineNumber = i + 1
     }
   }
 
   /** Remove all lines for a session (on kill). */
   clearSession(sessionId: string) {
     this.index.delete(sessionId)
+  }
+
+  /**
+   * Seed the index from an array of already-rendered lines (e.g. read from
+   * xterm's buffer on first open). Replaces any existing lines for the session
+   * so live output can append from the correct line number.
+   */
+  seedLines(sessionId: string, lines: string[], title: string) {
+    const stored: StoredLine[] = lines.slice(-MAX_LINES_PER_SESSION).map((text, i) => ({
+      text,
+      lineNumber: i + 1
+    }))
+    this.index.set(sessionId, { title, lines: stored })
   }
 
   query(q: string, limit = 50): SearchResult[] {
@@ -66,7 +77,6 @@ export class SearchIndex {
             sessionTitle: rec.title,
             lineNumber: ln.lineNumber,
             text: ln.text,
-            timestamp: ln.timestamp,
             kind: 'live'
           })
           if (out.length >= limit) return out

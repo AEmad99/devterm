@@ -134,7 +134,11 @@ export function filterHistory(
     if (terms.length) {
       const hay = e.command.toLowerCase()
       let ok = true
-      for (const t of terms) if (!hay.includes(t)) { ok = false; break }
+      for (const t of terms)
+        if (!hay.includes(t)) {
+          ok = false
+          break
+        }
       if (!ok) continue
     }
     out.push(e)

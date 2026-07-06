@@ -48,12 +48,10 @@ const api: DevTermApi = {
     resize: (id, cols, rows) => ipcRenderer.send(IPC.ptyResize, id, cols, rows),
     kill: (id) => ipcRenderer.send(IPC.ptyKill, id),
     onData: (id, cb) => subscribe<string>(`${IPC.ptyData}:${id}`, cb),
-    onExit: (id, cb) => subscribe<{ exitCode: number; signal?: number }>(`${IPC.ptyExit}:${id}`, cb),
+    onExit: (id, cb) =>
+      subscribe<{ exitCode: number; signal?: number }>(`${IPC.ptyExit}:${id}`, cb),
     onStartupFailure: (id, cb) =>
-      subscribe<import('@shared/types').PtyStartupFailure>(
-        `${IPC.ptyStartupFailure}:${id}`,
-        cb
-      )
+      subscribe<import('@shared/types').PtyStartupFailure>(`${IPC.ptyStartupFailure}:${id}`, cb)
   },
   ssh: {
     connect: (profile: SSHProfile): Promise<SSHConnectResult> =>
@@ -64,7 +62,8 @@ const api: DevTermApi = {
     resize: (id, cols, rows) => ipcRenderer.send(IPC.sshResize, id, cols, rows),
     disconnect: (id) => ipcRenderer.send(IPC.sshDisconnect, id),
     cancelReconnect: (id: string) => ipcRenderer.send(IPC.sshCancelReconnect, id),
-    getReconnectPolicy: (): Promise<ReconnectPolicy> => ipcRenderer.invoke(IPC.sshGetReconnectPolicy),
+    getReconnectPolicy: (): Promise<ReconnectPolicy> =>
+      ipcRenderer.invoke(IPC.sshGetReconnectPolicy),
     setReconnectPolicy: (patch: Partial<ReconnectPolicy>): Promise<ReconnectPolicy> =>
       ipcRenderer.invoke(IPC.sshSetReconnectPolicy, patch),
     onData: (id, cb) => subscribe<string>(`${IPC.sshData}:${id}`, cb),
@@ -111,9 +110,11 @@ const api: DevTermApi = {
     onWatchEvent: (watchId, cb) => subscribe<DirListing>(`${IPC.sftpWatchEvent}:${watchId}`, cb)
   },
   search: {
-      query: (q: string) => ipcRenderer.invoke(IPC.searchQuery, q)
-    },
-    transfer: {
+    query: (q: string) => ipcRenderer.invoke(IPC.searchQuery, q),
+    seed: (sessionId: string, lines: string[]) =>
+      ipcRenderer.invoke(IPC.searchSeed, sessionId, lines)
+  },
+  transfer: {
     start: (opts: TransferStartOpts): Promise<string> =>
       ipcRenderer.invoke(IPC.transferStart, opts),
     cancel: (id: string) => ipcRenderer.send(IPC.transferCancel, id),
@@ -123,8 +124,7 @@ const api: DevTermApi = {
     open: (opts: AgentOpenOpts): Promise<AgentOpenResult> =>
       ipcRenderer.invoke(IPC.agentOpen, opts),
     close: (sessionId: string) => ipcRenderer.send(IPC.agentClose, sessionId),
-    setCwd: (sessionId: string, cwd: string) =>
-      ipcRenderer.send(IPC.agentSetCwd, sessionId, cwd),
+    setCwd: (sessionId: string, cwd: string) => ipcRenderer.send(IPC.agentSetCwd, sessionId, cwd),
     status: (sessionId: string): Promise<AgentBridgeStatus | null> =>
       ipcRenderer.invoke(IPC.agentStatus, sessionId),
     onBridgeStatus: (sessionId, cb) =>
@@ -189,16 +189,20 @@ const api: DevTermApi = {
     list: (
       sessionId: string,
       opts?: { sinceMs?: number; limit?: number }
-    ): Promise<BridgeActivityEntry[]> => ipcRenderer.invoke(IPC.bridgeActivityList, sessionId, opts),
+    ): Promise<BridgeActivityEntry[]> =>
+      ipcRenderer.invoke(IPC.bridgeActivityList, sessionId, opts),
     clear: (sessionId: string): Promise<void> =>
       ipcRenderer.invoke(IPC.bridgeActivityClear, sessionId)
   },
   settingsIo: {
-    export: (): Promise<void> => ipcRenderer.invoke(IPC.settingsIoExport),
+    export: (): Promise<string | null> =>
+      ipcRenderer.invoke(IPC.settingsIoExport) as Promise<string | null>,
     import: (): Promise<{
       ok: boolean
+      error?: string
       counts?: { settings: boolean; snippets: number; workspaces: number; approvalRules: number }
-    }> => ipcRenderer.invoke(IPC.settingsIoImport)
+    }> => ipcRenderer.invoke(IPC.settingsIoImport),
+    onImported: (cb: () => void): (() => void) => subscribe(IPC.settingsImported, cb)
   },
   approvalRules: {
     list: (sessionId?: string): Promise<ApprovalRule[]> =>
@@ -281,9 +285,15 @@ const api: DevTermApi = {
       // Match the existing namespaces' shape: subscribe to the broadcast
       // channel, then ask for the initial snapshot.
       const off = subscribe<void>(IPC.transfersStatus, () => {
-        ipcRenderer.invoke(IPC.transfersList).then(cb).catch(() => undefined)
+        ipcRenderer
+          .invoke(IPC.transfersList)
+          .then(cb)
+          .catch(() => undefined)
       })
-      ipcRenderer.invoke(IPC.transfersList).then(cb).catch(() => undefined)
+      ipcRenderer
+        .invoke(IPC.transfersList)
+        .then(cb)
+        .catch(() => undefined)
       return off
     }
   },
@@ -309,7 +319,8 @@ const api: DevTermApi = {
   openBrowserDevtools: (webContentsId: number): Promise<void> =>
     ipcRenderer.invoke(IPC.browserDevtoolsOpen, webContentsId),
   setBrowserMuted: (webContentsId: number, muted: boolean): Promise<void> =>
-    ipcRenderer.invoke(IPC.browserMute, webContentsId, muted)
+    ipcRenderer.invoke(IPC.browserMute, webContentsId, muted),
+  openExternal: (url: string): Promise<void> => ipcRenderer.invoke(IPC.browserOpenExternal, url)
 }
 
 contextBridge.exposeInMainWorld('devterm', api)

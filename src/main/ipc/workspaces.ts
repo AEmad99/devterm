@@ -99,7 +99,7 @@ export function registerWorkspacesIpc(): void {
       if (!n) return n
       if (n.type === 'leaf') {
         const tabs = remap(n.tabs)
-        const active = n.active ? idMap.get(n.active) ?? null : null
+        const active = n.active ? (idMap.get(n.active) ?? null) : null
         return { ...n, tabs, active }
       }
       return { ...n, children: n.children.map(remapLayout) as typeof n.children }

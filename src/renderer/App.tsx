@@ -1,27 +1,27 @@
 import { useEffect, useMemo, useState } from 'react'
-import TerminalLayout from './components/TerminalLayout'
-import ConnectionForm from './components/ConnectionForm'
-import FileExplorer from './components/FileExplorer'
-import ConfirmActionModal from './components/ConfirmActionModal'
-import EditorView from './components/EditorView'
-import Splitter from './components/Splitter'
-import NewTerminalModal from './components/NewTerminalModal'
-import ConnectionsManager from './components/ConnectionsManager'
-import WorkspacesManager from './components/WorkspacesManager'
-import SnippetsManager from './components/SnippetsManager'
-import CommandPalette from './components/CommandPalette'
-import ShortcutsModal from './components/ShortcutsModal'
-import { GlobalSearchModal } from './components/GlobalSearchModal'
-import SaveWorkspaceModal from './components/SaveWorkspaceModal'
-import SettingsModal from './components/SettingsModal'
-import StatusBar from './components/StatusBar'
-import TransfersPanel from './components/TransfersPanel'
+import TerminalLayout from './components/terminal/TerminalLayout'
+import ConnectionForm from './components/connections/ConnectionForm'
+import FileExplorer from './components/files/FileExplorer'
+import ConfirmActionModal from './components/modals/ConfirmActionModal'
+import EditorView from './components/files/EditorView'
+import Splitter from './components/common/Splitter'
+import NewTerminalModal from './components/terminal/NewTerminalModal'
+import ConnectionsManager from './components/connections/ConnectionsManager'
+import WorkspacesManager from './components/workspaces/WorkspacesManager'
+import SnippetsManager from './components/snippets/SnippetsManager'
+import CommandPalette from './components/modals/CommandPalette'
+import ShortcutsModal from './components/modals/ShortcutsModal'
+import { GlobalSearchModal } from './components/modals/GlobalSearchModal'
+import SaveWorkspaceModal from './components/workspaces/SaveWorkspaceModal'
+import SettingsModal from './components/modals/SettingsModal'
+import StatusBar from './components/common/StatusBar'
+import TransfersPanel from './components/transfers/TransfersPanel'
 import { useTransfersSync } from './lib/useTransfersSync'
 import { useSessions } from './store/sessions'
 import { useEditors } from './store/editors'
 import { useLayout, DEFAULT_GROUP, groupActiveSession, allLeaves } from './store/layout'
 import { useSettings } from './store/settings'
-import { matchHotkey } from './lib/hotkeys'
+import { matchHotkey, resolveHotkeys } from './lib/hotkeys'
 import { focusTerminal, clearTerminal } from './lib/terms'
 import { capturableSessions, captureWorkspace } from './lib/workspace'
 import {
@@ -39,7 +39,7 @@ import {
   IconBrowser,
   IconEdit,
   EmptyTerminalArt
-} from './components/Icons'
+} from './components/common/Icons'
 import type { HostContext } from '@shared/types'
 
 function osLabel(os?: string): string {
@@ -169,30 +169,13 @@ export default function App() {
     return () => window.removeEventListener('focus', onFocus)
   }, [])
 
-  // Move active terminal +1/-1 within the active group (wraps), and focus it.
-  const cycleTerminal = (dir: 1 | -1) => {
-    const { groups, activeGroupId, setActiveTab } = useLayout.getState()
-    const g = groups.find((x) => x.id === activeGroupId)
-    if (!g || !g.root) return
-    const leaves = allLeaves(g.root)
-    const order = leaves.flatMap((l) => l.tabs)
-    if (order.length < 2) return
-    const cur = groupActiveSession(g)
-    const idx = cur ? order.indexOf(cur) : -1
-    const next = order[(idx + dir + order.length) % order.length]
-    const leaf = leaves.find((l) => l.tabs.includes(next))
-    if (leaf) setActiveTab(leaf.id, next)
-    useSessions.getState().setActive(next)
-    focusTerminal(next)
-  }
-
   // Walk the active group's tabs in order (MRU isn't tracked at the store
   // level, so this uses the natural tab index — first leaf's tabs, then the
   // next leaf's). Tabs in inactive groups are skipped, matching the group-
   // bar visibility. Tabs in inactive groups aren't reachable from here on
   // purpose: switching groups is a separate concern and Ctrl+Tab should feel
   // like "next thing on screen" not "next thing in some hidden list".
-  const cycleActiveTab = (dir: 1 | -1) => {
+  const cycleTab = (dir: 1 | -1) => {
     const { groups, activeGroupId, setActiveTab } = useLayout.getState()
     const g = groups.find((x) => x.id === activeGroupId)
     if (!g || !g.root) return
@@ -255,7 +238,8 @@ export default function App() {
         useLayout.getState().setFocus(null)
         return
       }
-      const id = matchHotkey(e)
+      const keybindings = useSettings.getState().keybindings
+      const id = matchHotkey(e, resolveHotkeys(keybindings))
       if (!id) return
       // Ctrl+Tab / Ctrl+Shift+Tab are also a Chrome devtools shortcut; only
       // intercept them when the focused element is a terminal host. In any
@@ -307,19 +291,19 @@ export default function App() {
           setShowSettings((v) => !v)
           break
         case 'nextTerminal':
-          cycleTerminal(1)
+          cycleTab(1)
           break
         case 'prevTerminal':
-          cycleTerminal(-1)
+          cycleTab(-1)
           break
         case 'nextTab':
           // Same focus-guard as the dedicated Ctrl+Tab listener below; the
           // call still short-circuits when not in a terminal context so the
           // chord falls through to the host (Chrome devtools, etc.).
-          if (isTerminalHostFocused()) cycleActiveTab(1)
+          if (isTerminalHostFocused()) cycleTab(1)
           break
         case 'prevTab':
-          if (isTerminalHostFocused()) cycleActiveTab(-1)
+          if (isTerminalHostFocused()) cycleTab(-1)
           break
         case 'toggleFocus': {
           const fid = useSessions.getState().activeId

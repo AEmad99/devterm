@@ -1,8 +1,8 @@
-import { execSync } from 'child_process'
 import { mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import type { BridgeInfo } from '../mcp/server'
+import { resolveCached } from './launch'
 import type { AgentLaunchSpec } from './launch'
 import { buildClaudeMd } from './context'
 
@@ -14,35 +14,8 @@ import { buildClaudeMd } from './context'
  * run the POSIX one (error 193). Prefer the `.cmd` / `.bat` / `.exe` shim on
  * Windows so node-pty can actually launch it.
  */
-export function resolveClaudeBin(): string {
-  if (process.platform === 'win32') {
-    try {
-      const out = execSync('where claude', { encoding: 'utf8' })
-        .split(/\r?\n/)
-        .map((l) => l.trim())
-        .filter(Boolean)
-      const winShim = out.find(
-        (p) =>
-          p.toLowerCase().endsWith('.cmd') ||
-          p.toLowerCase().endsWith('.bat') ||
-          p.toLowerCase().endsWith('.exe')
-      )
-      if (winShim) return winShim
-      if (out[0]) return out[0]
-    } catch {
-      /* claude not on PATH; fall through to literal name */
-    }
-    return 'claude.cmd'
-  }
-  try {
-    const out = execSync('command -v claude', { encoding: 'utf8' })
-      .split(/\r?\n/)
-      .find((l) => l.trim())
-    if (out && out.trim()) return out.trim()
-  } catch {
-    /* fall through */
-  }
-  return 'claude'
+export async function resolveClaudeBin(): Promise<string> {
+  return resolveCached('claude', 'claude.cmd', 'claude')
 }
 
 /**
@@ -55,7 +28,10 @@ export function resolveClaudeBin(): string {
  * extension, so no bridge env vars are needed — `env` is empty but kept so the
  * spec matches {@link AgentLaunchSpec}.
  */
-export function prepareClaudeLaunch(claudeMd: string, bridge: BridgeInfo): AgentLaunchSpec {
+export async function prepareClaudeLaunch(
+  claudeMd: string,
+  bridge: BridgeInfo
+): Promise<AgentLaunchSpec> {
   const cwd = mkdtempSync(join(tmpdir(), 'devterm-claude-'))
   writeFileSync(join(cwd, 'CLAUDE.md'), claudeMd, { mode: 0o600 })
 
@@ -72,7 +48,7 @@ export function prepareClaudeLaunch(claudeMd: string, bridge: BridgeInfo): Agent
   writeFileSync(mcpPath, JSON.stringify(mcpConfig, null, 2), { mode: 0o600 })
 
   return {
-    bin: resolveClaudeBin(),
+    bin: await resolveClaudeBin(),
     args: [
       '--mcp-config',
       mcpPath,
