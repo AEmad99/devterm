@@ -28,6 +28,7 @@ export type HotkeyId =
   | 'nextTab'
   | 'prevTab'
   | 'toggleFocus'
+  | 'toggleZenMode'
   | 'shortcuts'
 
 export interface Hotkey {
@@ -65,6 +66,7 @@ export const HOTKEYS: Hotkey[] = [
   { id: 'nextTab', mod: true, key: 'Tab', label: 'Next tab' },
   { id: 'prevTab', mod: true, shift: true, key: 'Tab', label: 'Previous tab' },
   { id: 'toggleFocus', mod: true, shift: true, key: 'z', label: 'Focus (magnify) terminal' },
+  { id: 'toggleZenMode', mod: true, alt: true, key: 'z', label: 'Zen mode' },
   { id: 'settings', mod: true, key: ',', label: 'Settings' },
   { id: 'globalSearch', mod: true, alt: true, key: 'f', label: 'Search across all terminals' },
   { id: 'shortcuts', mod: true, key: '/', label: 'Keyboard shortcuts' }

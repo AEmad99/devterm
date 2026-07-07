@@ -6,6 +6,7 @@ import { useSessions } from '../../store/sessions'
 import { fitNow, fitSoon } from '../../lib/fit'
 import { attachRenderer, attachClipboard } from '../../lib/renderer'
 import { createIdleChime, AGENT_ATTENTION_BODY } from '../../lib/attention'
+import { useBridgeActivity } from '../../lib/bridge-activity'
 
 /** Live state of the agent's link to this host (what the status pill reflects). */
 type BridgeState = AgentBridgeStatus['state'] | 'connecting' | 'exited'
@@ -66,6 +67,23 @@ export default function AgentPane({
   // canonical AgentBridgeState values ('connecting' and 'exited' are
   // AgentPane-local only).
   const setAgentBridgeState = useSessions((s) => s.setAgentBridgeState)
+  const setAgentTask = useSessions((s) => s.setAgentTask)
+  const { entries } = useBridgeActivity(sessionId)
+
+  // Surface the latest agent activity in the session tab so the label can show
+  // what the agent is doing ("read_file src/main.ts", "run_command npm test", …).
+  useEffect(() => {
+    const latest = entries[entries.length - 1]
+    if (!latest) return
+    if (latest.kind === 'tool_call') {
+      const task = latest.tool ? `${latest.tool}: ${latest.detail}` : latest.detail
+      setAgentTask(sessionId, task, kind)
+    } else if (latest.kind === 'approval_request') {
+      setAgentTask(sessionId, 'awaiting approval', kind)
+    } else if (latest.kind === 'approval_outcome') {
+      setAgentTask(sessionId, latest.ok ? 'approval granted' : 'approval denied', kind)
+    }
+  }, [entries, sessionId, kind, setAgentTask])
 
   useEffect(() => {
     return window.devterm.agent.onBridgeStatus(sessionId, (status) => {
@@ -74,8 +92,13 @@ export default function AgentPane({
       if (status.mcpUrl) setMcpUrl(status.mcpUrl)
       setLastHeartbeatAt(status.lastHeartbeatAt)
       setAgentBridgeState(sessionId, status.state)
+      // Once the agent exits or the bridge stops, there's nothing "currently"
+      // doing; clear the task so the tab doesn't keep showing a stale action.
+      if (status.state === 'stopped' || status.state === 'error') {
+        setAgentTask(sessionId, undefined, kind)
+      }
     })
-  }, [sessionId, setAgentBridgeState])
+  }, [sessionId, kind, setAgentBridgeState, setAgentTask])
 
   // Mirror the live cwd to main on every change (and on mount). open() also
   // seeds the launch cwd; this keeps it current as the operator navigates.
@@ -217,8 +240,9 @@ export default function AgentPane({
       // gone. A follow-up mount of the same pane will push a fresh state on
       // its first bridge-status event.
       setAgentBridgeState(sessionId, 'stopped')
+      setAgentTask(sessionId, undefined, kind)
     }
-  }, [kind, label, mode, restartNonce, sessionId, setAgentBridgeState])
+  }, [kind, label, mode, restartNonce, sessionId, setAgentBridgeState, setAgentTask])
 
   const pill = hostClosed
     ? { tone: 'down', text: 'Host disconnected' }

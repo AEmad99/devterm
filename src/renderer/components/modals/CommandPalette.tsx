@@ -1,5 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import type { HistoryResult, Snippet } from '@shared/types'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type {
+  HistoryResult,
+  SavedConnection,
+  Snippet,
+  Workspace,
+  WorkspaceItem
+} from '@shared/types'
 import { activeSession, runInActive } from '../../lib/input'
 import {
   applyPlaceholders,
@@ -12,24 +18,45 @@ import {
   buildFrecency,
   filterHistory,
   normalizeForDedupe,
-  snippetCommandSet,
-  type FrecencyEntry
+  snippetCommandSet
 } from '../../lib/history-frecency'
+import { scoreTerms } from '../../lib/fuzzy'
+import { useSessions } from '../../store/sessions'
+import { useLayout } from '../../store/layout'
+import { toLiveSnapshot } from '../../lib/workspace'
+import { IconGroup, IconPalette, IconRemote, IconTerminals } from '../common/Icons'
 
-// Fuzzy-ish filter: every whitespace-separated term must appear (case-insensitive).
-function termsOf(query: string): string[] {
-  return query.toLowerCase().split(/\s+/).filter(Boolean)
-}
-function matches(s: Snippet, terms: string[]): boolean {
-  const hay =
-    `${s.name} ${s.command} ${s.description ?? ''} ${(s.tags ?? []).join(' ')}`.toLowerCase()
-  return terms.every((t) => hay.includes(t))
+type Category = 'all' | 'snippets' | 'connections' | 'workspaces' | 'history'
+
+type PaletteItem =
+  | { kind: 'snippet'; snippet: Snippet; score: number }
+  | { kind: 'connection'; conn: SavedConnection; score: number }
+  | { kind: 'workspace'; ws: Workspace; score: number }
+  | { kind: 'history'; command: string; count: number; score: number }
+
+const CATEGORIES: { id: Category; label: string }[] = [
+  { id: 'all', label: 'All' },
+  { id: 'snippets', label: 'Snippets' },
+  { id: 'connections', label: 'Connections' },
+  { id: 'workspaces', label: 'Workspaces' },
+  { id: 'history', label: 'History' }
+]
+
+function snippetTarget(s: Snippet): string {
+  return `${s.name} ${s.command} ${s.description ?? ''} ${(s.tags ?? []).join(' ')}`
 }
 
-// One selectable palette entry: a saved snippet, or a frecency-ranked history row.
-type Item =
-  | { kind: 'snippet'; snippet: Snippet }
-  | { kind: 'history'; command: string; count: number }
+function connectionTarget(c: SavedConnection): string {
+  return `${c.name} ${c.host} ${c.username} ${c.port ?? ''}`
+}
+
+function workspaceItemLabel(it: WorkspaceItem, connName: (id?: string) => string): string {
+  return it.kind === 'local' ? (it.title ?? 'Local') : connName(it.connectionId)
+}
+
+function workspaceTarget(ws: Workspace, connName: (id?: string) => string): string {
+  return `${ws.name} ${ws.description ?? ''} ${ws.items.map((it) => workspaceItemLabel(it, connName)).join(' ')}`
+}
 
 export default function CommandPalette({
   onRun,
@@ -42,6 +69,11 @@ export default function CommandPalette({
   const [snippets, setSnippets] = useState<Snippet[]>([])
   const [hist, setHist] = useState<HistoryResult | null>(null)
   const [scopeLabel, setScopeLabel] = useState('Local')
+  const [connections, setConnections] = useState<SavedConnection[]>([])
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([])
+  const [asyncReady, setAsyncReady] = useState(false)
+  const [category, setCategory] = useState<Category>('all')
+
   // `saved` tracks history commands the user has promoted to a snippet in
   // this session — drives the "✓" badge so they don't get re-saved.
   const [saved, setSaved] = useState<Set<string>>(new Set())
@@ -58,16 +90,26 @@ export default function CommandPalette({
   const focusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
-    window.devterm.snippets.list().then(setSnippets)
-    // History is scoped to wherever the active terminal points: a remote session's
-    // own shell history when focused on a remote, otherwise this machine's.
     const s = activeSession()
     const remote = s?.kind === 'remote'
     setScopeLabel(remote ? 'Remote' : 'Local')
-    window.devterm.history
-      .query(remote ? { scope: 'remote', sessionId: s!.id } : { scope: 'local' })
-      .then(setHist)
-      .catch(() => setHist({ recent: [], frequent: [] }))
+
+    const load = async () => {
+      const [snipList, histResult, connList, wsList] = await Promise.all([
+        window.devterm.snippets.list(),
+        window.devterm.history
+          .query(remote ? { scope: 'remote', sessionId: s!.id } : { scope: 'local' })
+          .catch(() => ({ recent: [], frequent: [] }) as HistoryResult),
+        window.devterm.connections.list().catch(() => [] as SavedConnection[]),
+        window.devterm.workspaces.list().catch(() => [] as Workspace[])
+      ])
+      setSnippets(snipList)
+      setHist(histResult)
+      setConnections(connList)
+      setWorkspaces(wsList)
+    }
+    void load().finally(() => setAsyncReady(true))
+
     inputRef.current?.focus()
     return () => {
       if (focusTimerRef.current) {
@@ -77,46 +119,140 @@ export default function CommandPalette({
     }
   }, [])
 
-  // Snippets that match the query (named, parameterizable saved commands).
-  const snipMatches = useMemo(() => {
-    const terms = termsOf(query)
-    return snippets.filter((s) => matches(s, terms))
-  }, [snippets, query])
+  const connName = useCallback(
+    (id?: string) => (id && connections.find((c) => c.id === id)?.name) || '(deleted connection)',
+    [connections]
+  )
 
-  // Frecency list = merged + scored, filtered against saved snippets (so the
-  // user doesn't see the same command twice — once as a snippet, once in
-  // history). Capped so the list stays scannable. Whitespace-tolerant dedupe
-  // means a " ssh …" in history hides behind the trimmed snippet version.
-  const histMatches = useMemo<FrecencyEntry[]>(() => {
+  const queryTrimmed = query.trim()
+
+  const snippetItems = useMemo<PaletteItem[]>(() => {
+    if (queryTrimmed) {
+      return (
+        snippets
+          .map((s) => {
+            const scored = scoreTerms(snippetTarget(s), queryTrimmed)
+            return scored ? { kind: 'snippet' as const, snippet: s, score: scored.score } : null
+          })
+          .filter(Boolean) as Extract<PaletteItem, { kind: 'snippet' }>[]
+      ).sort((a, b) => b.score - a.score || a.snippet.name.localeCompare(b.snippet.name))
+    }
+    return snippets
+      .slice()
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map((s) => ({ kind: 'snippet' as const, snippet: s, score: 0 }))
+  }, [snippets, queryTrimmed])
+
+  const connectionItems = useMemo<PaletteItem[]>(() => {
+    if (queryTrimmed) {
+      return (
+        connections
+          .map((c) => {
+            const scored = scoreTerms(connectionTarget(c), queryTrimmed)
+            return scored ? { kind: 'connection' as const, conn: c, score: scored.score } : null
+          })
+          .filter(Boolean) as Extract<PaletteItem, { kind: 'connection' }>[]
+      ).sort((a, b) => b.score - a.score || a.conn.name.localeCompare(b.conn.name))
+    }
+    return connections
+      .slice()
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map((c) => ({ kind: 'connection' as const, conn: c, score: 0 }))
+  }, [connections, queryTrimmed])
+
+  const workspaceItems = useMemo<PaletteItem[]>(() => {
+    if (queryTrimmed) {
+      return (
+        workspaces
+          .map((ws) => {
+            const scored = scoreTerms(workspaceTarget(ws, connName), queryTrimmed)
+            return scored ? { kind: 'workspace' as const, ws, score: scored.score } : null
+          })
+          .filter(Boolean) as Extract<PaletteItem, { kind: 'workspace' }>[]
+      ).sort((a, b) => b.score - a.score || a.ws.name.localeCompare(b.ws.name))
+    }
+    return workspaces
+      .slice()
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map((ws) => ({ kind: 'workspace' as const, ws, score: 0 }))
+  }, [workspaces, queryTrimmed, connName])
+
+  const historyItems = useMemo<PaletteItem[]>(() => {
     const frec = buildFrecency(hist)
     const snippetCmds = snippetCommandSet(snippets)
-    return filterHistory(frec, snippetCmds, query, query ? 60 : 12)
-  }, [hist, snippets, query])
+    if (queryTrimmed) {
+      return (
+        frec
+          .filter((e) => !snippetCmds.has(normalizeForDedupe(e.command)))
+          .map((e) => {
+            const scored = scoreTerms(e.command, queryTrimmed)
+            return scored
+              ? {
+                  kind: 'history' as const,
+                  command: e.command,
+                  count: e.count,
+                  score: scored.score
+                }
+              : null
+          })
+          .filter(Boolean) as Extract<PaletteItem, { kind: 'history' }>[]
+      ).sort((a, b) => b.score - a.score || a.command.localeCompare(b.command))
+    }
+    return filterHistory(frec, snippetCmds, '', 30).map((e) => ({
+      kind: 'history' as const,
+      command: e.command,
+      count: e.count,
+      score: e.score
+    }))
+  }, [hist, snippets, queryTrimmed])
 
   // The union of "commands already saved as a snippet (any name)" — for the
-  // ✓ indicator. This is broader than the local `saved` set, which only
-  // tracks in-session saves; without the cross-name check, a history command
-  // that was previously saved as e.g. "Restart nginx" would re-show the "+"
-  // even though the snippet is right there under a different name.
+  // ✓ indicator.
   const savedAsSnippetCmds = useMemo(() => {
     const out = new Set<string>()
     for (const s of snippets) out.add(normalizeForDedupe(s.command))
     return out
   }, [snippets])
 
-  // Flat list backing keyboard navigation; rendered with section headers below.
-  const items = useMemo<Item[]>(
-    () => [
-      ...snipMatches.map((s) => ({ kind: 'snippet', snippet: s }) as Item),
-      ...histMatches.map((h) => ({ kind: 'history', command: h.command, count: h.count }) as Item)
-    ],
-    [snipMatches, histMatches]
+  const counts = useMemo(
+    () => ({
+      all:
+        snippetItems.length + connectionItems.length + workspaceItems.length + historyItems.length,
+      snippets: snippetItems.length,
+      connections: connectionItems.length,
+      workspaces: workspaceItems.length,
+      history: historyItems.length
+    }),
+    [snippetItems, connectionItems, workspaceItems, historyItems]
   )
+
+  const sections = useMemo(() => {
+    const cap = category === 'all' ? 8 : Infinity
+    const out: { title: string; items: PaletteItem[] }[] = []
+    if ((category === 'all' || category === 'snippets') && snippetItems.length) {
+      out.push({ title: 'Snippets', items: snippetItems.slice(0, cap) })
+    }
+    if ((category === 'all' || category === 'connections') && connectionItems.length) {
+      out.push({ title: 'Connections', items: connectionItems.slice(0, cap) })
+    }
+    if ((category === 'all' || category === 'workspaces') && workspaceItems.length) {
+      out.push({ title: 'Workspaces', items: workspaceItems.slice(0, cap) })
+    }
+    if ((category === 'all' || category === 'history') && historyItems.length) {
+      out.push({
+        title: category === 'history' ? `${scopeLabel} history` : 'History',
+        items: historyItems.slice(0, category === 'all' ? 12 : Infinity)
+      })
+    }
+    return out
+  }, [category, snippetItems, connectionItems, workspaceItems, historyItems, scopeLabel])
+
+  const flatItems = useMemo(() => sections.flatMap((s) => s.items), [sections])
 
   // Keep the selection in range as the list changes.
   useEffect(() => {
-    setSel((i) => Math.max(0, Math.min(i, items.length - 1)))
-  }, [items.length])
+    setSel((i) => Math.max(0, Math.min(i, flatItems.length - 1)))
+  }, [flatItems.length])
 
   // Send a fully-resolved command, or surface a message on failure.
   const send = (command: string, execute: boolean) => {
@@ -143,10 +279,54 @@ export default function CommandPalette({
     }, 0)
   }
 
-  const activate = (item: Item | undefined, execute: boolean) => {
+  const launchWorkspace = async (ws: Workspace) => {
+    onRun()
+    const { addLocal, connectSsh } = useSessions.getState()
+    const groupId = `ws-${ws.id}-${Date.now()}`
+    const layout = useLayout.getState()
+    layout.ensureGroup(groupId, ws.name)
+    layout.flagGroupLaunched(groupId, ws.id)
+
+    const map = new Map<string, string>()
+    await Promise.all(
+      ws.items.map(async (it) => {
+        if (it.kind === 'local') {
+          map.set(it.id, addLocal({ cwd: it.cwd, groupId }))
+          return
+        }
+        const c = connections.find((x) => x.id === it.connectionId)
+        if (!c) return
+        const { id: _id, name: _name, ...profile } = c
+        const sid = await connectSsh(profile, {
+          connectionId: it.connectionId,
+          startCwd: it.cwd,
+          groupId
+        })
+        if (sid) map.set(it.id, sid)
+      })
+    )
+    const snap = ws.layout ? toLiveSnapshot(ws.layout, map) : null
+    setTimeout(() => {
+      const layout2 = useLayout.getState()
+      if (snap) layout2.restoreGroup(groupId, ws.name, snap)
+      else layout2.setActiveGroup(groupId)
+    }, 80)
+    void window.devterm.workspaces.recordLaunch(ws.id).catch(() => undefined)
+  }
+
+  const activate = (item: PaletteItem | undefined, execute: boolean) => {
     if (!item) return
     if (item.kind === 'snippet') choose(item.snippet, execute)
-    else send(item.command, execute)
+    else if (item.kind === 'history') send(item.command, execute)
+    else if (item.kind === 'connection') {
+      onRun()
+      const { id: _id, name: _name, ...profile } = item.conn
+      void useSessions.getState().connectSsh(profile, { connectionId: item.conn.id })
+      onClose()
+    } else if (item.kind === 'workspace') {
+      void launchWorkspace(item.ws)
+      onClose()
+    }
   }
 
   // Promote a history command to a saved snippet (default name = the command).
@@ -163,9 +343,6 @@ export default function CommandPalette({
 
   const submitParams = (execute: boolean) => {
     if (!chosen) return
-    // Write the values back to the per-snippet cache so the next open of this
-    // form (in the same tab) pre-fills them again. submitParams is also the
-    // point of no return: anything in `values` is what the user just decided.
     persistValues(chosen.id, chosen.command, values)
     send(applyPlaceholders(chosen.command, values), execute)
   }
@@ -178,122 +355,196 @@ export default function CommandPalette({
   // Touch clearNonce so the effect re-fires (and re-prefills, finding nothing).
   void clearNonce
 
+  const nextCategory = (dir: 1 | -1) => {
+    const idx = CATEGORIES.findIndex((c) => c.id === category)
+    setCategory(CATEGORIES[(idx + dir + CATEGORIES.length) % CATEGORIES.length].id)
+    setSel(0)
+  }
+
   const onListKey = (e: React.KeyboardEvent) => {
     if (e.key === 'ArrowDown') {
       e.preventDefault()
-      setSel((i) => Math.min(i + 1, items.length - 1))
+      setSel((i) => Math.min(i + 1, flatItems.length - 1))
     } else if (e.key === 'ArrowUp') {
       e.preventDefault()
       setSel((i) => Math.max(i - 1, 0))
     } else if (e.key === 'Enter') {
       e.preventDefault()
-      activate(items[sel], !e.shiftKey)
+      activate(flatItems[sel], !e.shiftKey)
     } else if (e.key === 'Escape') {
       e.preventDefault()
       onClose()
+    } else if (e.key === 'Tab') {
+      e.preventDefault()
+      nextCategory(e.shiftKey ? -1 : 1)
     }
   }
 
   const placeholders = chosen ? extractPlaceholders(chosen.command) : []
   const hasHistory = !!hist && (hist.recent.length > 0 || hist.frequent.length > 0)
-
-  // True when the user has at least one entry in the placeholder cache; only
-  // show the "Clear recent values" button when there's something to clear.
-  // (We don't try to read the cache from React state — the storage layer is
-  // opaque — so we just always render it; the no-op case is a no-op call.)
   const canClearCache = placeholders.length > 0
-
-  // True when a history row's command has been saved (under any name) as a
-  // snippet. Cross-name match: the local `saved` set only covers saves the
-  // user just did in this palette session.
   const isSavedHistory = (cmd: string) =>
     saved.has(cmd) || savedAsSnippetCmds.has(normalizeForDedupe(cmd))
 
-  // Row renderer keyed off the global index so selection works across sections.
-  const row = (item: Item, idx: number) => {
-    const selected = idx === sel
+  const actionHint = (kind: PaletteItem['kind']) => {
+    switch (kind) {
+      case 'connection':
+        return 'Connect'
+      case 'workspace':
+        return 'Launch'
+      default:
+        return 'Run'
+    }
+  }
+
+  const rowIcon = (kind: PaletteItem['kind']) => {
+    switch (kind) {
+      case 'snippet':
+        return <IconPalette size={16} />
+      case 'connection':
+        return <IconRemote size={16} />
+      case 'workspace':
+        return <IconGroup size={16} />
+      case 'history':
+        return <IconTerminals size={16} />
+    }
+  }
+
+  const rowContent = (item: PaletteItem) => {
     if (item.kind === 'snippet') {
-      return (
-        <div
-          key={`s-${item.snippet.id}`}
-          className={`palette-row ${selected ? 'sel' : ''}`}
-          onMouseEnter={() => setSel(idx)}
-          onClick={() => activate(item, true)}
-        >
-          <div className="palette-name">{item.snippet.name}</div>
-          <div className="palette-cmd sn-mono">{item.snippet.command}</div>
-        </div>
-      )
+      return {
+        title: item.snippet.name,
+        subtitle: item.snippet.command,
+        mono: true
+      }
+    }
+    if (item.kind === 'connection') {
+      const c = item.conn
+      return {
+        title: c.name,
+        subtitle: `${c.username}@${c.host}${c.port && c.port !== 22 ? `:${c.port}` : ''}`,
+        mono: false
+      }
+    }
+    if (item.kind === 'workspace') {
+      const ws = item.ws
+      const local = ws.items.filter((i) => i.kind === 'local').length
+      const remote = ws.items.length - local
+      const parts: string[] = []
+      if (remote) parts.push(`${remote} remote`)
+      if (local) parts.push(`${local} local`)
+      return {
+        title: ws.name,
+        subtitle: ws.description ? `${ws.description} · ${parts.join(' · ')}` : parts.join(' · '),
+        mono: false
+      }
     }
     const savedAlready = isSavedHistory(item.command)
+    return {
+      title: item.command,
+      subtitle: `${scopeLabel}${item.count > 1 ? ` · run ${item.count} times` : ''}${savedAlready ? ' · saved as snippet' : ''}`,
+      mono: true
+    }
+  }
+
+  const row = (item: PaletteItem, idx: number) => {
+    const selected = idx === sel
+    const content = rowContent(item)
+    const isHistory = item.kind === 'history'
+    const savedAlready = isHistory && isSavedHistory(item.command)
     return (
       <div
-        key={`h-${item.command}`}
+        key={`${item.kind}-${isHistory ? item.command : item.kind === 'snippet' ? item.snippet.id : item.kind === 'connection' ? item.conn.id : item.ws.id}`}
         className={`palette-row ${selected ? 'sel' : ''}`}
         onMouseEnter={() => setSel(idx)}
         onClick={() => activate(item, true)}
       >
-        <div className="palette-histrow">
-          <span className="palette-cmd sn-mono">{item.command}</span>
-          {item.count > 1 && (
-            <span className="palette-count" title={`run ${item.count} times`}>
-              {item.count}×
+        <span className="palette-row-icon">{rowIcon(item.kind)}</span>
+        <div className="palette-row-main">
+          <div className="palette-name">{content.title}</div>
+          <div className={`palette-row-sub ${content.mono ? 'sn-mono' : ''}`}>
+            {content.subtitle}
+          </div>
+        </div>
+        <div className="palette-row-hint">
+          {isHistory ? (
+            <button
+              className="palette-save"
+              title={savedAlready ? 'Saved as snippet' : 'Save as snippet'}
+              onClick={(e) => {
+                e.stopPropagation()
+                if (!savedAlready) void saveAsSnippet(item.command)
+              }}
+            >
+              {savedAlready ? '✓' : '+'}
+            </button>
+          ) : (
+            <span>
+              <kbd>↵</kbd> {actionHint(item.kind)}
             </span>
           )}
-          <button
-            className="palette-save"
-            title={savedAlready ? 'Saved as snippet' : 'Save as snippet'}
-            onClick={(e) => {
-              e.stopPropagation()
-              if (!savedAlready) void saveAsSnippet(item.command)
-            }}
-          >
-            {savedAlready ? '✓' : '+'}
-          </button>
         </div>
       </div>
     )
   }
+
+  const isEmpty = flatItems.length === 0
+  const emptyMessage = !asyncReady
+    ? 'Loading connections and workspaces…'
+    : snippets.length === 0 && !hasHistory && connections.length === 0 && workspaces.length === 0
+      ? 'No snippets, connections, workspaces, or command history yet — run some commands or add items.'
+      : 'No matches.'
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="palette" onClick={(e) => e.stopPropagation()}>
         {!chosen ? (
           <>
+            <div className="palette-tabs">
+              {CATEGORIES.map((c) => (
+                <button
+                  key={c.id}
+                  className={`palette-tab ${category === c.id ? 'active' : ''}`}
+                  onClick={() => {
+                    setCategory(c.id)
+                    setSel(0)
+                    inputRef.current?.focus()
+                  }}
+                >
+                  {c.label}
+                  {counts[c.id] > 0 && <span className="count">{counts[c.id]}</span>}
+                </button>
+              ))}
+            </div>
             <input
               ref={inputRef}
               className="palette-input"
               value={query}
-              placeholder="Run a snippet or recent command…"
+              placeholder="Run a snippet, connect, launch a workspace, or search history…"
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={onListKey}
             />
             <div className="palette-list">
-              {items.length === 0 ? (
-                <div className="palette-empty">
-                  {snippets.length === 0 && !hasHistory
-                    ? 'No snippets or command history yet — run some commands or add a snippet.'
-                    : 'No matches.'}
-                </div>
+              {isEmpty ? (
+                <div className="palette-empty">{emptyMessage}</div>
               ) : (
-                <>
-                  {snipMatches.length > 0 && <div className="palette-section">Snippets</div>}
-                  {snipMatches.map((s, i) => row({ kind: 'snippet', snippet: s }, i))}
-                  {histMatches.length > 0 && (
-                    <div className="palette-section">
-                      <span>{scopeLabel} history</span>
-                      <span className="palette-frec-tag" title="Sorted by recency × frequency">
-                        frecency
-                      </span>
+                sections.map((section, sidx) => {
+                  let offset = 0
+                  for (let i = 0; i < sidx; i++) offset += sections[i].items.length
+                  return (
+                    <div key={section.title}>
+                      <div className="palette-section">
+                        <span>{section.title}</span>
+                        {section.title.toLowerCase().includes('history') && (
+                          <span className="palette-frec-tag" title="Sorted by recency × frequency">
+                            frecency
+                          </span>
+                        )}
+                      </div>
+                      {section.items.map((item, i) => row(item, offset + i))}
                     </div>
-                  )}
-                  {histMatches.map((h, i) =>
-                    row(
-                      { kind: 'history', command: h.command, count: h.count },
-                      snipMatches.length + i
-                    )
-                  )}
-                </>
+                  )
+                })
               )}
             </div>
             {error && <div className="palette-error">{error}</div>}
@@ -306,6 +557,9 @@ export default function CommandPalette({
               </span>
               <span>
                 <kbd>↑↓</kbd> Navigate
+              </span>
+              <span>
+                <kbd>Tab</kbd> Switch category
               </span>
               <span>
                 <kbd>Esc</kbd> Close

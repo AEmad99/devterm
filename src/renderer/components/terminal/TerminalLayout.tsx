@@ -4,6 +4,7 @@ import RemoteSessionView from './RemoteSessionView'
 import BrowserPane from './BrowserPane'
 import { useSessions, type Session } from '../../store/sessions'
 import { useEditors } from '../../store/editors'
+import { useSettings } from '../../store/settings'
 import {
   useLayout,
   computeLayout,
@@ -12,6 +13,7 @@ import {
   type Rect
 } from '../../store/layout'
 import { IconMerge, IconPlus, IconFocus, IconClose } from '../common/Icons'
+import { deriveTabLabel } from '../../lib/tab-label'
 import TabStatusDot from './TabStatusDot'
 
 const TAB_H = 30 // px height of a pane's tab strip
@@ -85,10 +87,11 @@ export default function TerminalLayout({
   const focusedId = useLayout((s) => s.focusedId)
   const toggleFocus = useLayout((s) => s.toggleFocus)
   const setSessionActive = useSessions((s) => s.setActive)
-  const setTitle = useSessions((s) => s.setTitle)
+  const setCustomTitle = useSessions((s) => s.setCustomTitle)
   const close = useSessions((s) => s.close)
   const editorBlur = useEditors((s) => s.blur)
   const editorCloseForSession = useEditors((s) => s.closeForSession)
+  const inactivePaneDimming = useSettings((s) => s.inactivePaneDimming)
 
   const panesRef = useRef<HTMLDivElement>(null)
   const [dragId, setDragId] = useState<string | null>(null)
@@ -104,6 +107,19 @@ export default function TerminalLayout({
     setDragId(null)
     setOver(null)
   }, [root])
+
+  // Extra safety net: if a drag is cancelled or the source tab is unmounted
+  // without firing `dragend`, the dropzone overlay would stay pointer-active and
+  // block scrollbars / clicks until something mutates the tree. Clear it on any
+  // window-level dragend so the UI can never stay stuck in drag mode.
+  useEffect(() => {
+    const clear = () => {
+      setDragId(null)
+      setOver(null)
+    }
+    window.addEventListener('dragend', clear)
+    return () => window.removeEventListener('dragend', clear)
+  }, [])
 
   const byId = useMemo(() => new Map(sessions.map((s) => [s.id, s])), [sessions])
   // Rects for EVERY group's tree, not just the active one. Hidden slots are
@@ -122,15 +138,23 @@ export default function TerminalLayout({
     [layouts, activeGroupId]
   )
   // sessionId -> its slot geometry across all groups (+ whether it's the active
-  // tab of its leaf, and which group owns it — only the active group shows).
+  // tab of its leaf, whether its leaf is the active leaf, and which group owns it).
   const slots = useMemo(() => {
-    const m = new Map<string, { rect: Rect; activeTab: boolean; groupId: string }>()
+    const m = new Map<
+      string,
+      { rect: Rect; activeTab: boolean; activeLeaf: boolean; groupId: string }
+    >()
     for (const gl of layouts)
       for (const { leaf, rect } of gl.leaves)
         for (const t of leaf.tabs)
-          m.set(t, { rect, activeTab: leaf.active === t, groupId: gl.groupId })
+          m.set(t, {
+            rect,
+            activeTab: leaf.active === t,
+            activeLeaf: leaf.id === activeLeaf,
+            groupId: gl.groupId
+          })
     return m
-  }, [layouts])
+  }, [layouts, activeLeaf])
   // sessionId -> the active-group leaf that currently owns it (for focus-on-click).
   const leafOfSession = useMemo(() => {
     const m = new Map<string, string>()
@@ -223,11 +247,15 @@ export default function TerminalLayout({
           // visibility/transform so they inherit (and can be hidden by) ancestor
           // view switches.
           const isHidden = !isFocused && !visible
+          const isInactive =
+            inactivePaneDimming && !isFocused && visible && !!slot && !slot.activeLeaf
           const style: React.CSSProperties = isFocused ? { ...FOCUSED_SLOT } : slotBodyStyle(rect)
           return (
             <div
               key={s.id}
-              className={`term-slot ${isFocused ? 'focused' : ''} ${isHidden ? 'term-hidden' : ''}`}
+              className={`term-slot ${isFocused ? 'focused' : ''} ${isHidden ? 'term-hidden' : ''} ${
+                isInactive ? 'inactive' : ''
+              }`}
               style={style}
               onMouseDownCapture={() => focusSession(s.id)}
             >
@@ -278,7 +306,7 @@ export default function TerminalLayout({
             onToggleFocus={toggleFocus}
             onTabClick={focusSession}
             onTabClose={closeSession}
-            onRename={setTitle}
+            onRename={setCustomTitle}
             onMerge={() => mergeLeaf(leaf.id)}
             onDragStart={setDragId}
             onDragEnd={() => {
@@ -440,11 +468,13 @@ function PaneChrome({
           {leaf.tabs.map((sid, i) => {
             const s = sessions.get(sid)
             if (!s) return null
+            const label = deriveTabLabel(s)
             return (
               <div
                 key={sid}
                 className={`tab ${s.id === leaf.active ? 'active' : ''} ${s.closed ? 'closed' : ''}`}
                 draggable
+                title={label.tooltip}
                 onClick={() => onTabClick(sid)}
                 onDragStart={(e) => {
                   e.dataTransfer.setData('text/plain', sid)
@@ -486,13 +516,13 @@ function PaneChrome({
                 ) : (
                   <span
                     className="tab-title"
-                    title="Double-click to rename"
                     onDoubleClick={(e) => {
                       e.stopPropagation()
-                      setEditing({ id: sid, value: s.title })
+                      setEditing({ id: sid, value: label.title })
                     }}
                   >
-                    {s.title}
+                    <span className="tab-title-main">{label.title}</span>
+                    {label.context && <span className="tab-title-context"> — {label.context}</span>}
                   </span>
                 )}
                 <span

@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { AgentBridgeState, HostContext, SSHProfile } from '@shared/types'
+import type { AgentBridgeState, AgentKind, HostContext, SSHProfile } from '@shared/types'
 import { useLayout } from './layout'
 
 export interface Session {
@@ -16,6 +16,24 @@ export interface Session {
   connectionId?: string
   /** Display number for local terminals ("Local N"); reused as terminals close. */
   localNum?: number
+  /**
+   * True when the user has manually renamed the tab. Keeps the dynamic label
+   * generator from clobbering their chosen title.
+   */
+  customTitle?: boolean
+  /**
+   * Most recent command the operator submitted in this terminal (typed + Enter).
+   * Used to show "what is running" in the tab label; cleared when a new prompt
+   * returns (OSC 133 ;A) or the terminal exits.
+   */
+  currentCommand?: string
+  /**
+   * Current task the agent is working on, e.g. "read_file src/main.ts". Set by
+   * AgentPane from live bridge activity so the tab states what the agent is doing.
+   */
+  agentTask?: string
+  /** Which agent kind is running in this session's agent pane, if any. */
+  agentKind?: AgentKind
   /**
    * Initial working directory to open the shell in (best-effort), set when a
    * session is launched from a saved workspace. Consumed once by TerminalView on
@@ -50,6 +68,12 @@ export interface Session {
    * refocuses on it. Drives the green "needs attention" tab dot.
    */
   needsAttention?: boolean
+  /** True when new output has arrived while this session was not active. */
+  hasUnreadOutput?: boolean
+  /** True when a command is running in this session (set on Enter, cleared on prompt/exit). */
+  processRunning?: boolean
+  /** Last shell exit code, if known. null for remote closes without a code. */
+  exitCode?: number | null
 }
 
 interface SessionState {
@@ -75,7 +99,13 @@ interface SessionState {
   setStatus: (id: string, status: string) => void
   /** Update a session's tab title (browser panes push the page title here). */
   setTitle: (id: string, title: string) => void
+  /** Set a user-chosen tab title and mark it custom so dynamic labels don't overwrite it. */
+  setCustomTitle: (id: string, title: string) => void
   setCwd: (id: string, cwd: string) => void
+  /** Update the command currently running in this terminal (set on Enter, cleared on prompt). */
+  setCurrentCommand: (id: string, command: string | undefined) => void
+  /** Set the current agent task surfaced from bridge activity. */
+  setAgentTask: (id: string, task: string | undefined, kind?: AgentKind) => void
   markClosed: (id: string) => void
   close: (id: string) => void
   /**
@@ -96,6 +126,12 @@ interface SessionState {
    * becomes active. Drives the green attention tab dot.
    */
   setNeedsAttention: (id: string, pending: boolean) => void
+  /** Set / clear the "new output arrived while not active" badge. */
+  setHasUnreadOutput: (id: string, unread: boolean) => void
+  /** Set / clear whether a process is currently running in this session. */
+  setProcessRunning: (id: string, running: boolean) => void
+  /** Record the shell's last exit code. */
+  setExitCode: (id: string, code: number | null) => void
 }
 
 export const useSessions = create<SessionState>((set, get) => ({
@@ -228,11 +264,15 @@ export const useSessions = create<SessionState>((set, get) => ({
     set((s) => {
       // Looking at a session satisfies its attention signal — clear the badge
       // as it becomes active (covers tab clicks and pane mousedown alike).
-      const needsClear = s.sessions.some((x) => x.id === id && x.needsAttention)
+      const needsClear = s.sessions.some(
+        (x) => x.id === id && (x.needsAttention || x.hasUnreadOutput)
+      )
       return {
         activeId: id,
         sessions: needsClear
-          ? s.sessions.map((x) => (x.id === id ? { ...x, needsAttention: false } : x))
+          ? s.sessions.map((x) =>
+              x.id === id ? { ...x, needsAttention: false, hasUnreadOutput: false } : x
+            )
           : s.sessions
       }
     }),
@@ -255,6 +295,14 @@ export const useSessions = create<SessionState>((set, get) => ({
       if (!cur || cur.title === title) return s
       return { sessions: s.sessions.map((x) => (x.id === id ? { ...x, title } : x)) }
     }),
+  setCustomTitle: (id, title) =>
+    set((s) => {
+      const cur = s.sessions.find((x) => x.id === id)
+      if (!cur || (cur.title === title && cur.customTitle)) return s
+      return {
+        sessions: s.sessions.map((x) => (x.id === id ? { ...x, title, customTitle: true } : x))
+      }
+    }),
   setCwd: (id, cwd) =>
     set((s) => {
       const cur = s.sessions.find((x) => x.id === id)
@@ -263,9 +311,39 @@ export const useSessions = create<SessionState>((set, get) => ({
       if (!cur || cur.cwd === cwd) return s
       return { sessions: s.sessions.map((x) => (x.id === id ? { ...x, cwd } : x)) }
     }),
+  setCurrentCommand: (id, command) =>
+    set((s) => {
+      const cur = s.sessions.find((x) => x.id === id)
+      if (!cur || cur.currentCommand === command) return s
+      return {
+        sessions: s.sessions.map((x) => (x.id === id ? { ...x, currentCommand: command } : x))
+      }
+    }),
+  setAgentTask: (id, task, kind) =>
+    set((s) => {
+      const cur = s.sessions.find((x) => x.id === id)
+      if (!cur || (cur.agentTask === task && (kind === undefined || cur.agentKind === kind)))
+        return s
+      return {
+        sessions: s.sessions.map((x) =>
+          x.id === id ? { ...x, agentTask: task, agentKind: kind ?? x.agentKind } : x
+        )
+      }
+    }),
   markClosed: (id) =>
     set((s) => ({
-      sessions: s.sessions.map((x) => (x.id === id ? { ...x, closed: true, status: 'closed' } : x))
+      sessions: s.sessions.map((x) =>
+        x.id === id
+          ? {
+              ...x,
+              closed: true,
+              status: 'closed',
+              currentCommand: undefined,
+              processRunning: false,
+              agentTask: undefined
+            }
+          : x
+      )
     })),
 
   setAgentBridgeState: (id, state) =>
@@ -295,6 +373,33 @@ export const useSessions = create<SessionState>((set, get) => ({
       if (!cur || !!cur.needsAttention === pending) return s
       return {
         sessions: s.sessions.map((x) => (x.id === id ? { ...x, needsAttention: pending } : x))
+      }
+    }),
+
+  setHasUnreadOutput: (id, unread) =>
+    set((s) => {
+      const cur = s.sessions.find((x) => x.id === id)
+      if (!cur || !!cur.hasUnreadOutput === unread) return s
+      return {
+        sessions: s.sessions.map((x) => (x.id === id ? { ...x, hasUnreadOutput: unread } : x))
+      }
+    }),
+
+  setProcessRunning: (id, running) =>
+    set((s) => {
+      const cur = s.sessions.find((x) => x.id === id)
+      if (!cur || !!cur.processRunning === running) return s
+      return {
+        sessions: s.sessions.map((x) => (x.id === id ? { ...x, processRunning: running } : x))
+      }
+    }),
+
+  setExitCode: (id, code) =>
+    set((s) => {
+      const cur = s.sessions.find((x) => x.id === id)
+      if (!cur || cur.exitCode === code) return s
+      return {
+        sessions: s.sessions.map((x) => (x.id === id ? { ...x, exitCode: code } : x))
       }
     }),
 

@@ -1,7 +1,8 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import type { FileEntry, GitFileStatus, GitStatus } from '@shared/types'
 import type { FsApi } from '../../lib/fsapi'
-import { IconChevron, IconFolder, IconFile, IconLink } from '../common/Icons'
+import { IconChevron } from '../common/Icons'
+import { FileTypeIcon } from '../common/FileTypeIcon'
 
 /**
  * Identity key for a selected file. Paths are absolute within a single pane,
@@ -311,17 +312,7 @@ function FileTreeImpl(
           ) : (
             <span className="tree-twisty spacer" />
           )}
-          <span
-            className={`tree-icon ${e.isDir ? 'is-dir' : ''} ${e.isSymlink ? 'is-symlink' : ''}`}
-          >
-            {e.isDir ? (
-              <IconFolder size={15} />
-            ) : e.isSymlink ? (
-              <IconLink size={15} />
-            ) : (
-              <IconFile size={15} />
-            )}
-          </span>
+          <FileTypeIcon entry={e} expanded={expanded} size={15} />
           <span className="tree-name">
             {e.name}
             {e.isSymlink && !e.isDir && (

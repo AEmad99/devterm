@@ -13,6 +13,8 @@ const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n
 const MIN_SHELL_WIDTH = 340
 const MIN_AGENT_WIDTH = 320
 const MAX_AGENT_WIDTH = 1200
+const MIN_FILES_WIDTH = 280
+const MAX_FILES_WIDTH = 900
 const SPLITTER_WIDTH = 4
 
 function fitAgentWidth(width: number, totalWidth: number): number {
@@ -22,6 +24,16 @@ function fitAgentWidth(width: number, totalWidth: number): number {
     Math.max(180, totalWidth - MIN_SHELL_WIDTH - SPLITTER_WIDTH)
   )
   const min = Math.min(MIN_AGENT_WIDTH, max)
+  return clamp(width, min, max)
+}
+
+function fitFilesWidth(width: number, totalWidth: number): number {
+  if (totalWidth <= 0) return clamp(width, MIN_FILES_WIDTH, MAX_FILES_WIDTH)
+  const max = Math.min(
+    MAX_FILES_WIDTH,
+    Math.max(MIN_FILES_WIDTH, totalWidth - MIN_SHELL_WIDTH - SPLITTER_WIDTH)
+  )
+  const min = Math.min(MIN_FILES_WIDTH, max)
   return clamp(width, min, max)
 }
 
@@ -55,7 +67,12 @@ function RemoteSessionView({ session }: { session: Session }) {
               ? 'Codex'
               : 'Pi'
   const [agentWidth, setAgentWidth] = useState(480)
+  const [filesSideOpen, setFilesSideOpen] = useState(false)
+  const [filesWidth, setFilesWidth] = useState(420)
   const splitRef = useRef<HTMLDivElement>(null)
+  const filesSplitRef = useRef<HTMLDivElement>(null)
+  const sftpSidePane = useSettings((s) => s.sftpSidePane)
+  const setSftpSidePane = useSettings((s) => s.setSftpSidePane)
   const cancelSshReconnect = useSessions((s) => s.cancelSshReconnect)
   const agentActivityCollapsed = useSettings((s) => s.agentActivityCollapsed)
   const setAgentActivityCollapsed = useSettings((s) => s.setAgentActivityCollapsed)
@@ -78,6 +95,17 @@ function RemoteSessionView({ session }: { session: Session }) {
     ro.observe(el)
     return () => ro.disconnect()
   }, [agentOpen])
+
+  useEffect(() => {
+    if (!filesSideOpen) return
+    const el = filesSplitRef.current
+    if (!el) return
+    const fit = () => setFilesWidth((w) => fitFilesWidth(w, el.clientWidth))
+    fit()
+    const ro = new ResizeObserver(fit)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [filesSideOpen])
 
   return (
     <div className="remote-view">
@@ -112,13 +140,30 @@ function RemoteSessionView({ session }: { session: Session }) {
           Terminal
         </button>
         <button
-          className={view === 'files' ? 'active' : ''}
+          className={
+            (!sftpSidePane && view === 'files') || (sftpSidePane && filesSideOpen) ? 'active' : ''
+          }
           onClick={() => {
-            setView('files')
-            setFilesOpened(true)
+            if (sftpSidePane) {
+              setFilesSideOpen((v) => !v)
+            } else {
+              setView('files')
+              setFilesOpened(true)
+            }
           }}
         >
           Files (SFTP)
+        </button>
+        <button
+          className={`side-pane-toggle ${sftpSidePane ? 'active' : ''}`}
+          title={
+            sftpSidePane
+              ? 'SFTP opens docked beside the terminal'
+              : 'SFTP opens as a full-pane view'
+          }
+          onClick={() => setSftpSidePane(!sftpSidePane)}
+        >
+          Side
         </button>
         <button
           className={view === 'ports' ? 'active' : ''}
@@ -192,46 +237,63 @@ function RemoteSessionView({ session }: { session: Session }) {
             and going off-screen makes xterm pause the shell + agent render loops
             while the SFTP view is open. */}
         <div className={`view-layer${view === 'terminal' ? '' : ' term-hidden'}`}>
-          <div className="term-agent-column" ref={splitRef}>
-            <div className="term-agent-split">
-              <div className="tc-term">
-                <TerminalView session={session} />
+          <div className="term-files-split" ref={filesSplitRef}>
+            <div className="term-agent-column" ref={splitRef}>
+              <div className="term-agent-split">
+                <div className="tc-term">
+                  <TerminalView session={session} />
+                </div>
+                {agentOpen && (
+                  <Splitter
+                    direction="horizontal"
+                    onDelta={(d) =>
+                      setAgentWidth((w) => fitAgentWidth(w - d, splitRef.current?.clientWidth ?? 0))
+                    }
+                  />
+                )}
+                {agentOpen && (
+                  <div className="tc-agent" style={{ width: agentWidth }}>
+                    <AgentPane sessionId={session.id} kind={agentKind} mode={mode} />
+                  </div>
+                )}
               </div>
               {agentOpen && (
-                <Splitter
-                  direction="horizontal"
-                  onDelta={(d) =>
-                    setAgentWidth((w) => fitAgentWidth(w - d, splitRef.current?.clientWidth ?? 0))
-                  }
-                />
-              )}
-              {agentOpen && (
-                <div className="tc-agent" style={{ width: agentWidth }}>
-                  <AgentPane sessionId={session.id} kind={agentKind} mode={mode} />
+                <div
+                  className={`agent-activity-wrap ${agentActivityCollapsed ? 'is-collapsed' : ''}`}
+                >
+                  <button
+                    className="agent-activity-toggle"
+                    onClick={() => setAgentActivityCollapsed(!agentActivityCollapsed)}
+                    title={agentActivityCollapsed ? 'Show activity panel' : 'Hide activity panel'}
+                    aria-expanded={!agentActivityCollapsed}
+                  >
+                    <span className="agent-activity-toggle-glyph">
+                      {agentActivityCollapsed ? '▴' : '▾'}
+                    </span>
+                    <span>{agentActivityCollapsed ? 'Activity' : 'Hide activity'}</span>
+                  </button>
+                  {!agentActivityCollapsed && (
+                    <AgentActivityPanel
+                      sessionId={session.id}
+                      hostLabel={session.context?.hostname ?? session.title}
+                    />
+                  )}
                 </div>
               )}
             </div>
-            {agentOpen && (
-              <div
-                className={`agent-activity-wrap ${agentActivityCollapsed ? 'is-collapsed' : ''}`}
-              >
-                <button
-                  className="agent-activity-toggle"
-                  onClick={() => setAgentActivityCollapsed(!agentActivityCollapsed)}
-                  title={agentActivityCollapsed ? 'Show activity panel' : 'Hide activity panel'}
-                  aria-expanded={!agentActivityCollapsed}
-                >
-                  <span className="agent-activity-toggle-glyph">
-                    {agentActivityCollapsed ? '▴' : '▾'}
-                  </span>
-                  <span>{agentActivityCollapsed ? 'Activity' : 'Hide activity'}</span>
-                </button>
-                {!agentActivityCollapsed && (
-                  <AgentActivityPanel
-                    sessionId={session.id}
-                    hostLabel={session.context?.hostname ?? session.title}
-                  />
-                )}
+            {filesSideOpen && (
+              <Splitter
+                direction="horizontal"
+                onDelta={(d) =>
+                  setFilesWidth((w) =>
+                    fitFilesWidth(w - d, filesSplitRef.current?.clientWidth ?? 0)
+                  )
+                }
+              />
+            )}
+            {filesSideOpen && (
+              <div className="remote-side-pane" style={{ width: filesWidth }}>
+                <SftpBrowser sessionId={session.id} />
               </div>
             )}
           </div>

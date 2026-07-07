@@ -14,7 +14,14 @@
 
 import type { AgentBridgeState } from '@shared/types'
 
-export type TabStatusTone = 'idle' | 'warn' | 'error' | 'pending' | 'attention'
+export type TabStatusTone =
+  | 'idle'
+  | 'warn'
+  | 'error'
+  | 'pending'
+  | 'attention'
+  | 'running'
+  | 'unread'
 
 export interface TabStatus {
   /** What the dot should be colored as. */
@@ -37,6 +44,9 @@ export interface SessionStatusInput {
   agentBridgeState?: AgentBridgeState
   agentPendingApproval?: boolean
   needsAttention?: boolean
+  hasUnreadOutput?: boolean
+  processRunning?: boolean
+  exitCode?: number | null
 }
 
 /**
@@ -46,11 +56,15 @@ export interface SessionStatusInput {
  */
 export function deriveTabStatus(s: SessionStatusInput): TabStatus {
   // 1. Errors first — a hard failure (handshake failed, reconnect exhausted,
-  //    host key mismatch, etc.) is the most important signal.
-  if (isErrorStatus(s.status)) {
+  //    host key mismatch, shell exited with a non-zero code, etc.).
+  if (isErrorStatus(s.status) || (s.exitCode != null && s.exitCode !== 0)) {
+    const reason =
+      s.exitCode != null && s.exitCode !== 0
+        ? `exited with code ${s.exitCode}`
+        : (s.status ?? 'error')
     return {
       tone: 'error',
-      reason: s.status,
+      reason,
       bridgeState: s.agentBridgeState,
       pendingApproval: s.agentPendingApproval
     }
@@ -83,6 +97,14 @@ export function deriveTabStatus(s: SessionStatusInput): TabStatus {
   }
   if (!s.closed && s.agentBridgeState === 'error') {
     return { tone: 'error', reason: 'Agent bridge error', bridgeState: s.agentBridgeState }
+  }
+  // 5. Running process — a subtle pulse to show something is busy.
+  if (s.processRunning) {
+    return { tone: 'running', reason: 'Process running', bridgeState: s.agentBridgeState }
+  }
+  // 6. Unread output — quiet marker that new data arrived off-screen.
+  if (s.hasUnreadOutput) {
+    return { tone: 'unread', reason: 'Unread output', bridgeState: s.agentBridgeState }
   }
   return {
     tone: 'idle',

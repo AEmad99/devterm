@@ -93,6 +93,14 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
   const keybindings = useSettings((s) => s.keybindings)
   const setKeybinding = useSettings((s) => s.setKeybinding)
   const resetKeybindings = useSettings((s) => s.resetKeybindings)
+  const inactivePaneDimming = useSettings((s) => s.inactivePaneDimming)
+  const setInactivePaneDimming = useSettings((s) => s.setInactivePaneDimming)
+  const sftpSidePane = useSettings((s) => s.sftpSidePane)
+  const setSftpSidePane = useSettings((s) => s.setSftpSidePane)
+  const activityIndicators = useSettings((s) => s.activityIndicators)
+  const setActivityIndicators = useSettings((s) => s.setActivityIndicators)
+  const zenMode = useSettings((s) => s.zenMode)
+  const setZenMode = useSettings((s) => s.setZenMode)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [shellHint, setShellHint] = useState<string | null>(null)
@@ -368,6 +376,58 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                 <option value="none">None</option>
                 <option value="visual">Visual flash</option>
               </select>
+            </span>
+          </label>
+
+          <label className="settings-row">
+            <span className="settings-label">Dim inactive panes</span>
+            <span className="settings-control">
+              <input
+                type="checkbox"
+                checked={inactivePaneDimming}
+                onChange={(e) => setInactivePaneDimming(e.target.checked)}
+              />
+            </span>
+          </label>
+
+          <label className="settings-row">
+            <span className="settings-label">SFTP side pane</span>
+            <span className="settings-control">
+              <input
+                type="checkbox"
+                checked={sftpSidePane}
+                onChange={(e) => setSftpSidePane(e.target.checked)}
+              />
+            </span>
+          </label>
+
+          <label className="settings-row">
+            <span className="settings-label">Activity indicators</span>
+            <span className="settings-control">
+              <input
+                type="checkbox"
+                checked={activityIndicators}
+                onChange={(e) => setActivityIndicators(e.target.checked)}
+              />
+            </span>
+          </label>
+
+          <label className="settings-row">
+            <span className="settings-label">
+              Zen mode
+              <span className="settings-sub-hint" style={{ marginLeft: 6 }}>
+                {comboLabel(
+                  HOTKEYS.find((h) => h.id === 'toggleZenMode')!,
+                  window.devterm.platform === 'darwin'
+                )}
+              </span>
+            </span>
+            <span className="settings-control">
+              <input
+                type="checkbox"
+                checked={zenMode}
+                onChange={(e) => setZenMode(e.target.checked)}
+              />
             </span>
           </label>
         </section>

@@ -3,6 +3,9 @@ import type { Snippet } from '@shared/types'
 import { runInActive } from '../../lib/input'
 import { applyPlaceholders, extractPlaceholders } from '../../lib/snippets'
 import SnippetForm from './SnippetForm'
+import ManagerList from '../common/ManagerList'
+import ManagerRow from '../common/ManagerRow'
+import Button from '../common/Button'
 import { IconKeyboard, IconPlus, IconConnect, IconEdit, IconTrash } from '../common/Icons'
 
 /**
@@ -54,10 +57,10 @@ export default function SnippetsManager({ onRun }: { onRun?: () => void }) {
       <div className="manager-head">
         <h2>Snippets</h2>
         <span className="spacer" />
-        <button className="btn primary" onClick={() => setCreating(true)}>
+        <Button variant="primary" onClick={() => setCreating(true)}>
           <IconPlus size={15} />
           New snippet
-        </button>
+        </Button>
       </div>
 
       {list.length === 0 ? (
@@ -66,37 +69,43 @@ export default function SnippetsManager({ onRun }: { onRun?: () => void }) {
           to run a snippet or pick from your recent commands.
         </div>
       ) : (
-        <div className="manager-list">
+        <ManagerList>
           {list.map((s) => (
-            <div key={s.id} className="manager-row">
-              <div className="mr-icon">
-                <IconKeyboard size={19} />
-              </div>
-              <div className="mr-main">
-                <div className="mr-name">{s.name}</div>
-                <div className="mr-sub sn-mono">{s.command}</div>
-                {s.description && <div className="mr-sub">{s.description}</div>}
-              </div>
-              <div className="mr-actions">
-                <button className="btn primary" onClick={() => run(s, true)}>
-                  <IconConnect size={14} />
-                  Run
-                </button>
-                <button className="btn" onClick={() => run(s, false)}>
-                  Insert
-                </button>
-                <button className="btn" onClick={() => setEditing(s)}>
-                  <IconEdit size={14} />
-                  Edit
-                </button>
-                <button className="btn danger" onClick={() => del(s.id)}>
-                  <IconTrash size={14} />
-                  Delete
-                </button>
-              </div>
-            </div>
+            <ManagerRow
+              key={s.id}
+              icon={<IconKeyboard size={19} />}
+              title={s.name}
+              subtitle={
+                <>
+                  <span className="sn-mono">{s.command}</span>
+                  {s.description && (
+                    <>
+                      <br />
+                      {s.description}
+                    </>
+                  )}
+                </>
+              }
+              actions={
+                <>
+                  <Button variant="primary" onClick={() => run(s, true)}>
+                    <IconConnect size={14} />
+                    Run
+                  </Button>
+                  <Button onClick={() => run(s, false)}>Insert</Button>
+                  <Button onClick={() => setEditing(s)}>
+                    <IconEdit size={14} />
+                    Edit
+                  </Button>
+                  <Button variant="danger" onClick={() => del(s.id)}>
+                    <IconTrash size={14} />
+                    Delete
+                  </Button>
+                </>
+              }
+            />
           ))}
-        </div>
+        </ManagerList>
       )}
 
       {params && (

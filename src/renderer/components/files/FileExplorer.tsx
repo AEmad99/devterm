@@ -4,6 +4,7 @@ import { useSessions } from '../../store/sessions'
 import { useEditors } from '../../store/editors'
 import { localFsApi, remoteFsApi, type FsApi } from '../../lib/fsapi'
 import FileTree, { type FileTreeHandle, type Selection } from './FileTree'
+import FileMutationDialog, { type FileMutationKind } from './FileMutationDialog'
 import {
   IconLocal,
   IconRemote,
@@ -194,10 +195,7 @@ export default function FileExplorer() {
     [listing, sessionId]
   )
 
-  const [dialog, setDialog] = useState<null | {
-    kind: 'mkdir' | 'newfile' | 'rename' | 'delete'
-    value: string
-  }>(null)
+  const [dialog, setDialog] = useState<null | { kind: FileMutationKind }>(null)
   const [busy, setBusy] = useState(false)
   const [diffResult, setDiffResult] = useState<null | { file: string; patch: string }>(null)
 
@@ -231,23 +229,24 @@ export default function FileExplorer() {
     else await treeRef.current?.openDir(dir)
   }
 
-  const submitDialog = async () => {
+  const handleMutation = async (value: string) => {
     if (!dialog || !api || !listing) return
     setBusy(true)
     try {
-      const name = dialog.value.trim()
-      if (dialog.kind === 'mkdir' && name) {
+      const name = value.trim()
+      const { kind } = dialog
+      if (kind === 'mkdir' && name) {
         await api.mkdir(childOf(createDir, name, sep))
         await refreshDir(createDir)
-      } else if (dialog.kind === 'newfile' && name) {
+      } else if (kind === 'newfile' && name) {
         await api.createFile(childOf(createDir, name, sep))
         await refreshDir(createDir)
-      } else if (dialog.kind === 'rename' && sel && name && name !== sel.name) {
+      } else if (kind === 'rename' && sel && name && name !== sel.name) {
         const parent = parentDir(sel.path)
         await api.rename(sel.path, childOf(parent, name, sep))
         setSel(null)
         await refreshDir(parent)
-      } else if (dialog.kind === 'delete' && sel) {
+      } else if (kind === 'delete' && sel) {
         const parent = parentDir(sel.path)
         await api.delete(sel.path)
         setSel(null)
@@ -318,14 +317,14 @@ export default function FileExplorer() {
         <button
           className="icon-btn"
           title="New file"
-          onClick={() => setDialog({ kind: 'newfile', value: '' })}
+          onClick={() => setDialog({ kind: 'newfile' })}
         >
           <IconFile size={14} />
         </button>
         <button
           className="icon-btn"
           title="New folder"
-          onClick={() => setDialog({ kind: 'mkdir', value: '' })}
+          onClick={() => setDialog({ kind: 'mkdir' })}
         >
           <IconPlus size={14} />
         </button>
@@ -333,7 +332,7 @@ export default function FileExplorer() {
           className="icon-btn"
           title="Rename"
           disabled={!sel}
-          onClick={() => sel && setDialog({ kind: 'rename', value: sel.name })}
+          onClick={() => sel && setDialog({ kind: 'rename' })}
         >
           <IconEdit size={14} />
         </button>
@@ -341,7 +340,7 @@ export default function FileExplorer() {
           className="icon-btn danger"
           title="Delete"
           disabled={!sel}
-          onClick={() => sel && setDialog({ kind: 'delete', value: sel.name })}
+          onClick={() => sel && setDialog({ kind: 'delete' })}
         >
           <IconTrash size={14} />
         </button>
@@ -484,75 +483,15 @@ export default function FileExplorer() {
       </div>
 
       {dialog && (
-        <div className="modal-backdrop" onClick={() => !busy && setDialog(null)}>
-          <form
-            className="modal fp-dialog"
-            onClick={(e) => e.stopPropagation()}
-            onSubmit={(e) => {
-              e.preventDefault()
-              submitDialog()
-            }}
-          >
-            {dialog.kind === 'delete' ? (
-              <>
-                <h3>Delete</h3>
-                <p>
-                  Permanently delete <b>{dialog.value}</b>
-                  {sel?.isDir ? ' and everything inside it' : ''}? This cannot be undone.
-                </p>
-                <div className="actions">
-                  <button
-                    type="button"
-                    className="ghost"
-                    onClick={() => setDialog(null)}
-                    disabled={busy}
-                  >
-                    Cancel
-                  </button>
-                  <button type="submit" className="danger-btn" disabled={busy}>
-                    Delete
-                  </button>
-                </div>
-              </>
-            ) : (
-              <>
-                <h3>
-                  {dialog.kind === 'mkdir'
-                    ? 'New folder'
-                    : dialog.kind === 'newfile'
-                      ? 'New file'
-                      : 'Rename'}
-                </h3>
-                <label>
-                  {dialog.kind === 'rename'
-                    ? 'New name'
-                    : dialog.kind === 'newfile'
-                      ? 'File name'
-                      : 'Folder name'}
-                  <input
-                    autoFocus
-                    value={dialog.value}
-                    disabled={busy}
-                    onChange={(e) => setDialog({ ...dialog, value: e.target.value })}
-                  />
-                </label>
-                <div className="actions">
-                  <button
-                    type="button"
-                    className="ghost"
-                    onClick={() => setDialog(null)}
-                    disabled={busy}
-                  >
-                    Cancel
-                  </button>
-                  <button type="submit" disabled={busy || !dialog.value.trim()}>
-                    {dialog.kind === 'rename' ? 'Rename' : 'Create'}
-                  </button>
-                </div>
-              </>
-            )}
-          </form>
-        </div>
+        <FileMutationDialog
+          kind={dialog.kind}
+          targetName={sel?.name}
+          targetPath={sel?.path}
+          isTargetDir={sel?.isDir}
+          busy={busy}
+          onSubmit={handleMutation}
+          onClose={() => !busy && setDialog(null)}
+        />
       )}
 
       {diffResult && (

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { DirListing, FileEntry } from '@shared/types'
 import type { FsApi } from '../../lib/fsapi'
 import FileTree, { type FileTreeHandle, type Selection } from './FileTree'
+import FileMutationDialog, { type FileMutationKind } from './FileMutationDialog'
 import { IconArrowUp, IconHome, IconPlus, IconFile, IconEdit } from '../common/Icons'
 
 // Re-exported for existing importers (e.g. SftpBrowser).
@@ -137,10 +138,7 @@ export default function FilePane({
 
   // In-app dialogs — Electron does not implement window.prompt(), and
   // alert/confirm are unreliable under sandbox, so we use our own modal.
-  const [dialog, setDialog] = useState<null | {
-    kind: 'mkdir' | 'newfile' | 'rename' | 'delete'
-    value: string
-  }>(null)
+  const [dialog, setDialog] = useState<null | { kind: FileMutationKind }>(null)
   const [busy, setBusy] = useState(false)
 
   // After a mutation, refresh the affected directory: the root via load(), a
@@ -151,23 +149,24 @@ export default function FilePane({
     else await treeRef.current?.openDir(dir)
   }
 
-  const submitDialog = async () => {
+  const handleMutation = async (value: string) => {
     if (!dialog || !listing) return
     setBusy(true)
     try {
-      const name = dialog.value.trim()
-      if (dialog.kind === 'mkdir' && name) {
+      const name = value.trim()
+      const { kind } = dialog
+      if (kind === 'mkdir' && name) {
         await api.mkdir(childOf(createDir, name, sep))
         await refreshDir(createDir)
-      } else if (dialog.kind === 'newfile' && name) {
+      } else if (kind === 'newfile' && name) {
         await api.createFile(childOf(createDir, name, sep))
         await refreshDir(createDir)
-      } else if (dialog.kind === 'rename' && sel && name && name !== sel.name) {
+      } else if (kind === 'rename' && sel && name && name !== sel.name) {
         const parent = parentDir(sel.path)
         await api.rename(sel.path, childOf(parent, name, sep))
         setSel(null)
         await refreshDir(parent)
-      } else if (dialog.kind === 'delete' && sel) {
+      } else if (kind === 'delete' && sel) {
         const parent = parentDir(sel.path)
         await api.delete(sel.path)
         setSel(null)
@@ -182,10 +181,10 @@ export default function FilePane({
     }
   }
 
-  const doMkdir = () => setDialog({ kind: 'mkdir', value: '' })
-  const doNewFile = () => setDialog({ kind: 'newfile', value: '' })
-  const doRename = () => sel && setDialog({ kind: 'rename', value: sel.name })
-  const doDelete = () => sel && setDialog({ kind: 'delete', value: sel.name })
+  const doMkdir = () => setDialog({ kind: 'mkdir' })
+  const doNewFile = () => setDialog({ kind: 'newfile' })
+  const doRename = () => sel && setDialog({ kind: 'rename' })
+  const doDelete = () => sel && setDialog({ kind: 'delete' })
 
   return (
     <div className="filepane">
@@ -310,75 +309,15 @@ export default function FilePane({
       </div>
 
       {dialog && (
-        <div className="modal-backdrop" onClick={() => !busy && setDialog(null)}>
-          <form
-            className="modal fp-dialog"
-            onClick={(e) => e.stopPropagation()}
-            onSubmit={(e) => {
-              e.preventDefault()
-              submitDialog()
-            }}
-          >
-            {dialog.kind === 'delete' ? (
-              <>
-                <h3>Delete</h3>
-                <p>
-                  Permanently delete <b>{dialog.value}</b>
-                  {sel?.isDir ? ' and everything inside it' : ''}? This cannot be undone.
-                </p>
-                <div className="actions">
-                  <button
-                    type="button"
-                    className="ghost"
-                    onClick={() => setDialog(null)}
-                    disabled={busy}
-                  >
-                    Cancel
-                  </button>
-                  <button type="submit" className="danger-btn" disabled={busy}>
-                    Delete
-                  </button>
-                </div>
-              </>
-            ) : (
-              <>
-                <h3>
-                  {dialog.kind === 'mkdir'
-                    ? 'New folder'
-                    : dialog.kind === 'newfile'
-                      ? 'New file'
-                      : 'Rename'}
-                </h3>
-                <label>
-                  {dialog.kind === 'rename'
-                    ? 'New name'
-                    : dialog.kind === 'newfile'
-                      ? 'File name'
-                      : 'Folder name'}
-                  <input
-                    autoFocus
-                    value={dialog.value}
-                    disabled={busy}
-                    onChange={(e) => setDialog({ ...dialog, value: e.target.value })}
-                  />
-                </label>
-                <div className="actions">
-                  <button
-                    type="button"
-                    className="ghost"
-                    onClick={() => setDialog(null)}
-                    disabled={busy}
-                  >
-                    Cancel
-                  </button>
-                  <button type="submit" disabled={busy || !dialog.value.trim()}>
-                    {dialog.kind === 'rename' ? 'Rename' : 'Create'}
-                  </button>
-                </div>
-              </>
-            )}
-          </form>
-        </div>
+        <FileMutationDialog
+          kind={dialog.kind}
+          targetName={sel?.name}
+          targetPath={sel?.path}
+          isTargetDir={sel?.isDir}
+          busy={busy}
+          onSubmit={handleMutation}
+          onClose={() => !busy && setDialog(null)}
+        />
       )}
     </div>
   )

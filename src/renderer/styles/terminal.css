@@ -1,0 +1,849 @@
+
+
+/* Terminal | agent split */
+.term-agent-split {
+  display: flex;
+  height: 100%;
+  min-width: 0;
+}
+.tc-term {
+  flex: 1 1 380px;
+  min-width: min(340px, 52%);
+}
+.tc-agent {
+  flex: 0 1 auto;
+  min-width: min(320px, 48%);
+  max-width: 70%;
+  border-left: 1px solid var(--border);
+}
+.agent-host {
+  background: var(--bg-term);
+}
+/* Agent pane = status pill on top + the agent terminal filling the rest. */
+.agent-pane {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-width: 0;
+}
+.agent-pane .agent-host {
+  flex: 1;
+  min-height: 0;
+}
+.agent-key-stale {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: color-mix(in srgb, var(--status-warn) 12%, var(--bg));
+  border-bottom: 1px solid color-mix(in srgb, var(--status-warn) 35%, transparent);
+  font-size: 12px;
+  color: var(--fg);
+}
+.agent-key-stale-text {
+  flex: 1 1 auto;
+}
+/* Live agent-bridge status pill. Shows the REAL host/bridge state so a
+   confabulated "connection dropped" from the agent is visibly contradicted by
+   ground truth (green dot = bridge ready, red = host actually down). */
+.agent-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 11px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+  background: var(--panel-2);
+  border-bottom: 1px solid var(--border);
+  user-select: none;
+}
+.agent-dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+.agent-status-text {
+  color: var(--fg);
+}
+.agent-mode {
+  margin-left: auto;
+  padding: 1px 8px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+}
+.agent-restart {
+  flex: 0 0 auto;
+  margin-left: 4px;
+  padding: 2px 8px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--accent-fg);
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  cursor: pointer;
+}
+.agent-restart:hover {
+  filter: brightness(1.1);
+}
+.agent-status--ok .agent-dot {
+  background: var(--ok);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 25%, transparent);
+}
+.agent-status--ok .agent-status-text {
+  color: var(--ok);
+}
+.agent-status--busy .agent-dot {
+  background: var(--accent);
+}
+.agent-status--idle .agent-dot {
+  background: var(--muted);
+}
+.agent-status--down .agent-dot {
+  background: var(--danger);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 25%, transparent);
+}
+.agent-status--down .agent-status-text {
+  color: var(--danger);
+}
+.vt-spacer {
+  flex: 1;
+}
+/* Agent guardrail picker — a labelled pill so "Read-only / Ask / Full" reads clearly. */
+.policy-field {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 2px 4px 2px 11px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+}
+.policy-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.policy-select {
+  background: transparent;
+  color: var(--fg);
+  border: none;
+  border-radius: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 2px;
+  cursor: pointer;
+}
+.policy-select:focus {
+  outline: none;
+}
+.policy-select:disabled {
+  color: var(--muted);
+  cursor: default;
+}
+.policy-select option {
+  background: var(--panel-2);
+  color: var(--fg);
+}
+
+/* Agent launch button — accent pill, flips to an outlined "close" when open. */
+.view-toggle button.agent-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--agent);
+  border: 1px solid var(--agent);
+  color: var(--accent-fg);
+}
+.view-toggle button.agent-btn:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+.view-toggle button.agent-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.view-toggle button.agent-btn.active {
+  background: transparent;
+  border-color: var(--danger);
+  color: var(--danger);
+}
+.view-toggle button.agent-btn.active:hover {
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  filter: none;
+}
+
+/* Confirm action modal */
+.confirm-modal {
+  width: 480px;
+}
+.confirm-tool {
+  font-weight: 600;
+  color: var(--status-warn);
+  margin: 2px 0;
+}
+.confirm-detail {
+  background: var(--input-bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 200px;
+  overflow: auto;
+}
+.confirm-modal .danger-btn {
+  background: var(--danger);
+  color: var(--accent-fg);
+  border: none;
+  border-radius: 4px;
+  padding: 7px 16px;
+  cursor: pointer;
+}
+
+/* File explorer side panel */
+.explorer {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  font-size: 12px;
+}
+.explorer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 10px;
+  background: var(--panel-2);
+  border-bottom: 1px solid var(--border);
+  font-weight: 600;
+}
+.explorer-head button {
+  background: var(--panel-2);
+  color: var(--fg);
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 13px;
+  padding: 1px 7px;
+}
+.explorer-pathbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--border);
+}
+.explorer-pathbar button {
+  background: var(--panel-2);
+  color: var(--fg);
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  padding: 1px 7px;
+}
+.explorer-pathbar button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.ex-path {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--path-fg);
+  font-size: 11px;
+  direction: rtl;
+  text-align: left;
+}
+.explorer-list {
+  flex: 1;
+  overflow-y: auto;
+}
+.ex-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  cursor: default;
+}
+.ex-row:hover {
+  background: var(--hover);
+}
+.ex-icon {
+  width: 16px;
+}
+.ex-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.explorer-error {
+  padding: 6px 8px;
+  color: var(--danger);
+  background: var(--danger-bg);
+}
+.explorer-empty {
+  padding: 10px;
+  color: var(--muted);
+}
+
+/* ---------------------------------------------------------------------------
+   Collapsible file tree — shared by the sidebar explorer and the SFTP panes.
+   Folders show a disclosure chevron pointing down when collapsed (click to
+   expand) and up when expanded (click to collapse); children indent inline.
+   --------------------------------------------------------------------------- */
+.file-tree {
+  font-size: 12px;
+}
+.tree-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px 2px 0;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+.tree-row:hover {
+  background: var(--hover);
+}
+.tree-row.sel {
+  background: var(--accent-quiet);
+  color: var(--fg);
+}
+.tree-twisty {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  color: var(--muted);
+  cursor: pointer;
+  transition:
+    transform 0.12s ease,
+    background 0.12s ease,
+    color 0.12s ease;
+}
+.tree-twisty.spacer {
+  cursor: default;
+}
+.tree-twisty:not(.spacer):hover {
+  background: var(--hover);
+  color: var(--fg);
+}
+.tree-twisty.open {
+  transform: rotate(180deg);
+}
+.tree-icon {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  color: var(--muted);
+}
+.tree-icon.is-dir {
+  color: color-mix(in srgb, var(--accent) 80%, var(--fg));
+}
+.tree-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tree-note {
+  padding: 2px 8px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.tree-note.error {
+  color: var(--danger);
+}
+
+.terminal-host {
+  width: 100%;
+  height: 100%;
+  padding: 6px 8px;
+  background: var(--bg-term);
+  overflow: hidden;
+}
+
+/* Right-click context menu for terminals. Sits above the app chrome (z-index
+   above modals is fine here — modals have their own backdrop that already
+   dismisses it). Visual style mirrors the rest of the dark UI but uses the
+   app's surface tokens so it picks up theme changes. */
+.term-context-menu {
+  position: fixed;
+  z-index: 1000;
+  min-width: 160px;
+  padding: 4px;
+  background: var(--panel);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 6px 20px var(--shadow-2);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.term-context-menu-item {
+  appearance: none;
+  background: transparent;
+  color: inherit;
+  border: 0;
+  padding: 6px 10px;
+  text-align: left;
+  font: inherit;
+  font-size: 13px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.term-context-menu-item:hover:not(:disabled) {
+  background: var(--hover);
+}
+.term-context-menu-item:disabled {
+  color: var(--muted);
+  cursor: default;
+}
+
+.terminal-host .xterm {
+  height: 100%;
+}
+/* xterm's native scrollbar lives on `.xterm-viewport` (overflow-y: scroll).
+   The default WebKit overlay scrollbar is visually transparent and, in some
+   compositing-layer setups, the canvas behind it (pointer-events: auto) can
+   swallow the click before the browser routes it to the scrollbar thumb. We
+   give the track a solid surface and force the thumb to be on top of everything
+   else in the xterm so the user can always grab it. */
+.terminal-host .xterm-viewport {
+  background-color: var(--bg-term);
+}
+.terminal-host .xterm-viewport::-webkit-scrollbar {
+  width: 10px;
+  background: var(--bg-term);
+}
+.terminal-host .xterm-viewport::-webkit-scrollbar-track {
+  background: var(--bg-term);
+  pointer-events: auto;
+}
+.terminal-host .xterm-viewport::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--panel-2) 80%, var(--border));
+  border-radius: 5px;
+  border: 2px solid var(--bg-term);
+  background-clip: padding-box;
+  pointer-events: auto;
+  min-height: 24px;
+}
+.terminal-host .xterm-viewport::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--panel-2) 60%, var(--fg));
+  background-clip: padding-box;
+}
+.terminal-host .xterm-viewport::-webkit-scrollbar-thumb:active {
+  background: color-mix(in srgb, var(--panel-2) 60%, var(--fg));
+  background-clip: padding-box;
+}
+.terminal-host .xterm-viewport::-webkit-scrollbar-corner {
+  background: var(--bg-term);
+}
+/* Pin the scrollbar gutter so the canvas never grows behind it. xterm measures
+   `clientWidth` (which excludes the scrollbar), so the canvas should already
+   stop before the thumb; this is a belt-and-braces guarantee for the Canvas
+   addon, which renders to a single absolutely-positioned <canvas>. */
+.terminal-host .xterm-viewport {
+  scrollbar-gutter: stable;
+}
+
+/* Merge-pane button — collapses a split pane back into another (no drag). */
+
+/* ---------------------------------------------------------------------------
+   Focus (magnify) mode — one pane enlarged + centered, the rest dimmed behind
+   a backdrop. The focused .term-slot is repositioned in place (FOCUSED_SLOT in
+   TerminalLayout), never reparented, so its PTY/xterm stays alive.
+   --------------------------------------------------------------------------- */
+.focus-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 5; /* above normal term-slots (auto z-index), below the focused slot (6) */
+  background: color-mix(in srgb, var(--bg) 55%, transparent);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+  cursor: zoom-out;
+}
+.term-slot.focused {
+  /* Drop paint-containment so the card's shadow isn't clipped; layout
+     containment still gives it a stacking context + containing block. */
+  contain: layout;
+  overflow: visible;
+  border: 1px solid color-mix(in srgb, var(--accent) 60%, var(--border));
+  border-radius: 10px;
+  box-shadow:
+    0 18px 60px rgba(0, 0, 0, 0.55),
+    0 0 0 1px var(--accent-soft);
+}
+.term-slot.focused > .terminal-wrap,
+.term-slot.focused > .remote-view,
+.term-slot.focused > .browser-pane {
+  height: 100%;
+  overflow: hidden;
+  border-radius: inherit;
+}
+/* Tab strips + split dividers sit in a separate layer that stacks above the
+   terminals; hide that chrome while magnified so the card reads as one clean
+   surface (re-shown on exit). */
+.panes.tiling.focused .chrome-layer {
+  display: none;
+}
+.focus-exit {
+  position: absolute;
+  top: -11px;
+  right: -11px;
+  z-index: 7;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--panel) 82%, transparent);
+  color: var(--muted);
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease;
+}
+.focus-exit:hover {
+  background: var(--panel-2);
+  color: var(--fg);
+}
+.empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* Remote session view (terminal | files toggle) */
+.remote-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+.view-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+.view-toggle button {
+  background: var(--panel-2);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: filter 0.12s ease;
+}
+.view-toggle button:hover {
+  filter: brightness(1.15);
+}
+.view-toggle button.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-fg);
+}
+.view-toggle button.side-pane-toggle {
+  padding: 4px 8px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.view-toggle button.side-pane-toggle.active {
+  background: var(--panel-2);
+  border-color: var(--border);
+  color: var(--accent);
+}
+.view-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+.view-layer {
+  position: absolute;
+  inset: 0;
+}
+.terminal-wrap {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+/* History autocomplete popup (Autosuggest.tsx), floated at the caret. */
+.autosuggest {
+  position: absolute;
+  z-index: 30;
+  width: 340px;
+  max-width: calc(100% - 8px);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 10px 30px var(--shadow-2);
+  overflow: hidden;
+  font-size: 12px;
+}
+.as-row {
+  padding: 5px 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  font-family: ui-monospace, monospace;
+}
+.as-row.sel {
+  background: var(--row-active);
+}
+.as-typed {
+  color: var(--accent);
+  font-weight: 600;
+}
+.as-rest {
+  color: var(--fg);
+}
+.as-hint {
+  padding: 5px 10px;
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--muted);
+}
+.as-hint kbd {
+  font-family: ui-monospace, monospace;
+  background: var(--panel-2);
+  border-radius: 4px;
+  padding: 0 4px;
+}
+
+.terminal-host.bell-flash {
+  animation: dt-bell 0.16s ease;
+}
+@keyframes dt-bell {
+  0% {
+    box-shadow: inset 0 0 0 9999px rgba(120, 150, 255, 0.18);
+  }
+  100% {
+    box-shadow: inset 0 0 0 9999px rgba(120, 150, 255, 0);
+  }
+}
+.term-search {
+  position: absolute;
+  top: 8px;
+  right: 12px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px 6px;
+  box-shadow: 0 6px 18px var(--shadow-2);
+}
+.term-search-input {
+  background: var(--input-bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--fg);
+  padding: 4px 8px;
+  font-size: 12px;
+  width: 160px;
+  outline: none;
+}
+.term-search button {
+  background: var(--panel-2);
+  border: none;
+  color: var(--fg);
+  border-radius: 5px;
+  width: 24px;
+  height: 24px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.term-search button:hover {
+  background: var(--hover);
+}
+.term-reconnect {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--bg) 55%, transparent);
+  z-index: 4;
+}
+.term-reconnect button {
+  background: var(--accent);
+  color: var(--accent-fg);
+  border: none;
+  border-radius: 8px;
+  padding: 9px 18px;
+  font-size: 14px;
+  cursor: pointer;
+}
+.tab-rename {
+  background: var(--input-bg);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  color: var(--fg);
+  font-size: 12px;
+  padding: 1px 5px;
+  width: 110px;
+  outline: none;
+}
+.view-pane {
+  position: absolute;
+  inset: 0;
+}
+
+/* Terminals pane = optional group bar on top + the tiling layout below. */
+.terminals-stack {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+}
+.terminals-body {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* Group bar: top-level tabs (default "Terminals" + one per launched workspace).
+   The pane tab strip inside the layout is the second tier (the terminals). */
+
+/* ---------------------------------------------------------------------------
+   Reconnect banner — shown across the top of a remote session when the
+   auto-reconnect loop is in flight or has just given up.
+   --------------------------------------------------------------------------- */
+.reconnect-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 12px;
+  background: color-mix(in oklab, var(--accent) 18%, var(--panel));
+  border-bottom: 1px solid color-mix(in oklab, var(--accent) 40%, var(--border));
+  font-size: 12px;
+  color: var(--fg);
+  animation: reconnect-pulse 2.4s ease-in-out infinite;
+}
+.reconnect-banner.is-failed {
+  background: color-mix(in oklab, var(--danger) 18%, var(--panel));
+  border-bottom-color: color-mix(in oklab, var(--danger) 50%, var(--border));
+  animation: none;
+}
+.reconnect-banner-text {
+  flex: 1 1 auto;
+  font-variant-numeric: tabular-nums;
+}
+.reconnect-banner button.small {
+  padding: 3px 10px;
+  font-size: 11px;
+  border-radius: 4px;
+}
+
+/* --- Persistence-layer "session ended while away" banner --- */
+.ended-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 12px;
+  background: color-mix(in oklab, var(--muted) 25%, var(--panel));
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--fg);
+}
+.ended-banner-text {
+  flex: 1 1 auto;
+}
+.ended-banner button.small {
+  padding: 3px 10px;
+  font-size: 11px;
+  border-radius: 4px;
+}
+
+/* --- Phase 2: missing-tmux hint banner --- */
+.tmux-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  background: color-mix(in oklab, var(--accent) 18%, var(--panel));
+  border-bottom: 1px solid color-mix(in oklab, var(--accent) 40%, var(--border));
+  font-size: 12px;
+  color: var(--fg);
+}
+.tmux-banner-text {
+  flex: 1 1 auto;
+}
+.tmux-banner-text a {
+  color: var(--accent);
+  text-decoration: underline;
+}
+.tmux-banner button.small {
+  padding: 3px 10px;
+  font-size: 11px;
+  border-radius: 4px;
+}
+
+/* --- Workspace inline editor (Update button) --- */
+.term-agent-column {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-width: 0;
+}
+.term-agent-column .term-agent-split {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* Terminal + SFTP side pane split. Reuses the agent-pane sizing rules:
+   the terminal column shrinks/grows while the side pane keeps a fixed width. */
+.term-files-split {
+  display: flex;
+  flex-direction: row;
+  height: 100%;
+  min-width: 0;
+}
+.term-files-split > .term-agent-column {
+  flex: 1 1 auto;
+}
+.remote-side-pane {
+  flex: 0 0 auto;
+  min-width: 0;
+  max-width: 70%;
+  border-left: 1px solid var(--border);
+  background: var(--bg);
+}
+.remote-side-pane .sftp-browser {
+  height: 100%;
+}

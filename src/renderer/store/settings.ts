@@ -51,6 +51,14 @@ export interface AppSettings {
   showStatusBar: boolean
   /** Whether the agent activity panel is collapsed by default (Cluster A). */
   agentActivityCollapsed: boolean
+  /** Dim terminal panes that are not the active tab in their leaf. */
+  inactivePaneDimming: boolean
+  /** Open SFTP as a side pane beside the terminal instead of replacing it. */
+  sftpSidePane: boolean
+  /** Show running / unread-output indicators on pane tabs. */
+  activityIndicators: boolean
+  /** Hide the top toolbar, group bar, sidebar, and status bar for a zen layout. */
+  zenMode: boolean
   /**
    * Which coding agent (`claude`, `pi`, or `opencode`) to launch in remote
    * sessions. Mirrors the per-session agent picker; the picker writes the
@@ -156,6 +164,10 @@ const DEFAULTS: AppSettings = {
   },
   showStatusBar: true,
   agentActivityCollapsed: false,
+  inactivePaneDimming: true,
+  sftpSidePane: false,
+  activityIndicators: true,
+  zenMode: false,
   agentKind: 'claude',
   transfersPanelOpen: false,
   defaultShell: { kind: 'auto' },
@@ -183,6 +195,17 @@ function load(): AppSettings {
         typeof parsed?.agentActivityCollapsed === 'boolean'
           ? parsed.agentActivityCollapsed
           : DEFAULTS.agentActivityCollapsed,
+      inactivePaneDimming:
+        typeof parsed?.inactivePaneDimming === 'boolean'
+          ? parsed.inactivePaneDimming
+          : DEFAULTS.inactivePaneDimming,
+      sftpSidePane:
+        typeof parsed?.sftpSidePane === 'boolean' ? parsed.sftpSidePane : DEFAULTS.sftpSidePane,
+      activityIndicators:
+        typeof parsed?.activityIndicators === 'boolean'
+          ? parsed.activityIndicators
+          : DEFAULTS.activityIndicators,
+      zenMode: typeof parsed?.zenMode === 'boolean' ? parsed.zenMode : DEFAULTS.zenMode,
       agentKind:
         parsed?.agentKind === 'claude' ||
         parsed?.agentKind === 'pi' ||
@@ -247,6 +270,10 @@ interface SettingsState extends AppSettings {
   setAttention: (patch: Partial<AttentionSettings>) => void
   setShowStatusBar: (v: boolean) => void
   setAgentActivityCollapsed: (v: boolean) => void
+  setInactivePaneDimming: (v: boolean) => void
+  setSftpSidePane: (v: boolean) => void
+  setActivityIndicators: (v: boolean) => void
+  setZenMode: (v: boolean) => void
   setAgentKind: (v: AgentKind) => void
   setTransfersPanelOpen: (v: boolean) => void
   setDefaultShell: (pref: DefaultShellPref) => void
@@ -270,6 +297,10 @@ function persist(state: AppSettings): void {
         attention: state.attention,
         showStatusBar: state.showStatusBar,
         agentActivityCollapsed: state.agentActivityCollapsed,
+        inactivePaneDimming: state.inactivePaneDimming,
+        sftpSidePane: state.sftpSidePane,
+        activityIndicators: state.activityIndicators,
+        zenMode: state.zenMode,
         agentKind: state.agentKind,
         transfersPanelOpen: state.transfersPanelOpen,
         defaultShell: state.defaultShell,
@@ -325,6 +356,26 @@ export const useSettings = create<SettingsState>((set, get) => ({
     persist(snapshot(get()))
   },
 
+  setInactivePaneDimming: (v) => {
+    set({ inactivePaneDimming: v })
+    persist(snapshot(get()))
+  },
+
+  setSftpSidePane: (v) => {
+    set({ sftpSidePane: v })
+    persist(snapshot(get()))
+  },
+
+  setActivityIndicators: (v) => {
+    set({ activityIndicators: v })
+    persist(snapshot(get()))
+  },
+
+  setZenMode: (v) => {
+    set({ zenMode: v })
+    persist(snapshot(get()))
+  },
+
   setAgentKind: (v) => {
     set({ agentKind: v })
     persist(snapshot(get()))
@@ -362,6 +413,10 @@ export const useSettings = create<SettingsState>((set, get) => ({
       attention: DEFAULTS.attention,
       showStatusBar: DEFAULTS.showStatusBar,
       agentActivityCollapsed: DEFAULTS.agentActivityCollapsed,
+      inactivePaneDimming: DEFAULTS.inactivePaneDimming,
+      sftpSidePane: DEFAULTS.sftpSidePane,
+      activityIndicators: DEFAULTS.activityIndicators,
+      zenMode: DEFAULTS.zenMode,
       agentKind: DEFAULTS.agentKind,
       transfersPanelOpen: DEFAULTS.transfersPanelOpen,
       defaultShell: DEFAULTS.defaultShell,
@@ -383,6 +438,10 @@ function snapshot(s: SettingsState): AppSettings {
     attention: s.attention,
     showStatusBar: s.showStatusBar,
     agentActivityCollapsed: s.agentActivityCollapsed,
+    inactivePaneDimming: s.inactivePaneDimming,
+    sftpSidePane: s.sftpSidePane,
+    activityIndicators: s.activityIndicators,
+    zenMode: s.zenMode,
     agentKind: s.agentKind,
     transfersPanelOpen: s.transfersPanelOpen,
     defaultShell: s.defaultShell,

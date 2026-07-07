@@ -2,6 +2,9 @@ import { useEffect, useState } from 'react'
 import type { SavedConnection } from '@shared/types'
 import { useSessions } from '../../store/sessions'
 import ConnectionForm from './ConnectionForm'
+import ManagerList from '../common/ManagerList'
+import ManagerRow from '../common/ManagerRow'
+import Button from '../common/Button'
 import { IconRemote, IconPlus, IconConnect, IconEdit, IconTrash } from '../common/Icons'
 
 /**
@@ -35,10 +38,10 @@ export default function ConnectionsManager({ onConnect }: { onConnect: () => voi
       <div className="manager-head">
         <h2>Saved connections</h2>
         <span className="spacer" />
-        <button className="btn primary" onClick={() => setForm({})}>
+        <Button variant="primary" onClick={() => setForm({})}>
           <IconPlus size={15} />
           New connection
-        </button>
+        </Button>
       </div>
 
       {saved.length === 0 ? (
@@ -46,37 +49,38 @@ export default function ConnectionsManager({ onConnect }: { onConnect: () => voi
           No saved connections yet. Click “＋ New connection” to add one.
         </div>
       ) : (
-        <div className="manager-list">
+        <ManagerList>
           {saved.map((c) => (
-            <div key={c.id} className="manager-row">
-              <div className="mr-icon">
-                <IconRemote size={20} />
-              </div>
-              <div className="mr-main">
-                <div className="mr-name">{c.name}</div>
-                <div className="mr-sub">
+            <ManagerRow
+              key={c.id}
+              icon={<IconRemote size={20} />}
+              title={c.name}
+              subtitle={
+                <>
                   {c.username}@{c.host}
                   {c.port && c.port !== 22 ? `:${c.port}` : ''}
                   {c.jump ? `  ⤷ via ${c.jump.username}@${c.jump.host}` : ''}
-                </div>
-              </div>
-              <div className="mr-actions">
-                <button className="btn primary" onClick={() => connect(c)}>
-                  <IconConnect size={14} />
-                  Connect
-                </button>
-                <button className="btn" onClick={() => setForm({ initial: c })}>
-                  <IconEdit size={14} />
-                  Edit
-                </button>
-                <button className="btn danger" onClick={() => del(c.id)}>
-                  <IconTrash size={14} />
-                  Delete
-                </button>
-              </div>
-            </div>
+                </>
+              }
+              actions={
+                <>
+                  <Button variant="primary" onClick={() => connect(c)}>
+                    <IconConnect size={14} />
+                    Connect
+                  </Button>
+                  <Button onClick={() => setForm({ initial: c })}>
+                    <IconEdit size={14} />
+                    Edit
+                  </Button>
+                  <Button variant="danger" onClick={() => del(c.id)}>
+                    <IconTrash size={14} />
+                    Delete
+                  </Button>
+                </>
+              }
+            />
           ))}
-        </div>
+        </ManagerList>
       )}
 
       {form && (

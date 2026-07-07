@@ -135,9 +135,15 @@ export default function ConnectionForm({
     onClose()
   }
 
+  const modalSize = f.useJump ? 'modal--lg' : undefined
+
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <form className="modal conn-modal" onClick={(e) => e.stopPropagation()} onSubmit={submit}>
+      <form
+        className={`modal conn-modal ${modalSize ?? ''}`}
+        onClick={(e) => e.stopPropagation()}
+        onSubmit={submit}
+      >
         <h3>{editingId ? 'Edit connection' : 'New SSH connection'}</h3>
 
         {saved.length > 0 && (

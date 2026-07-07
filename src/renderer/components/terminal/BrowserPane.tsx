@@ -632,10 +632,18 @@ function BrowserPane({ session }: { session: Session }) {
   }, [activeId])
 
   // Mirror the active tab's title onto the session so the layout tab shows the page.
+  // Fall back to the page origin for new/untitled tabs so the tab isn't just "Browser".
   const activeTab = tabs.find((t) => t.id === activeId)
+  const { title: activeTabTitle, current: activeTabCurrent } = activeTab ?? {}
   useEffect(() => {
-    useSessions.getState().setTitle(session.id, activeTab?.title || 'Browser')
-  }, [session.id, activeTab?.title])
+    const fallback = activeTabCurrent ? originOf(activeTabCurrent) : 'Browser'
+    useSessions
+      .getState()
+      .setTitle(
+        session.id,
+        activeTabTitle && activeTabTitle !== 'New Tab' ? activeTabTitle : fallback
+      )
+  }, [session.id, activeTabTitle, activeTabCurrent])
 
   const go = useCallback((raw: string) => {
     const url = toUrl(raw)

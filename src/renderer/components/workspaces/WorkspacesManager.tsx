@@ -3,6 +3,9 @@ import type { SavedConnection, Workspace, WorkspaceItem } from '@shared/types'
 import { useSessions } from '../../store/sessions'
 import { useLayout } from '../../store/layout'
 import { toLiveSnapshot } from '../../lib/workspace'
+import ManagerList from '../common/ManagerList'
+import ManagerRow from '../common/ManagerRow'
+import Button from '../common/Button'
 import { IconGroup, IconConnect, IconTrash, IconEdit, IconCopy } from '../common/Icons'
 
 /**
@@ -174,17 +177,16 @@ export default function WorkspacesManager({ onLaunch }: { onLaunch: () => void }
           workspace”.
         </div>
       ) : (
-        <div className="manager-list">
+        <ManagerList>
           {list.map((ws) => {
             const isEditing = editing?.id === ws.id
             const launched = formatLaunched(ws.lastLaunchedAt)
             return (
-              <div key={ws.id} className="manager-row">
-                <div className="mr-icon">
-                  <IconGroup size={20} />
-                </div>
-                <div className="mr-main">
-                  {isEditing ? (
+              <ManagerRow
+                key={ws.id}
+                icon={<IconGroup size={20} />}
+                meta={
+                  isEditing ? (
                     <div className="ws-edit">
                       <input
                         className="ws-edit-name"
@@ -228,49 +230,46 @@ export default function WorkspacesManager({ onLaunch }: { onLaunch: () => void }
                         </div>
                       )}
                     </>
-                  )}
-                </div>
-                {isEditing ? (
-                  <div className="mr-actions">
-                    <button className="btn primary" onClick={saveEdit}>
-                      Save
-                    </button>
-                    <button className="btn ghost" onClick={cancelEdit}>
-                      Cancel
-                    </button>
-                  </div>
-                ) : (
-                  <div className="mr-actions">
-                    <button className="btn primary" onClick={() => launch(ws)}>
-                      <IconConnect size={14} />
-                      Launch
-                    </button>
-                    <button
-                      className="btn"
-                      onClick={() => startEdit(ws)}
-                      title="Rename / edit description"
-                    >
-                      <IconEdit size={14} />
-                      Update
-                    </button>
-                    <button
-                      className="btn"
-                      onClick={() => duplicate(ws.id)}
-                      title="Create a copy of this workspace"
-                    >
-                      <IconCopy size={14} />
-                      Duplicate
-                    </button>
-                    <button className="btn danger" onClick={() => del(ws.id)}>
-                      <IconTrash size={14} />
-                      Delete
-                    </button>
-                  </div>
-                )}
-              </div>
+                  )
+                }
+                actions={
+                  isEditing ? (
+                    <>
+                      <Button variant="primary" onClick={saveEdit}>
+                        Save
+                      </Button>
+                      <Button variant="ghost" onClick={cancelEdit}>
+                        Cancel
+                      </Button>
+                    </>
+                  ) : (
+                    <>
+                      <Button variant="primary" onClick={() => launch(ws)}>
+                        <IconConnect size={14} />
+                        Launch
+                      </Button>
+                      <Button onClick={() => startEdit(ws)} title="Rename / edit description">
+                        <IconEdit size={14} />
+                        Update
+                      </Button>
+                      <Button
+                        onClick={() => duplicate(ws.id)}
+                        title="Create a copy of this workspace"
+                      >
+                        <IconCopy size={14} />
+                        Duplicate
+                      </Button>
+                      <Button variant="danger" onClick={() => del(ws.id)}>
+                        <IconTrash size={14} />
+                        Delete
+                      </Button>
+                    </>
+                  )
+                }
+              />
             )
           })}
-        </div>
+        </ManagerList>
       )}
     </div>
   )

@@ -1,0 +1,213 @@
+
+
+/* =====================================================================
+   Motion / animations  (appended — additive only)
+   Premium micro-interactions: GPU-friendly (opacity + transform only),
+   driven by the theme tokens, and fully disabled under
+   prefers-reduced-motion. Nothing here changes layout or app logic, and
+   nothing animates inside the xterm viewport (kept off the hot path).
+   ===================================================================== */
+
+:root {
+  /* Motion scale. Keep durations short — this is a terminal, snappy > showy. */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1); /* out-expo: settles, no overshoot */
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1); /* gentle overshoot for pills */
+  --dur-fast: 120ms;
+  --dur: 180ms;
+  --dur-slow: 240ms;
+}
+
+@keyframes dt-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Scale up slightly from below — used for centered overlays (modals/palette). */
+@keyframes dt-pop-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+/* Rise + fade — used for view surfaces and list items. */
+@keyframes dt-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Grow the active-tab underline in from its left edge. */
+@keyframes dt-underline {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+/* Magnified pane entrance — opacity + a small rise only. No scale: scaling a
+   live terminal blurs its text, and the grid is already sized to the final
+   rect (so xterm refits exactly once). */
+@keyframes dt-focus-pop {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Ambient backdrop drift — very slow, transform-only counter-motion on the two
+   blooms for a living-glass feel. Gated by prefers-reduced-motion below; the
+   static base transforms live on .app::before / ::after. */
+@keyframes dt-ambient-a {
+  from {
+    transform: translate3d(-3%, -2%, 0) scale(1.06);
+  }
+  to {
+    transform: translate3d(4%, 3%, 0) scale(1.14);
+  }
+}
+@keyframes dt-ambient-b {
+  from {
+    transform: translate3d(3%, 2%, 0) scale(1.08);
+  }
+  to {
+    transform: translate3d(-4%, -3%, 0) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  /* --- Ambient backdrop blooms drift slowly for a living-glass feel. Long,
+     offset loops so the motion is felt, never watched. Compositor-only. --- */
+  .app::before {
+    animation: dt-ambient-a 46s ease-in-out infinite alternate;
+  }
+  .app::after {
+    animation: dt-ambient-b 62s ease-in-out infinite alternate;
+  }
+
+  /* --- Overlay entrances: backdrop fades, panel scales up.
+     These mount fresh on each open, so the keyframe plays once per open. --- */
+  .modal-backdrop {
+    animation: dt-fade-in var(--dur-fast) ease both;
+  }
+  .modal,
+  .palette,
+  .confirm-modal {
+    animation: dt-pop-in var(--dur) var(--ease-out) both;
+  }
+
+  /* --- Focus (magnify) mode: backdrop fades in, the card rises into place. --- */
+  .focus-backdrop {
+    animation: dt-fade-in var(--dur-fast) ease both;
+  }
+  .term-slot.focused {
+    animation: dt-focus-pop var(--dur) var(--ease-out) both;
+  }
+
+  /* --- Top-level manager views (Connections / Workspaces / Snippets).
+     These remount on each view switch, so the rise replays every time. --- */
+  .manager {
+    animation: dt-fade-up var(--dur-slow) var(--ease-out) both;
+  }
+
+  /* --- Saved-item rows + picker cards: staggered rise on appearance.
+     .manager-row is the real list-row class; .nt-choice are the new-terminal
+     picker cards. nth-child gives a gentle cascade. --- */
+  .manager-row,
+  .ws-card,
+  .nt-choice {
+    animation: dt-fade-up var(--dur) var(--ease-out) both;
+  }
+  .manager-row:nth-child(2),
+  .nt-choice:nth-child(2) {
+    animation-delay: 40ms;
+  }
+  .manager-row:nth-child(3),
+  .nt-choice:nth-child(3) {
+    animation-delay: 80ms;
+  }
+  .manager-row:nth-child(4) {
+    animation-delay: 120ms;
+  }
+  .manager-row:nth-child(5) {
+    animation-delay: 150ms;
+  }
+  .manager-row:nth-child(n + 6) {
+    animation-delay: 180ms;
+  }
+
+  /* --- Command-palette rows: glide the selection highlight instead of snapping. --- */
+  .palette-row {
+    transition: background var(--dur-fast) ease;
+  }
+
+  /* --- Active-tab underline grows in instead of hard-cutting. --- */
+  .tab.active::after {
+    transform-origin: left center;
+    animation: dt-underline var(--dur) var(--ease-out) both;
+  }
+
+  /* --- New group tabs fade/rise in; hover/active colours transition. --- */
+  .group-tab {
+    transition:
+      background var(--dur-fast) ease,
+      color var(--dur-fast) ease;
+    animation: dt-fade-up var(--dur-fast) var(--ease-out) both;
+  }
+
+  /* --- Pane focus ring: animate border + glow together when focus moves
+     between split panes (this is the panes' premium touch). --- */
+  .pane-leaf {
+    transition:
+      box-shadow var(--dur-fast) ease,
+      border-color var(--dur-fast) ease;
+  }
+
+  /* --- Primary buttons: a touch of spring lift on hover. --- */
+  .modal button.primary,
+  .ws-card button.primary {
+    transition:
+      filter var(--dur-fast) ease,
+      transform var(--dur-fast) var(--ease-spring);
+  }
+  .modal button.primary:hover,
+  .ws-card button.primary:hover {
+    transform: translateY(-1px);
+  }
+}
+
+
+@keyframes reconnect-pulse {
+  0%, 100% { opacity: 0.95; }
+  50% { opacity: 0.7; }
+}
+
+@keyframes activity-pulse {
+  0%, 100% {
+    opacity: 0.95;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.75;
+    transform: scale(1.12);
+  }
+}

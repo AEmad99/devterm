@@ -272,6 +272,10 @@ function TerminalView({ session }: { session: Session }) {
         return ''
       }
     }
+    const setRunningCommand = (cmd: string | undefined) => {
+      useSessions.getState().setCurrentCommand(session.id, cmd)
+      useSessions.getState().setProcessRunning(session.id, !!cmd)
+    }
     const onUserInput = (d: string) => {
       idleChime.onInput() // operator engaged — don't read prompt-composing as "finished"
       if (d.charCodeAt(0) === 0x1b) {
@@ -280,7 +284,11 @@ function TerminalView({ session }: { session: Session }) {
       }
       for (const ch of d) {
         if (ch === '\r' || ch === '\n') {
-          if (isAgentCommand(cmdBuf) || isAgentCommand(readPromptLine())) idleChime.setArmed(true)
+          const submitted = cmdBuf.trim() || readPromptLine().trim()
+          if (submitted) {
+            setRunningCommand(submitted)
+            if (isAgentCommand(submitted)) idleChime.setArmed(true)
+          }
           cmdBuf = ''
         } else if (ch === '\x7f' || ch === '\b') cmdBuf = cmdBuf.slice(0, -1)
         else if (ch === '\x03' || ch === '\x15') cmdBuf = ''
@@ -307,6 +315,10 @@ function TerminalView({ session }: { session: Session }) {
       if (bellOnRef.current && d.indexOf('\x07') !== -1) flashBell()
       idleChime.feed(d)
       term.write(d)
+      // Surface unread output on tabs that aren't being looked at.
+      if (useSessions.getState().activeId !== session.id) {
+        useSessions.getState().setHasUnreadOutput(session.id, true)
+      }
     }
 
     fitNow(fit, host)
@@ -319,10 +331,15 @@ function TerminalView({ session }: { session: Session }) {
     })
 
     // OSC 133 ;A (a fresh shell prompt) means an inline agent has exited — stop
-    // watching this terminal. Registered after autosuggest's 133 handler and
-    // returns false so that one still runs (xterm calls them last-registered-first).
+    // watching this terminal. It also means the previous command finished, so
+    // clear the tab's "running command" context. Registered after autosuggest's
+    // 133 handler and returns false so that one still runs (xterm calls them
+    // last-registered-first).
     term.parser.registerOscHandler(133, (data) => {
-      if (data[0] === 'A') idleChime.setArmed(false)
+      if (data[0] === 'A') {
+        idleChime.setArmed(false)
+        setRunningCommand(undefined)
+      }
       return false
     })
 
@@ -331,7 +348,13 @@ function TerminalView({ session }: { session: Session }) {
       idleChime.dispose,
       () => {
         if (bellTimer) clearTimeout(bellTimer)
-      }
+      },
+      () => setRunningCommand(undefined),
+      useSessions.subscribe((state, prev) => {
+        if (state.activeId === session.id && prev.activeId !== session.id) {
+          useSessions.getState().setHasUnreadOutput(session.id, false)
+        }
+      })
     ]
 
     const wireResize = (resize: (cols: number, rows: number) => void) => {
@@ -409,6 +432,8 @@ function TerminalView({ session }: { session: Session }) {
         )
         cleanups.push(
           window.devterm.pty.onExit(id, ({ exitCode }) => {
+            setRunningCommand(undefined)
+            useSessions.getState().setExitCode(session.id, exitCode ?? null)
             // ConPTY can tear down without reporting a code (e.g. the console
             // host died under a misbehaving TUI) — don't print "code undefined".
             const code = typeof exitCode === 'number' ? ` with code ${exitCode}` : ''
@@ -447,9 +472,11 @@ function TerminalView({ session }: { session: Session }) {
       // Subscribe before opening the shell so the login banner isn't missed.
       cleanups.push(window.devterm.ssh.onData(sid, writeData))
       cleanups.push(
-        window.devterm.ssh.onExit(sid, () =>
+        window.devterm.ssh.onExit(sid, () => {
+          setRunningCommand(undefined)
+          useSessions.getState().setExitCode(session.id, null)
           term.write(`${EXIT_RESET}\r\n\x1b[90m[connection closed]\x1b[0m\r\n`)
-        )
+        })
       )
       window.devterm.ssh
         .openShell(sid, term.cols, term.rows)

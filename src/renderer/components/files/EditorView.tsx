@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef } from 'react'
 import { EditorState, type Extension } from '@codemirror/state'
 import { EditorView as CMView, keymap } from '@codemirror/view'
 import { indentWithTab } from '@codemirror/commands'
@@ -13,9 +13,9 @@ import { IconLocal, IconRemote } from '../common/Icons'
 /**
  * The "Run in terminal" feature: pipe the current selection (or full doc) to
  * the active terminal through the existing input pipeline (see lib/terms). The
- * language pick is cosmetic for v1 — it just chooses the trailing line
- * terminator (\n for sh/bash/python/node/sql, \r for ps1, since PowerShell
- * reads input lines terminated by CR). We never open a new channel.
+ * run language is inferred from the file extension and only affects the
+ * trailing line terminator (\n for sh/bash/python/node/sql, \r for ps1, since
+ * PowerShell reads input lines terminated by CR). We never open a new channel.
  */
 type RunLang = 'sh' | 'bash' | 'python' | 'node' | 'ps1' | 'sql'
 
@@ -50,14 +50,6 @@ export default function EditorView() {
         ) ?? null)
       : null
   )
-  // The Run language preference lives in component state — v1 keeps it
-  // per-session-in-the-head and is not persisted. (Task spec marks this as
-  // cosmetic; promote to a real setting later if it sticks.)
-  const [runLang, setRunLang] = useState<RunLang>(active ? defaultRunLang(active.name) : 'sh')
-  useEffect(() => {
-    if (active) setRunLang(defaultRunLang(active.name))
-  }, [active])
-
   if (!active) return null
   const dirty = active.state === 'ready' && active.content !== active.savedContent
 
@@ -75,6 +67,7 @@ export default function EditorView() {
     // terminator so a single \n is the canonical "send a line" boundary; the
     // trailing terminator is then re-applied per lang.
     const normalized = text.replace(/\r\n?/g, '\n')
+    const runLang = defaultRunLang(active.name)
     const lang = RUN_LANGS.find((l) => l.id === runLang) ?? RUN_LANGS[0]
     const payload = normalized.endsWith(lang.eol) ? normalized : normalized + lang.eol
     sendTerminalInput(activeSession.id, payload)
@@ -103,18 +96,6 @@ export default function EditorView() {
             ⚠ save failed
           </span>
         )}
-        <select
-          className="editor-run-lang"
-          value={runLang}
-          onChange={(e) => setRunLang(e.target.value as RunLang)}
-          title="Run as (cosmetic — only affects the line terminator)"
-        >
-          {RUN_LANGS.map((l) => (
-            <option key={l.id} value={l.id}>
-              {l.label}
-            </option>
-          ))}
-        </select>
         <button
           className="primary"
           disabled={active.state !== 'ready' || !activeSession}
