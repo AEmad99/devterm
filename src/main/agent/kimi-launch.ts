@@ -29,9 +29,10 @@ export async function resolveKimiBin(): Promise<string> {
  *
  * Kimi Code CLI auto-discovers project-level MCP servers from
  * `.kimi-code/mcp.json` in the working directory, and auto-loads `AGENTS.md`
- * from the project hierarchy. We point `--mcp-config-file` at the JSON we wrote
- * so the session is fully isolated from the user's global Kimi config and any
- * other project files.
+ * from the project hierarchy. We launch `kimi` with the temp dir as cwd so it
+ * picks up the isolated config we wrote instead of the user's global Kimi
+ * config or any other project files. Kimi does not support a
+ * `--mcp-config-file` flag, so we rely on this discovery behaviour.
  */
 export async function prepareKimiLaunch(
   hostContextMd: string,
@@ -56,7 +57,7 @@ export async function prepareKimiLaunch(
 
   return {
     bin: await resolveKimiBin(),
-    args: ['--mcp-config-file', join(kimiCodeDir, 'mcp.json')],
+    args: [],
     cwd,
     env: {},
     cleanup: () => {

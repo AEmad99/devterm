@@ -32,8 +32,8 @@ export async function resolveOpencodeBin(): Promise<string> {
  * the config disables every built-in tool so the only thing it can act on
  * the host with is the `devterm_*` MCP tools. The config also disables
  * autoupdate (the bridge is short-lived — an update prompt mid-session is
- * noise) and share/upload defaults, and pins the server port so the agent
- * can't claim another host's address book.
+ * noise) and share/upload defaults; the control server defaults keep it on
+ * localhost with an OS-assigned port.
  */
 export async function prepareOpencodeLaunch(
   hostContextMd: string,
@@ -79,20 +79,16 @@ export async function prepareOpencodeLaunch(
       todowrite: false,
       question: false
     },
-    // The bridge is a 5-second-lived localhost HTTP endpoint. autoupdate
+    // The bridge is a short-lived localhost HTTP endpoint. autoupdate
     // would interrupt the session with a download prompt; sharing would try
     // to upload session JSON to opencode.ai and break the air-gapped rule;
     // snapshot is local-only but adds startup indexing cost we don't need.
     autoupdate: false,
     share: 'disabled',
-    snapshot: false,
-    server: {
-      // Force the bundled HTTP server onto localhost so the TUI can't pick a
-      // routable address; port 0 = OS-assigned. The MCP bridge has its own
-      // localhost port — this is the opencode control server the TUI talks to.
-      hostname: '127.0.0.1',
-      port: 0
-    }
+    snapshot: false
+    // We intentionally omit the `server` block: the defaults already bind the
+    // opencode control server to 127.0.0.1 with an OS-assigned port, and the
+    // opencode config schema rejects an explicit port of 0.
   }
   writeFileSync(join(cwd, 'opencode.json'), JSON.stringify(opencodeConfig, null, 2), {
     mode: 0o600

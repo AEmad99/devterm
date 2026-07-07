@@ -25,3 +25,6 @@ dist/
 .codex/
 .doc-build/
 docs/
+
+# local runtime terminal session state
+terminals/
