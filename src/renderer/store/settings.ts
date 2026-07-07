@@ -187,7 +187,9 @@ function load(): AppSettings {
         parsed?.agentKind === 'claude' ||
         parsed?.agentKind === 'pi' ||
         parsed?.agentKind === 'opencode' ||
-        parsed?.agentKind === 'kimi'
+        parsed?.agentKind === 'kimi' ||
+        parsed?.agentKind === 'grok' ||
+        parsed?.agentKind === 'codex'
           ? parsed.agentKind
           : DEFAULTS.agentKind,
       transfersPanelOpen:

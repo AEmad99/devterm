@@ -17,6 +17,8 @@ import { buildAgentsMd, prepareAgentLaunch } from '../agent/launch'
 import { buildClaudeMd, prepareClaudeLaunch } from '../agent/claude-launch'
 import { buildKimiMd, prepareKimiLaunch } from '../agent/kimi-launch'
 import { buildOpencodeMd, prepareOpencodeLaunch } from '../agent/opencode-launch'
+import { buildGrokMd, prepareGrokLaunch } from '../agent/grok-launch'
+import { buildCodexMd, prepareCodexLaunch } from '../agent/codex-launch'
 import type { SSHManager } from '../ssh/manager'
 import type { PtyManager } from '../pty/manager'
 
@@ -193,10 +195,22 @@ export function registerAgentIpc(
                   buildOpencodeMd(context, airGapped, cwds.get(opts.sessionId)),
                   info
                 )
-              : await prepareAgentLaunch(
-                  buildAgentsMd(context, airGapped, cwds.get(opts.sessionId)),
-                  info
-                )
+              : opts.kind === 'grok'
+                ? prepareGrokLaunch(
+                    buildGrokMd(context, airGapped, cwds.get(opts.sessionId)),
+                    info,
+                    opts.mode
+                  )
+                : opts.kind === 'codex'
+                  ? prepareCodexLaunch(
+                      buildCodexMd(context, airGapped, cwds.get(opts.sessionId)),
+                      info,
+                      opts.mode
+                    )
+                  : await prepareAgentLaunch(
+                      buildAgentsMd(context, airGapped, cwds.get(opts.sessionId)),
+                      info
+                    )
       const { id: ptyId } = pty.create({
         shell: spec.bin,
         args: spec.args,

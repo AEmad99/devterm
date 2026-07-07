@@ -310,10 +310,13 @@ export type PolicyMode = 'read_only' | 'confirm' | 'full'
  * (more models/subscriptions, MCP via a loaded extension); `opencode` runs the
  * OpenCode TUI (sst/opencode) wired to the bridge through a per-session
  * `opencode.json` with a remote MCP server entry; `kimi` runs the Kimi Code CLI
- * (Moonshot AI) wired through a per-session `.kimi-code/mcp.json`. All four
- * reach this host only through DevTerm's MCP bridge.
+ * (Moonshot AI) wired through a per-session `.kimi-code/mcp.json`; `grok` runs
+ * the Grok CLI wired to the bridge through a per-session `.grok/config.toml`
+ * HTTP MCP entry; `codex` runs the OpenAI Codex CLI wired through a per-session
+ * isolated `CODEX_HOME/config.toml` HTTP MCP entry. All six reach this host only
+ * through DevTerm's MCP bridge.
  */
-export type AgentKind = 'claude' | 'pi' | 'opencode' | 'kimi'
+export type AgentKind = 'claude' | 'pi' | 'opencode' | 'kimi' | 'grok' | 'codex'
 
 export interface AgentOpenOpts {
   sessionId: string

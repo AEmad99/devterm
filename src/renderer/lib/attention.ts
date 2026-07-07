@@ -201,6 +201,7 @@ const AGENT_COMMAND_NAMES = new Set([
   'gemini', // Google Gemini CLI (@google/gemini-cli)
   'opencode', // OpenCode (sst/opencode → opencode-ai)
   'kimi', // Kimi Code CLI (Moonshot AI)
+  'grok', // xAI Grok CLI
   'goose', // Block Goose (@block/goose)
   'crush', // Charm Crush (@charmland/crush)
   'kiro' // AWS Kiro CLI (rebranded from Amazon Q Developer)

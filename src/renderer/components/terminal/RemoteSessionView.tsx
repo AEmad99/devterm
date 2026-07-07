@@ -49,7 +49,11 @@ function RemoteSessionView({ session }: { session: Session }) {
         ? 'OpenCode'
         : agentKind === 'kimi'
           ? 'Kimi'
-          : 'Pi'
+          : agentKind === 'grok'
+            ? 'Grok'
+            : agentKind === 'codex'
+              ? 'Codex'
+              : 'Pi'
   const [agentWidth, setAgentWidth] = useState(480)
   const splitRef = useRef<HTMLDivElement>(null)
   const cancelSshReconnect = useSessions((s) => s.cancelSshReconnect)
@@ -130,7 +134,7 @@ function RemoteSessionView({ session }: { session: Session }) {
 
         <label
           className="policy-field"
-          title="Which coding agent to launch for this host. Claude is Anthropic-only; Pi reaches more models and subscriptions; OpenCode (sst/opencode) is the TUI agent with the broadest provider reach; Kimi (kimi-cli) is Moonshot AI's terminal agent. All four act on this host only through DevTerm's MCP bridge."
+          title="Which coding agent to launch for this host. Claude is Anthropic-only; Pi reaches more models and subscriptions; OpenCode (sst/opencode), Kimi (kimi-cli), Grok (xAI Grok CLI), and Codex (OpenAI Codex CLI) are TUI agents with broad provider reach. All six act on this host only through DevTerm's MCP bridge."
         >
           <span className="policy-label">Agent</span>
           <select
@@ -147,6 +151,8 @@ function RemoteSessionView({ session }: { session: Session }) {
             <option value="pi">Pi</option>
             <option value="opencode">OpenCode</option>
             <option value="kimi">Kimi</option>
+            <option value="grok">Grok</option>
+            <option value="codex">Codex</option>
           </select>
         </label>
         <label className="policy-field" title="What the in-app agent is allowed to do on this host">

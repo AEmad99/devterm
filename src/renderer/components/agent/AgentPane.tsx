@@ -17,13 +17,15 @@ const MODE_LABEL: Record<PolicyMode, string> = {
 }
 
 /**
- * Runs a real interactive coding-agent CLI (`claude`, `pi`, `opencode`, or
- * `kimi`, per `kind`) in a node-pty, wired to the in-process MCP bridge for
- * this session — Claude via its native `--mcp-config`, pi via a loaded
- * extension, OpenCode via a per-session `opencode.json` with a remote MCP
- * entry, Kimi via a per-session `.kimi-code/mcp.json`. The pane is a plain
- * terminal; the status pill is driven by the bridge's actual HTTP/SSE
- * connection state.
+ * Runs a real interactive coding-agent CLI (`claude`, `pi`, `opencode`,
+ * `kimi`, `grok`, or `codex`, per `kind`) in a node-pty, wired to the
+ * in-process MCP bridge for this session — Claude via its native
+ * `--mcp-config`, pi via a loaded extension, OpenCode via a per-session
+ * `opencode.json` with a remote MCP entry, Kimi via a per-session
+ * `.kimi-code/mcp.json`, Grok via a per-session `.grok/config.toml` HTTP MCP
+ * entry, Codex via a per-session isolated `CODEX_HOME/config.toml` HTTP MCP
+ * entry. The pane is a plain terminal; the status pill is driven by the
+ * bridge's actual HTTP/SSE connection state.
  */
 export default function AgentPane({
   sessionId,
@@ -41,7 +43,11 @@ export default function AgentPane({
         ? 'OpenCode'
         : kind === 'kimi'
           ? 'Kimi'
-          : 'Pi'
+          : kind === 'grok'
+            ? 'Grok'
+            : kind === 'codex'
+              ? 'Codex'
+              : 'Pi'
   const hostRef = useRef<HTMLDivElement>(null)
   const [bridge, setBridge] = useState<BridgeState>('connecting')
   const [bridgeMessage, setBridgeMessage] = useState<string | undefined>()
@@ -127,7 +133,11 @@ export default function AgentPane({
               ? 'built-in tools off, MCP devterm server'
               : kind === 'kimi'
                 ? 'use mcp__devterm__* tools for host work'
-                : 'built-in tools off'
+                : kind === 'grok'
+                  ? 'built-in tools off, MCP devterm server'
+                  : kind === 'codex'
+                    ? 'built-in tools off, MCP devterm server'
+                    : 'built-in tools off'
         term.write(
           `\x1b[90mMCP bridge: ${mcpUrl} | policy: ${mode} | agent: ${kind} (${toolNote})\x1b[0m\r\n`
         )
