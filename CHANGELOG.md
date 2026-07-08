@@ -3,6 +3,19 @@
 All notable changes to DevTerm are documented here. The most recent section is
 at the top. Dates are ISO `YYYY-MM-DD`.
 
+## 1.0.3 — 2026-07-08
+
+### Fixed
+
+- Terminal scrollbar is now interactive. The canvas renderer's
+  `.xterm-screen` overlay was swallowing clicks meant for the viewport's
+  scrollbar thumb; it now passes pointer events through so the scrollbar can
+  be dragged.
+
+### Changed
+
+- Status bar layout refinements and cleaner right-side status cells.
+
 ## Foundation (cluster gate) — 2026-06-12
 
 Shared foundation that the rest of the cluster work (A/B/C/D/E) imports.

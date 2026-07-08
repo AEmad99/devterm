@@ -1,5 +1,3 @@
-
-
 /* Terminal | agent split */
 .term-agent-split {
   display: flex;
@@ -424,6 +422,15 @@
 
 .terminal-host .xterm {
   height: 100%;
+}
+/* The canvas renderer's `.xterm-screen` div stacks above `.xterm-viewport`
+   and spans the full host width, so its transparent surface swallows clicks
+   that should land on the viewport's scrollbar thumb. Make the screen
+   pass pointer events through; xterm's own listeners are registered on the
+   `.xterm` element and calculate coords from the screen's geometry, so
+   selection, links, and terminal mouse reporting keep working. */
+.terminal-host .xterm-screen {
+  pointer-events: none;
 }
 /* xterm's native scrollbar lives on `.xterm-viewport` (overflow-y: scroll).
    The default WebKit overlay scrollbar is visually transparent and, in some

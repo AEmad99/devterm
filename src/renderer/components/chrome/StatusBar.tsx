@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useSessions } from '../../store/sessions'
 import { useSettings } from '../../store/settings'
-import { useTransfers, selectVisible } from '../../store/transfers'
 import { IconLocal, IconRemote, IconBrowser } from '../common/Icons'
 import type { GitStatus, HostContext } from '@shared/types'
 
@@ -37,7 +36,6 @@ export default function StatusBar() {
   const showStatusBar = useSettings((s) => s.showStatusBar)
   const zenMode = useSettings((s) => s.zenMode)
   const fontSize = useSettings((s) => s.prefs.fontSize)
-  const transferItems = useTransfers(selectVisible)
   const [git, setGit] = useState<GitStatus | null>(null)
   const [latency, setLatency] = useState<{ ms: number | null; err?: string } | null>(null)
 
@@ -163,11 +161,6 @@ export default function StatusBar() {
         {agentState && (
           <span className="status-cell status-agent" title={`Agent bridge: ${agentState}`}>
             {agentState}
-          </span>
-        )}
-        {transferItems.length > 0 && (
-          <span className="status-cell status-transfers" title="Active transfers">
-            {transferItems.length} transfer{transferItems.length === 1 ? '' : 's'}
           </span>
         )}
         <span className="status-cell" title="Terminal font size">
