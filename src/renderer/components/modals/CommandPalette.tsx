@@ -24,18 +24,20 @@ import { scoreTerms } from '../../lib/fuzzy'
 import { useSessions } from '../../store/sessions'
 import { useLayout } from '../../store/layout'
 import { toLiveSnapshot } from '../../lib/workspace'
-import { IconGroup, IconPalette, IconRemote, IconTerminals } from '../common/Icons'
+import { IconGroup, IconGrid, IconPalette, IconRemote, IconTerminals } from '../common/Icons'
 
-type Category = 'all' | 'snippets' | 'connections' | 'workspaces' | 'history'
+type Category = 'all' | 'actions' | 'snippets' | 'connections' | 'workspaces' | 'history'
 
 type PaletteItem =
   | { kind: 'snippet'; snippet: Snippet; score: number }
   | { kind: 'connection'; conn: SavedConnection; score: number }
   | { kind: 'workspace'; ws: Workspace; score: number }
   | { kind: 'history'; command: string; count: number; score: number }
+  | { kind: 'action'; id: string; title: string; subtitle: string; score: number }
 
 const CATEGORIES: { id: Category; label: string }[] = [
   { id: 'all', label: 'All' },
+  { id: 'actions', label: 'Actions' },
   { id: 'snippets', label: 'Snippets' },
   { id: 'connections', label: 'Connections' },
   { id: 'workspaces', label: 'Workspaces' },
@@ -60,11 +62,14 @@ function workspaceTarget(ws: Workspace, connName: (id?: string) => string): stri
 
 export default function CommandPalette({
   onRun,
-  onClose
+  onClose,
+  onCreateGrid
 }: {
   /** Called right before a command is sent, so the host can switch to the terminals view. */
   onRun: () => void
   onClose: () => void
+  /** Open the Create Grid modal (optional action). */
+  onCreateGrid?: () => void
 }) {
   const [snippets, setSnippets] = useState<Snippet[]>([])
   const [hist, setHist] = useState<HistoryResult | null>(null)
@@ -206,6 +211,26 @@ export default function CommandPalette({
     }))
   }, [hist, snippets, queryTrimmed])
 
+  const actionItems = useMemo<PaletteItem[]>(() => {
+    const actions = [
+      {
+        kind: 'action' as const,
+        id: 'grid',
+        title: 'Create terminal grid…',
+        subtitle: 'Open rows × columns of local shells in a new group',
+        score: 0
+      }
+    ]
+    if (!queryTrimmed) return actions
+    return actions
+      .map((a) => {
+        const target = `${a.title} ${a.subtitle} grid split 2x2 3x3 new grid`
+        const scored = scoreTerms(target, queryTrimmed)
+        return scored ? { ...a, score: scored.score } : null
+      })
+      .filter(Boolean) as Extract<PaletteItem, { kind: 'action' }>[]
+  }, [queryTrimmed])
+
   // The union of "commands already saved as a snippet (any name)" — for the
   // ✓ indicator.
   const savedAsSnippetCmds = useMemo(() => {
@@ -217,18 +242,26 @@ export default function CommandPalette({
   const counts = useMemo(
     () => ({
       all:
-        snippetItems.length + connectionItems.length + workspaceItems.length + historyItems.length,
+        actionItems.length +
+        snippetItems.length +
+        connectionItems.length +
+        workspaceItems.length +
+        historyItems.length,
+      actions: actionItems.length,
       snippets: snippetItems.length,
       connections: connectionItems.length,
       workspaces: workspaceItems.length,
       history: historyItems.length
     }),
-    [snippetItems, connectionItems, workspaceItems, historyItems]
+    [actionItems, snippetItems, connectionItems, workspaceItems, historyItems]
   )
 
   const sections = useMemo(() => {
     const cap = category === 'all' ? 8 : Infinity
     const out: { title: string; items: PaletteItem[] }[] = []
+    if ((category === 'all' || category === 'actions') && actionItems.length) {
+      out.push({ title: 'Actions', items: actionItems.slice(0, cap) })
+    }
     if ((category === 'all' || category === 'snippets') && snippetItems.length) {
       out.push({ title: 'Snippets', items: snippetItems.slice(0, cap) })
     }
@@ -245,7 +278,15 @@ export default function CommandPalette({
       })
     }
     return out
-  }, [category, snippetItems, connectionItems, workspaceItems, historyItems, scopeLabel])
+  }, [
+    category,
+    actionItems,
+    snippetItems,
+    connectionItems,
+    workspaceItems,
+    historyItems,
+    scopeLabel
+  ])
 
   const flatItems = useMemo(() => sections.flatMap((s) => s.items), [sections])
 
@@ -326,6 +367,10 @@ export default function CommandPalette({
     } else if (item.kind === 'workspace') {
       void launchWorkspace(item.ws)
       onClose()
+    } else if (item.kind === 'action') {
+      onRun()
+      if (item.id === 'grid') onCreateGrid?.()
+      onClose()
     }
   }
 
@@ -392,6 +437,8 @@ export default function CommandPalette({
         return 'Connect'
       case 'workspace':
         return 'Launch'
+      case 'action':
+        return 'Open'
       default:
         return 'Run'
     }
@@ -407,6 +454,8 @@ export default function CommandPalette({
         return <IconGroup size={16} />
       case 'history':
         return <IconTerminals size={16} />
+      case 'action':
+        return <IconGrid size={16} />
     }
   }
 
@@ -439,6 +488,9 @@ export default function CommandPalette({
         mono: false
       }
     }
+    if (item.kind === 'action') {
+      return { title: item.title, subtitle: item.subtitle, mono: false }
+    }
     const savedAlready = isSavedHistory(item.command)
     return {
       title: item.command,
@@ -452,9 +504,19 @@ export default function CommandPalette({
     const content = rowContent(item)
     const isHistory = item.kind === 'history'
     const savedAlready = isHistory && isSavedHistory(item.command)
+    const key =
+      item.kind === 'history'
+        ? item.command
+        : item.kind === 'snippet'
+          ? item.snippet.id
+          : item.kind === 'connection'
+            ? item.conn.id
+            : item.kind === 'workspace'
+              ? item.ws.id
+              : item.id
     return (
       <div
-        key={`${item.kind}-${isHistory ? item.command : item.kind === 'snippet' ? item.snippet.id : item.kind === 'connection' ? item.conn.id : item.ws.id}`}
+        key={`${item.kind}-${key}`}
         className={`palette-row ${selected ? 'sel' : ''}`}
         onMouseEnter={() => setSel(idx)}
         onClick={() => activate(item, true)}

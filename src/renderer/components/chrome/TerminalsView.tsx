@@ -2,7 +2,14 @@ import type { Dispatch, SetStateAction } from 'react'
 import TerminalLayout from '../terminal/TerminalLayout'
 import EditorView from '../files/EditorView'
 import GroupBar from './GroupBar'
-import { IconTerminals, IconRemote, IconEdit, IconPlus, EmptyTerminalArt } from '../common/Icons'
+import {
+  IconTerminals,
+  IconRemote,
+  IconEdit,
+  IconPlus,
+  IconGrid,
+  EmptyTerminalArt
+} from '../common/Icons'
 import { DEFAULT_GROUP, type Group } from '../../store/layout'
 import type { Session } from '../../store/sessions'
 import type { EditorDoc } from '../../store/editors'
@@ -22,6 +29,7 @@ interface TerminalsViewProps {
   editorClose: (id: string) => void
   onNewTerminal: () => void
   onNewTerminalInGroup?: () => void
+  onCreateGrid?: () => void
   onSaveWorkspace: () => void
   saveBackToWorkspace: () => void
   launchedFromId?: string
@@ -50,6 +58,7 @@ export default function TerminalsView({
   editorClose,
   onNewTerminal,
   onNewTerminalInGroup,
+  onCreateGrid,
   onSaveWorkspace,
   saveBackToWorkspace,
   launchedFromId,
@@ -151,6 +160,10 @@ export default function TerminalsView({
                 <button className="empty-cta" onClick={onNewTerminalInGroup ?? onNewTerminal}>
                   <IconPlus size={15} />
                   New terminal
+                </button>
+                <button className="empty-cta secondary" onClick={onCreateGrid ?? onNewTerminal}>
+                  <IconGrid size={15} />
+                  Create grid…
                 </button>
               </div>
             </div>

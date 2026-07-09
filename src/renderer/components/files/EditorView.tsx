@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useLayoutEffect, useRef } from 'react'
 import { EditorState, type Extension } from '@codemirror/state'
 import { EditorView as CMView, keymap } from '@codemirror/view'
 import { indentWithTab } from '@codemirror/commands'
@@ -8,7 +8,9 @@ import { useEditors, type EditorDoc } from '../../store/editors'
 import { useSessions } from '../../store/sessions'
 import { languageFor } from '../../lib/cm-languages'
 import { sendTerminalInput } from '../../lib/terms'
+import { isMarkdownName } from '../../lib/markdown-preview'
 import { IconLocal, IconRemote } from '../common/Icons'
+import MarkdownPreview from './MarkdownPreview'
 
 /**
  * The "Run in terminal" feature: pipe the current selection (or full doc) to
@@ -42,6 +44,7 @@ export default function EditorView() {
   const docs = useEditors((s) => s.docs)
   const activeId = useEditors((s) => s.activeId)
   const save = useEditors((s) => s.save)
+  const setPreviewMode = useEditors((s) => s.setPreviewMode)
   const active = docs.find((d) => d.id === activeId) || null
   const activeSession = useSessions((s) =>
     active
@@ -50,6 +53,23 @@ export default function EditorView() {
         ) ?? null)
       : null
   )
+
+  const isMarkdown = isMarkdownName(active?.name ?? '')
+  const previewMode = isMarkdown ? active?.previewMode || 'edit' : 'edit'
+  const sourceHidden = isMarkdown && previewMode === 'preview'
+
+  const activeDocId = active?.id
+
+  // After leaving Markdown preview-only mode, CodeMirror's viewport can be empty
+  // because the editor was zero-box hidden. Force a measure once layout restores.
+  useLayoutEffect(() => {
+    if (!activeDocId || sourceHidden) return
+    const raf = requestAnimationFrame(() => {
+      viewRegistry.get(activeDocId)?.requestMeasure()
+    })
+    return () => cancelAnimationFrame(raf)
+  }, [activeDocId, sourceHidden])
+
   if (!active) return null
   const dirty = active.state === 'ready' && active.content !== active.savedContent
 
@@ -96,6 +116,30 @@ export default function EditorView() {
             ⚠ save failed
           </span>
         )}
+        {isMarkdown && (
+          <>
+            <button
+              type="button"
+              className={`toggle ${previewMode === 'side' ? 'active' : ''}`}
+              aria-pressed={previewMode === 'side'}
+              title="Side-by-side preview"
+              onClick={() => setPreviewMode(active.id, previewMode === 'side' ? 'edit' : 'side')}
+            >
+              Side
+            </button>
+            <button
+              type="button"
+              className={`toggle ${previewMode === 'preview' ? 'active' : ''}`}
+              aria-pressed={previewMode === 'preview'}
+              title="Preview only"
+              onClick={() =>
+                setPreviewMode(active.id, previewMode === 'preview' ? 'edit' : 'preview')
+              }
+            >
+              Preview
+            </button>
+          </>
+        )}
         <button
           className="primary"
           disabled={active.state !== 'ready' || !activeSession}
@@ -123,7 +167,28 @@ export default function EditorView() {
           <div className="editor-status-detail">{active.error}</div>
         </div>
       )}
-      {active.state === 'ready' && <CodeMirror key={active.id} doc={active} />}
+      {active.state === 'ready' && (
+        <div className={`editor-body mode-${previewMode}`}>
+          <div
+            className={sourceHidden ? 'editor-source editor-source--parked' : 'editor-source'}
+            aria-hidden={sourceHidden || undefined}
+          >
+            <CodeMirror key={active.id} doc={active} />
+          </div>
+          {isMarkdown && (previewMode === 'side' || previewMode === 'preview') && (
+            <div className="editor-preview">
+              <MarkdownPreview
+                docId={active.id}
+                content={active.content}
+                previewMode={previewMode}
+                scope={active.scope}
+                path={active.path}
+                sessionId={active.sessionId}
+              />
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }

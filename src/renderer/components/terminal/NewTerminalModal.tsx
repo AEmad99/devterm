@@ -3,17 +3,19 @@
  * or pressing its ＋). Lets them choose a local shell, a remote SSH connection, or
  * a web browser pane — replacing the old fixed "+ Local" / "+ SSH" titlebar buttons.
  */
-import { IconLocal, IconRemote, IconBrowser } from '../common/Icons'
+import { IconLocal, IconRemote, IconBrowser, IconGrid } from '../common/Icons'
 
 export default function NewTerminalModal({
   onLocal,
   onRemote,
   onBrowser,
+  onGrid,
   onClose
 }: {
   onLocal: () => void
   onRemote: () => void
   onBrowser: () => void
+  onGrid: () => void
   onClose: () => void
 }) {
   return (
@@ -41,6 +43,13 @@ export default function NewTerminalModal({
             </span>
             <span className="nt-label">Browser</span>
             <span className="nt-desc">Open a web page in a pane</span>
+          </button>
+          <button className="nt-choice" onClick={onGrid}>
+            <span className="nt-ico">
+              <IconGrid size={28} />
+            </span>
+            <span className="nt-label">Grid</span>
+            <span className="nt-desc">Create a pane arrangement</span>
           </button>
         </div>
         <div className="actions">

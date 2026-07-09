@@ -13,6 +13,7 @@ export type HotkeyId =
   | 'palette'
   | 'paletteAlt'
   | 'newTerminal'
+  | 'newGrid'
   | 'closeTerminal'
   | 'duplicateTerminal'
   | 'toggleSidebar'
@@ -30,6 +31,7 @@ export type HotkeyId =
   | 'toggleFocus'
   | 'toggleZenMode'
   | 'shortcuts'
+  | 'saveEditor'
 
 export interface Hotkey {
   id: HotkeyId
@@ -48,6 +50,7 @@ export const HOTKEYS: Hotkey[] = [
   { id: 'palette', mod: true, key: 'k', label: 'Command palette (run a snippet)' },
   { id: 'paletteAlt', mod: true, shift: true, key: 'p', label: 'Command palette', alias: true },
   { id: 'newTerminal', mod: true, shift: true, key: 't', label: 'New terminal' },
+  { id: 'newGrid', mod: true, shift: true, key: 'g', label: 'New terminal grid' },
   { id: 'closeTerminal', mod: true, shift: true, key: 'w', label: 'Close current terminal' },
   { id: 'duplicateTerminal', mod: true, shift: true, key: 'd', label: 'Duplicate terminal' },
   { id: 'toggleSidebar', mod: true, shift: true, key: 'e', label: 'Toggle file explorer' },
@@ -69,7 +72,8 @@ export const HOTKEYS: Hotkey[] = [
   { id: 'toggleZenMode', mod: true, alt: true, key: 'z', label: 'Zen mode' },
   { id: 'settings', mod: true, key: ',', label: 'Settings' },
   { id: 'globalSearch', mod: true, alt: true, key: 'f', label: 'Search across all terminals' },
-  { id: 'shortcuts', mod: true, key: '/', label: 'Keyboard shortcuts' }
+  { id: 'shortcuts', mod: true, key: '/', label: 'Keyboard shortcuts' },
+  { id: 'saveEditor', mod: true, key: 's', label: 'Save file' }
 ]
 
 interface Keyish {

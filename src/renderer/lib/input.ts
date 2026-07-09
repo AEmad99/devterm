@@ -64,3 +64,37 @@ export function runInActive(command: string, execute: boolean): boolean {
   setTimeout(() => focusTerminal(session.id), 0)
   return true
 }
+
+/**
+ * Broadcast a command to multiple sessions. Returns which ids were reached and
+ * which were not (e.g. local terminals whose TerminalView has not mounted yet).
+ * History is recorded once per kind for executed commands.
+ */
+export function broadcastToSessions(
+  ids: string[],
+  command: string,
+  execute: boolean
+): { sent: string[]; failed: string[] } {
+  const data = execute ? command + '\r' : command
+  const sent: string[] = []
+  const failed: string[] = []
+  const kinds = new Set<'local' | 'remote'>()
+  for (const id of ids) {
+    const session = useSessions.getState().sessions.find((s) => s.id === id)
+    if (!session || session.closed || (session.kind !== 'local' && session.kind !== 'remote')) {
+      failed.push(id)
+      continue
+    }
+    if (sendToSession(id, data)) {
+      sent.push(id)
+      if (execute) kinds.add(session.kind)
+    } else {
+      failed.push(id)
+    }
+  }
+  if (execute && command.trim()) {
+    if (kinds.has('local')) void window.devterm.history.record(command, 'local')
+    if (kinds.has('remote')) void window.devterm.history.record(command, 'remote')
+  }
+  return { sent, failed }
+}

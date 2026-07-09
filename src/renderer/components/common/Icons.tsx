@@ -107,6 +107,16 @@ export const IconBrowser = (p: IconProps) => (
   </Svg>
 )
 
+/** Grid of panes — a 2×2 window split. */
+export const IconGrid = (p: IconProps) => (
+  <Svg {...p}>
+    <rect x="3" y="3" width="8" height="8" rx="1.5" />
+    <rect x="13" y="3" width="8" height="8" rx="1.5" />
+    <rect x="3" y="13" width="8" height="8" rx="1.5" />
+    <rect x="13" y="13" width="8" height="8" rx="1.5" />
+  </Svg>
+)
+
 /** Terminals home group — a window with a prompt. */
 export const IconTerminals = (p: IconProps) => (
   <Svg {...p}>

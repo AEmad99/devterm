@@ -3,12 +3,12 @@ import { create } from 'zustand'
 /**
  * Tiling layout for terminal panes (drag-to-arrange + split view).
  *
- * The layout is a binary split tree: internal `split` nodes divide space row-
- * or column-wise; `leaf` nodes are panes that hold one or more sessions as a
- * tab group. The renderer flattens this tree into absolute rects so that every
- * terminal lives in ONE stable DOM layer and is merely repositioned when the
- * layout changes — never reparented (which would unmount xterm and kill the
- * local pty). See TerminalLayout.tsx.
+ * The layout is an n-ary split tree: internal `split` nodes divide space row-
+ * or column-wise with any number of children; `leaf` nodes are panes that hold
+ * one or more sessions as a tab group. The renderer flattens this tree into
+ * absolute rects so that every terminal lives in ONE stable DOM layer and is
+ * merely repositioned when the layout changes — never reparented (which would
+ * unmount xterm and kill the local pty). See TerminalLayout.tsx.
  */
 
 export type SplitDir = 'row' | 'col'

@@ -1,5 +1,3 @@
-
-
 /* =====================================================================
    Motion / animations  (appended — additive only)
    Premium micro-interactions: GPU-friendly (opacity + transform only),
@@ -145,6 +143,9 @@
   .nt-choice:nth-child(3) {
     animation-delay: 80ms;
   }
+  .nt-choice:nth-child(4) {
+    animation-delay: 120ms;
+  }
   .manager-row:nth-child(4) {
     animation-delay: 120ms;
   }
@@ -195,14 +196,19 @@
   }
 }
 
-
 @keyframes reconnect-pulse {
-  0%, 100% { opacity: 0.95; }
-  50% { opacity: 0.7; }
+  0%,
+  100% {
+    opacity: 0.95;
+  }
+  50% {
+    opacity: 0.7;
+  }
 }
 
 @keyframes activity-pulse {
-  0%, 100% {
+  0%,
+  100% {
     opacity: 0.95;
     transform: scale(1);
   }

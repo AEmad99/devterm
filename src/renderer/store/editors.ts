@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import type { FileContent } from '@shared/types'
 
 export type EditorScope = 'local' | 'remote'
+export type MarkdownPreviewMode = 'edit' | 'side' | 'preview'
 
 export interface EditorDoc {
   /** Stable key: scope + sessionId + path. */
@@ -22,6 +23,8 @@ export interface EditorDoc {
   eol: '\n' | '\r\n'
   mtimeMs: number
   saving: boolean
+  /** Only meaningful for Markdown files; default 'edit'. */
+  previewMode?: MarkdownPreviewMode
 }
 
 export interface OpenTarget {
@@ -66,6 +69,7 @@ interface EditorState {
   /** Hand focus back to the session view (e.g. a terminal tab was clicked). */
   blur: () => void
   setContent: (id: string, content: string) => void
+  setPreviewMode: (id: string, mode: MarkdownPreviewMode) => void
   save: (id: string) => Promise<void>
   /** Drop any docs belonging to a session that is closing/disconnecting. */
   closeForSession: (sessionId: string) => void
@@ -94,7 +98,8 @@ export const useEditors = create<EditorState>((set, get) => ({
       savedContent: '',
       eol: '\n',
       mtimeMs: 0,
-      saving: false
+      saving: false,
+      previewMode: 'edit'
     }
     set((s) => ({ docs: [...s.docs, doc], activeId: id, focused: true }))
     read(t)
@@ -141,6 +146,9 @@ export const useEditors = create<EditorState>((set, get) => ({
 
   setContent: (id, content) =>
     set((s) => ({ docs: s.docs.map((d) => (d.id === id ? { ...d, content } : d)) })),
+
+  setPreviewMode: (id, mode) =>
+    set((s) => ({ docs: s.docs.map((d) => (d.id === id ? { ...d, previewMode: mode } : d)) })),
 
   save: async (id) => {
     const doc = get().docs.find((d) => d.id === id)

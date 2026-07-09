@@ -4,6 +4,7 @@ import FileExplorer from './components/files/FileExplorer'
 import ConfirmActionModal from './components/modals/ConfirmActionModal'
 import Splitter from './components/common/Splitter'
 import NewTerminalModal from './components/terminal/NewTerminalModal'
+import CreateGridModal from './components/terminal/CreateGridModal'
 import ConnectionsManager from './components/connections/ConnectionsManager'
 import WorkspacesManager from './components/workspaces/WorkspacesManager'
 import SnippetsManager from './components/snippets/SnippetsManager'
@@ -75,6 +76,7 @@ export default function App() {
 
   const [showConnect, setShowConnect] = useState(false)
   const [showPicker, setShowPicker] = useState(false)
+  const [showGrid, setShowGrid] = useState(false)
   const [showSaveWs, setShowSaveWs] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
   const [showPalette, setShowPalette] = useState(false)
@@ -161,6 +163,14 @@ export default function App() {
       if ((id === 'nextTab' || id === 'prevTab') && !isTerminalHostFocused()) {
         return
       }
+      if (id === 'saveEditor') {
+        const ed = useEditors.getState()
+        const doc = ed.docs.find((d) => d.id === ed.activeId)
+        if (!ed.focused || !doc || doc.state !== 'ready') return
+        e.preventDefault()
+        void ed.save(doc.id)
+        return
+      }
       e.preventDefault()
       switch (id) {
         case 'palette':
@@ -170,6 +180,10 @@ export default function App() {
         case 'newTerminal':
           setView('terminals')
           setShowPicker(true)
+          break
+        case 'newGrid':
+          setView('terminals')
+          setShowGrid(true)
           break
         case 'closeTerminal': {
           const activeId = useSessions.getState().activeId
@@ -357,6 +371,7 @@ export default function App() {
                 editorClose={editorClose}
                 onNewTerminal={() => setShowPicker(true)}
                 onNewTerminalInGroup={() => addLocal({ groupId: activeGroupId })}
+                onCreateGrid={() => setShowGrid(true)}
                 onSaveWorkspace={() => setShowSaveWs(true)}
                 saveBackToWorkspace={() => void saveBackToWorkspace()}
                 launchedFromId={launchedFromId}
@@ -409,9 +424,15 @@ export default function App() {
             addBrowser()
             setShowPicker(false)
           }}
+          onGrid={() => {
+            setView('terminals')
+            setShowPicker(false)
+            setShowGrid(true)
+          }}
           onClose={() => setShowPicker(false)}
         />
       )}
+      <CreateGridModal open={showGrid} onClose={() => setShowGrid(false)} />
       {showSaveWs && (
         <SaveWorkspaceModal
           capturable={capturable}
@@ -422,7 +443,11 @@ export default function App() {
       {showConnect && <ConnectionForm onClose={() => setShowConnect(false)} />}
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
       {showPalette && (
-        <CommandPalette onRun={() => setView('terminals')} onClose={() => setShowPalette(false)} />
+        <CommandPalette
+          onRun={() => setView('terminals')}
+          onClose={() => setShowPalette(false)}
+          onCreateGrid={() => setShowGrid(true)}
+        />
       )}
       {showShortcuts && <ShortcutsModal onClose={() => setShowShortcuts(false)} />}
       <ConfirmActionModal />

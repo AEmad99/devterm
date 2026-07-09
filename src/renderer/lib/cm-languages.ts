@@ -140,6 +140,8 @@ const EXT_LANGS: Record<string, Extension> = {
   // Documentation
   md: markdown(),
   markdown: markdown(),
+  mdown: markdown(),
+  mkd: markdown(),
 
   // Python
   py: python(),

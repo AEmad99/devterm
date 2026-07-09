@@ -169,7 +169,7 @@ export function summarizeAgentTask(task: string, maxLen = TAB_CONTEXT_MAX): stri
   const commandEq = rest.match(/(?:^|\s)command=([\s\S]+)$/)
   if (commandEq) {
     // Drop trailing scalar keys (timeout_ms=…) that flattenArgs may append.
-    let cmd = commandEq[1].replace(/\s+\w[\w]*=\S+\s*$/, '').trim()
+    const cmd = commandEq[1].replace(/\s+\w[\w]*=\S+\s*$/, '').trim()
     const budget = Math.max(12, maxLen - tool.length - 1)
     return truncate(`${tool} ${summarizeCommand(cmd, budget)}`, maxLen)
   }
@@ -235,7 +235,9 @@ function buildTooltip(s: TabLabelInput, title: string, context?: string): string
   // Prefer the full raw task/command in the tooltip when present so the
   // operator can still inspect the long form that the tab summarized away.
   if (s.agentTask) {
-    const full = s.agentKind ? `${agentLabel(s.agentKind)}: ${collapseWs(s.agentTask)}` : collapseWs(s.agentTask)
+    const full = s.agentKind
+      ? `${agentLabel(s.agentKind)}: ${collapseWs(s.agentTask)}`
+      : collapseWs(s.agentTask)
     parts.push(full)
   } else if (s.currentCommand) {
     parts.push(collapseWs(s.currentCommand))
