@@ -77,12 +77,17 @@ export default function TerminalsView({
   const zenMode = useSettings((s) => s.zenMode)
   const effectiveShowGroupBar = showGroupBar && !zenMode
 
+  // Editor tabs must live *inside* `.terminals-stack` (flex column). The stack
+  // is `position: absolute; inset: 0` over the whole view-pane, so a sibling
+  // tab strip above it was fully covered and users could not leave the editor.
   return (
-    <>
+    <div className="terminals-stack">
       {editorDocs.length > 0 && (
-        <div className="tabs">
+        <div className="tabs editor-tabs" role="tablist" aria-label="Editor documents">
           <div
             className={`tab ${!editorFocused ? 'active' : ''}`}
+            role="tab"
+            aria-selected={!editorFocused}
             onClick={editorBlur}
             title="Back to terminals"
           >
@@ -97,6 +102,8 @@ export default function TerminalsView({
               <div
                 key={d.id}
                 className={`tab tab-editor ${d.id === editorActiveId && editorFocused ? 'active' : ''}`}
+                role="tab"
+                aria-selected={d.id === editorActiveId && editorFocused}
                 title={d.path}
                 onClick={() => editorSetActive(d.id)}
               >
@@ -119,77 +126,73 @@ export default function TerminalsView({
         </div>
       )}
 
-      <div className="terminals-stack">
-        {effectiveShowGroupBar && (
-          <GroupBar
-            groups={groups}
-            activeGroupId={activeGroupId}
-            sessionsRef={sessionsRef}
-            dragOverGroup={dragOverGroup}
-            setDragOverGroup={setDragOverGroup}
-            switchGroup={switchGroup}
-            closeGroup={closeGroup}
-            createGroupAndLocal={createGroupAndLocal}
-            moveToGroup={moveToGroup}
-            spinOffGroup={spinOffGroup}
-            launchedFromId={launchedFromId}
-            capturable={capturable}
-            onSaveNew={onSaveWorkspace}
-            onSaveBack={saveBackToWorkspace}
-          />
-        )}
-        <div className="terminals-body">
-          <div
-            className={`layout-wrap${editorFocused || sessionCount === 0 ? ' term-hidden' : ''}`}
-          >
-            <TerminalLayout sessions={sessionsRef} onNewTerminal={onNewTerminal} />
-          </div>
-
-          {!editorFocused && sessionCount > 0 && activeGroupCount === 0 && (
-            <div className="empty empty-group-overlay">
-              <div className="empty-card">
-                <EmptyTerminalArt />
-                <div className="empty-title">
-                  {activeGroupId === DEFAULT_GROUP ? 'No ungrouped terminals' : 'Empty group'}
-                </div>
-                <div className="empty-sub">
-                  {activeGroupId === DEFAULT_GROUP
-                    ? 'Open a terminal here, or drag one out of a group to ungroup it.'
-                    : 'Open a terminal here, or drag a tab onto this group in the bar above.'}
-                </div>
-                <button className="empty-cta" onClick={onNewTerminalInGroup ?? onNewTerminal}>
-                  <IconPlus size={15} />
-                  New terminal
-                </button>
-                <button className="empty-cta secondary" onClick={onCreateGrid ?? onNewTerminal}>
-                  <IconGrid size={15} />
-                  Create grid…
-                </button>
-              </div>
-            </div>
-          )}
-
-          {editorFocused && editorActiveId && (
-            <div className="pane pane-editor">
-              <EditorView />
-            </div>
-          )}
-
-          {sessionCount === 0 && !editorFocused && (
-            <div className="empty">
-              <div className="empty-card">
-                <EmptyTerminalArt />
-                <div className="empty-title">No terminals open</div>
-                <div className="empty-sub">Open a local shell or connect to a server.</div>
-                <button className="empty-cta" onClick={onNewTerminal}>
-                  <IconPlus size={15} />
-                  New terminal
-                </button>
-              </div>
-            </div>
-          )}
+      {effectiveShowGroupBar && (
+        <GroupBar
+          groups={groups}
+          activeGroupId={activeGroupId}
+          sessionsRef={sessionsRef}
+          dragOverGroup={dragOverGroup}
+          setDragOverGroup={setDragOverGroup}
+          switchGroup={switchGroup}
+          closeGroup={closeGroup}
+          createGroupAndLocal={createGroupAndLocal}
+          moveToGroup={moveToGroup}
+          spinOffGroup={spinOffGroup}
+          launchedFromId={launchedFromId}
+          capturable={capturable}
+          onSaveNew={onSaveWorkspace}
+          onSaveBack={saveBackToWorkspace}
+        />
+      )}
+      <div className="terminals-body">
+        <div className={`layout-wrap${editorFocused || sessionCount === 0 ? ' term-hidden' : ''}`}>
+          <TerminalLayout sessions={sessionsRef} onNewTerminal={onNewTerminal} />
         </div>
+
+        {!editorFocused && sessionCount > 0 && activeGroupCount === 0 && (
+          <div className="empty empty-group-overlay">
+            <div className="empty-card">
+              <EmptyTerminalArt />
+              <div className="empty-title">
+                {activeGroupId === DEFAULT_GROUP ? 'No ungrouped terminals' : 'Empty group'}
+              </div>
+              <div className="empty-sub">
+                {activeGroupId === DEFAULT_GROUP
+                  ? 'Open a terminal here, or drag one out of a group to ungroup it.'
+                  : 'Open a terminal here, or drag a tab onto this group in the bar above.'}
+              </div>
+              <button className="empty-cta" onClick={onNewTerminalInGroup ?? onNewTerminal}>
+                <IconPlus size={15} />
+                New terminal
+              </button>
+              <button className="empty-cta secondary" onClick={onCreateGrid ?? onNewTerminal}>
+                <IconGrid size={15} />
+                Create grid…
+              </button>
+            </div>
+          </div>
+        )}
+
+        {editorFocused && editorActiveId && (
+          <div className="pane pane-editor">
+            <EditorView />
+          </div>
+        )}
+
+        {sessionCount === 0 && !editorFocused && (
+          <div className="empty">
+            <div className="empty-card">
+              <EmptyTerminalArt />
+              <div className="empty-title">No terminals open</div>
+              <div className="empty-sub">Open a local shell or connect to a server.</div>
+              <button className="empty-cta" onClick={onNewTerminal}>
+                <IconPlus size={15} />
+                New terminal
+              </button>
+            </div>
+          </div>
+        )}
       </div>
-    </>
+    </div>
   )
 }

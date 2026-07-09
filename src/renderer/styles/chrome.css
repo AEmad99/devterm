@@ -1,5 +1,3 @@
-
-
 .titlebar {
   display: flex;
   align-items: center;
@@ -118,11 +116,13 @@
 
 .tabs {
   display: flex;
+  flex: 0 0 auto; /* stay visible above terminals-body / editor pane */
   background: var(--panel);
   border-bottom: 1px solid var(--border);
   overflow-x: auto;
   padding: 4px 4px 0;
   gap: 3px;
+  z-index: 3;
 }
 
 .tab {

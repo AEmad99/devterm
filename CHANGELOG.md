@@ -3,6 +3,14 @@
 All notable changes to DevTerm are documented here. The most recent section is
 at the top. Dates are ISO `YYYY-MM-DD`.
 
+## 1.1.1 — 2026-07-09
+
+### Fixed
+
+- Opening a file from the explorer no longer traps you in the full-view editor.
+  The Terminals / file tab strip is shown above the editor again so you can
+  return to the terminal workspace or close documents.
+
 ## 1.0.4 — 2026-07-09
 
 ### Changed
