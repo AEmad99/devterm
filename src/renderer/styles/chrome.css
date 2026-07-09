@@ -139,6 +139,27 @@
   border-bottom: none;
   position: relative;
   top: 1px;
+  /* Keep one busy tab from eating the whole strip — long commands/agent
+     tasks are summarized in JS; ellipsis is the hard layout backstop. */
+  max-width: min(280px, 42vw);
+  min-width: 0;
+  overflow: hidden;
+  flex: 0 1 auto;
+}
+.tab .tab-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.tab .tab-title-context {
+  color: var(--muted);
+  font-weight: 400;
+}
+.tab .dot,
+.tab .tab-close {
+  flex-shrink: 0;
 }
 .tab:hover {
   background: var(--panel-2);

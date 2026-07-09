@@ -18,6 +18,31 @@ const MODE_LABEL: Record<PolicyMode, string> = {
 }
 
 /**
+ * Build a compact agent-task string for the session tab.
+ * Bridge activity detail is often `key=value` dumps (e.g.
+ * `command=python3 <<'PY' …`); keep the tool name plus the useful value.
+ */
+function formatAgentTabTask(tool: string | undefined, detail: string | undefined): string {
+  const d = (detail ?? '').replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim()
+  if (!tool) return d
+  if (!d) return tool
+
+  const commandEq = d.match(/(?:^|\s)command=([\s\S]+)$/)
+  if (commandEq) {
+    const cmd = commandEq[1].replace(/\s+\w[\w]*=\S+\s*$/, '').trim()
+    return `${tool}: ${cmd}`
+  }
+  const pathEq = d.match(/(?:^|\s)path=(\S+)/)
+  if (pathEq) return `${tool}: ${pathEq[1]}`
+
+  // Generic first key=value — drop the key name noise.
+  const firstKv = d.match(/^([a-zA-Z_][\w]*)=(.*)$/)
+  if (firstKv) return `${tool}: ${firstKv[2]}`
+
+  return `${tool}: ${d}`
+}
+
+/**
  * Runs a real interactive coding-agent CLI (`claude`, `pi`, `opencode`,
  * `kimi`, `grok`, or `codex`, per `kind`) in a node-pty, wired to the
  * in-process MCP bridge for this session — Claude via its native
@@ -71,12 +96,13 @@ export default function AgentPane({
   const { entries } = useBridgeActivity(sessionId)
 
   // Surface the latest agent activity in the session tab so the label can show
-  // what the agent is doing ("read_file src/main.ts", "run_command npm test", …).
+  // what the agent is doing ("read_file nginx.conf", "run_command npm test", …).
+  // Prefer a short task string here; tab-label.ts also summarizes for display.
   useEffect(() => {
     const latest = entries[entries.length - 1]
     if (!latest) return
     if (latest.kind === 'tool_call') {
-      const task = latest.tool ? `${latest.tool}: ${latest.detail}` : latest.detail
+      const task = formatAgentTabTask(latest.tool, latest.detail)
       setAgentTask(sessionId, task, kind)
     } else if (latest.kind === 'approval_request') {
       setAgentTask(sessionId, 'awaiting approval', kind)

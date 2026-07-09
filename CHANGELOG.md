@@ -3,6 +3,15 @@
 All notable changes to DevTerm are documented here. The most recent section is
 at the top. Dates are ISO `YYYY-MM-DD`.
 
+## 1.0.4 — 2026-07-09
+
+### Changed
+
+- Session tabs summarize long shell commands and agent tool activity (heredocs,
+  pipelines, `key=value` bridge dumps) so the tab strip stays readable.
+- Busy tabs are width-capped with ellipsis so one long title cannot dominate
+  the strip.
+
 ## 1.0.3 — 2026-07-08
 
 ### Fixed

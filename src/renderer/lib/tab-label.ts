@@ -5,6 +5,9 @@
 // tell apart many local shells, remote hosts, and agent panes without relying
 // on manual renaming.
 //
+// Context is always a *short summary* — never the full multi-line command or
+// tool payload. The full text still lives in the tooltip.
+//
 // Context precedence (highest first):
 //   1. Terminal/agent status (closed, reconnecting, bridge error, ...)
 //   2. Agent task from live bridge activity
@@ -42,6 +45,9 @@ export interface TabLabel {
   tooltip: string
 }
 
+/** Soft cap for the visible context chip in the tab strip. */
+const TAB_CONTEXT_MAX = 42
+
 const BRIDGE_LABELS: Record<AgentBridgeState, string> = {
   starting: 'agent starting…',
   listening: 'agent waiting…',
@@ -77,6 +83,114 @@ function agentLabel(kind?: AgentKind): string {
   return kind === 'opencode' ? 'OpenCode' : kind.charAt(0).toUpperCase() + kind.slice(1)
 }
 
+function collapseWs(s: string): string {
+  return s
+    .replace(/[\r\n]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function truncate(s: string, max: number): string {
+  if (s.length <= max) return s
+  if (max <= 1) return '…'
+  return s.slice(0, max - 1).trimEnd() + '…'
+}
+
+/**
+ * Short, human-readable summary of a shell command for tab chrome.
+ *
+ * Examples:
+ *   `python3 <<'PY'\nimport re\n…`  →  `python3 <<…`
+ *   `sudo nginx -t && systemctl reload nginx`  →  `sudo nginx -t && …`
+ *   `npm run build`  →  `npm run build`
+ */
+export function summarizeCommand(cmd: string, maxLen = TAB_CONTEXT_MAX): string {
+  let s = collapseWs(cmd)
+  if (!s) return s
+
+  // Bridge activity / flattenArgs noise: `command=python3 …` or `path=/x`.
+  s = s.replace(/^(?:command|cmd|script)=/i, '')
+  // If the whole string is still a single key=value (e.g. path=/etc/nginx.conf),
+  // prefer the value for display.
+  const loneKv = s.match(/^[a-zA-Z_][\w]*=(\S.*)$/)
+  if (loneKv && !/\s\w[\w]*=/.test(loneKv[1])) {
+    s = loneKv[1].trim()
+  }
+
+  // Heredoc / here-string bodies dominate the string and are useless in a tab.
+  // Keep the program invocation and a `<<…` marker.
+  const heredoc = s.match(
+    /^((?:(?:sudo|doas|env)\s+)*(?:[\w.]+=\S+\s+)*)([^\s<]+(?:\s+-[^\s<]+)*)\s*<<[-]?\s*['"]?\w+['"]?/
+  )
+  if (heredoc) {
+    const head = collapseWs(`${heredoc[1] ?? ''}${heredoc[2] ?? ''}`.trim())
+    return truncate(head ? `${head} <<…` : '<<…', maxLen)
+  }
+
+  // PowerShell here-string: @' … '@ or @" … "@
+  if (/@['"]/.test(s) && s.length > maxLen) {
+    const head = s.slice(0, s.search(/@['"]/)).trim()
+    return truncate(head ? `${head} @…` : s, maxLen)
+  }
+
+  // Long pipelines / chains: keep the first clause plus an ellipsis when
+  // truncated so the tab still names the primary action.
+  if (s.length > maxLen) {
+    const cut = s.slice(0, maxLen - 1)
+    const chain = cut.search(/\s(?:&&|\|\||;|\|)\s/)
+    if (chain > 12) {
+      return cut.slice(0, chain).trimEnd() + ' …'
+    }
+  }
+
+  return truncate(s, maxLen)
+}
+
+/**
+ * Short summary of an agent task string for the tab.
+ *
+ * AgentPane stores strings like `run_command: command=python3 …` or
+ * `read_file: path=/etc/nginx/nginx.conf`. Prefer tool + the useful value,
+ * not the raw `key=value` dump.
+ */
+export function summarizeAgentTask(task: string, maxLen = TAB_CONTEXT_MAX): string {
+  const s = collapseWs(task)
+  if (!s) return s
+
+  // "tool: rest" — tool names are snake_case identifiers.
+  const m = s.match(/^([a-z][\w]*):\s*(.*)$/i)
+  if (!m) return summarizeCommand(s, maxLen)
+
+  const tool = m[1]
+  const rest = m[2]
+  if (!rest) return truncate(tool, maxLen)
+
+  // Prefer well-known arg keys emitted by flattenArgs.
+  const commandEq = rest.match(/(?:^|\s)command=([\s\S]+)$/)
+  if (commandEq) {
+    // Drop trailing scalar keys (timeout_ms=…) that flattenArgs may append.
+    let cmd = commandEq[1].replace(/\s+\w[\w]*=\S+\s*$/, '').trim()
+    const budget = Math.max(12, maxLen - tool.length - 1)
+    return truncate(`${tool} ${summarizeCommand(cmd, budget)}`, maxLen)
+  }
+
+  const pathEq = rest.match(/(?:^|\s)path=(\S+)/)
+  if (pathEq) {
+    const base = folderName(pathEq[1]) || pathEq[1]
+    return truncate(`${tool} ${base}`, maxLen)
+  }
+
+  // Generic first key=value — use the value only.
+  const firstKv = rest.match(/^([a-zA-Z_][\w]*)=(.*)$/)
+  if (firstKv) {
+    const budget = Math.max(12, maxLen - tool.length - 1)
+    return truncate(`${tool} ${summarizeCommand(firstKv[2], budget)}`, maxLen)
+  }
+
+  const budget = Math.max(12, maxLen - tool.length - 1)
+  return truncate(`${tool} ${summarizeCommand(rest, budget)}`, maxLen)
+}
+
 function deriveContext(s: TabLabelInput): string | undefined {
   // Hard status overrides everything: closed, reconnecting, bridge errors.
   if (s.closed) return s.status || 'closed'
@@ -88,7 +202,10 @@ function deriveContext(s: TabLabelInput): string | undefined {
     return `${agentLabel(s.agentKind)}: awaiting approval`
   }
   if (s.agentTask) {
-    return s.agentKind ? `${agentLabel(s.agentKind)}: ${s.agentTask}` : s.agentTask
+    const prefix = s.agentKind ? `${agentLabel(s.agentKind)}: ` : ''
+    // Budget the task summary so "Grok: …" still fits a compact tab chip.
+    const task = summarizeAgentTask(s.agentTask, Math.max(16, TAB_CONTEXT_MAX - prefix.length))
+    return `${prefix}${task}`
   }
   if (
     s.agentBridgeState &&
@@ -98,8 +215,8 @@ function deriveContext(s: TabLabelInput): string | undefined {
     return bridgeStateLabel(s.agentBridgeState)
   }
 
-  // Running foreground command.
-  if (s.currentCommand) return s.currentCommand
+  // Running foreground command — summarized, never the full heredoc body.
+  if (s.currentCommand) return summarizeCommand(s.currentCommand)
 
   // Current directory.
   if (s.cwd) {
@@ -115,7 +232,16 @@ function deriveContext(s: TabLabelInput): string | undefined {
 
 function buildTooltip(s: TabLabelInput, title: string, context?: string): string {
   const parts: string[] = [title]
-  if (context && context !== title) parts.push(context)
+  // Prefer the full raw task/command in the tooltip when present so the
+  // operator can still inspect the long form that the tab summarized away.
+  if (s.agentTask) {
+    const full = s.agentKind ? `${agentLabel(s.agentKind)}: ${collapseWs(s.agentTask)}` : collapseWs(s.agentTask)
+    parts.push(full)
+  } else if (s.currentCommand) {
+    parts.push(collapseWs(s.currentCommand))
+  } else if (context && context !== title) {
+    parts.push(context)
+  }
   if (s.cwd) parts.push(`cwd: ${s.cwd}`)
   if (s.status && !parts.includes(s.status)) parts.push(s.status)
   if (s.kind === 'remote' && s.context?.hostname) parts.push(`host: ${s.context.hostname}`)
