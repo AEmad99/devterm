@@ -33,6 +33,8 @@ export type DefaultShellPref =
 export interface PtyCreated {
   id: string
   shell: string
+  /** Absolute working directory the PTY was spawned in (for early explorer seed). */
+  cwd: string
 }
 
 /**

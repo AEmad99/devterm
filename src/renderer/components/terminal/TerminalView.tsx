@@ -410,7 +410,7 @@ function TerminalView({ session }: { session: Session }) {
 
     if (session.kind === 'local') {
       ;(async () => {
-        const { id } = await window.devterm.pty.create({
+        const { id, cwd: spawnCwd } = await window.devterm.pty.create({
           cols: term.cols,
           rows: term.rows,
           cwd: session.startCwd,
@@ -422,6 +422,9 @@ function TerminalView({ session }: { session: Session }) {
           shellPref: useSettings.getState().defaultShell
         })
         if (disposed) return window.devterm.pty.kill(id)
+        // Seed session cwd immediately from the spawn directory so the file
+        // explorer follows this terminal before the first OSC 7 prompt.
+        if (spawnCwd) useSessions.getState().setCwd(session.id, spawnCwd)
         cleanups.push(window.devterm.pty.onData(id, writeData))
         // Startup-failure diagnostic: if the main process saw the shell exit
         // before emitting any data (Windows PowerShell 5.1's 0x8009001d is the
@@ -493,7 +496,9 @@ function TerminalView({ session }: { session: Session }) {
         .then(() => {
           // Best-effort: restore the working directory when launched from a
           // saved workspace. Works for POSIX shells and PowerShell alike.
+          // Seed store so the explorer shows that path before OSC 7 arrives.
           if (session.startCwd) {
+            useSessions.getState().setCwd(session.id, session.startCwd)
             const p = session.startCwd.replace(/"/g, '\\"')
             window.devterm.ssh.input(sid, `cd "${p}"\r`)
           }

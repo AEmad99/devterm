@@ -205,11 +205,12 @@ export class PtyManager {
         continue
       baseEnv[k] = v
     }
+    const cwd = opts.cwd || os.homedir()
     const ptyOpts: IWindowsPtyForkOptions = {
       name: 'xterm-256color',
       cols: opts.cols || 80,
       rows: opts.rows || 24,
-      cwd: opts.cwd || os.homedir(),
+      cwd,
       env: { ...baseEnv, ...(opts.env ?? {}) },
       // Use the ConPTY bundled with node-pty (the Windows Terminal one) instead
       // of the in-box conhost ConPTY: the OS copy has known TUI repaint
@@ -269,7 +270,7 @@ export class PtyManager {
     })
 
     this.ptys.set(id, proc)
-    return { id, shell }
+    return { id, shell, cwd }
   }
 
   // write/resize can throw (EPIPE et al.) when the process died but onExit

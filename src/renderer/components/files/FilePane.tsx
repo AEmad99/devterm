@@ -67,19 +67,24 @@ export default function FilePane({
   const [pathInput, setPathInput] = useState('')
   // Tracks the directory actually shown, so follow/edit effects don't loop.
   const currentPath = useRef<string | null>(null)
+  // Ignore stale list results when home load races followPath / manual nav.
+  const loadGen = useRef(0)
   const treeRef = useRef<FileTreeHandle>(null)
 
   const load = useCallback(
     async (path?: string) => {
+      const gen = ++loadGen.current
       setErr(null)
       try {
         const l = await api.list(path)
+        if (gen !== loadGen.current) return
         currentPath.current = l.path
         setListing(l)
         setSel(null)
         setMultiSel(new Set())
         onCwd(l.path)
       } catch (e) {
+        if (gen !== loadGen.current) return
         setErr(String((e as Error).message || e))
       }
     },
@@ -87,7 +92,9 @@ export default function FilePane({
   )
 
   useEffect(() => {
-    api.home().then((h) => load(h))
+    // Prefer shell cwd when already known so we don't flash home then jump.
+    if (followPath) void load(followPath)
+    else void api.home().then((h) => load(h))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 

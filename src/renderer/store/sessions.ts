@@ -156,6 +156,9 @@ export const useSessions = create<SessionState>((set, get) => ({
       title: `Local ${n}`,
       localNum: n,
       startCwd: opts?.cwd,
+      // Seed live cwd so the file explorer opens on the launch directory
+      // before the first OSC 7 prompt reports; OSC 7 overwrites this later.
+      cwd: opts?.cwd,
       groupId: opts?.groupId ?? useLayout.getState().activeGroupId,
       context: { kind: 'local', os: 'unknown', detail: '', hostname: '' }
     }
@@ -181,6 +184,8 @@ export const useSessions = create<SessionState>((set, get) => ({
           status: 'connecting…',
           connectionId: meta?.connectionId,
           startCwd: meta?.startCwd,
+          // Provisional cwd for workspace restore / reconnect; OSC 7 confirms.
+          cwd: meta?.startCwd,
           groupId: meta?.groupId ?? useLayout.getState().activeGroupId
         }
       ],

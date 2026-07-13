@@ -45,7 +45,12 @@ function basename(p: string): string {
 export default function FileExplorer() {
   const active = useSessions((s) => s.sessions.find((x) => x.id === s.activeId))
   const kind = active?.kind
+  // Live shell cwd (OSC 7); fall back to the one-shot launch directory so a
+  // workspace restore / reconnect still points the explorer at the right place
+  // before the first prompt reports OSC 7.
   const cwd = active?.cwd
+  const startCwd = active?.startCwd
+  const targetPath = cwd ?? startCwd
   const isPending = !active || active.id.startsWith('pending-')
   // Browser panes have no filesystem; the explorer shows a placeholder for them.
   const isBrowser = active?.kind === 'browser'
@@ -65,6 +70,9 @@ export default function FileExplorer() {
   const [err, setErr] = useState<string | null>(null)
   const [pathInput, setPathInput] = useState('')
   const loadedPath = useRef<string | null>(null)
+  // Bumped on every load / session switch so a slower earlier list cannot
+  // overwrite a newer one (classic home-then-cwd race when switching tabs).
+  const loadGen = useRef(0)
   const treeRef = useRef<FileTreeHandle>(null)
   // Git status for the currently shown directory. `null` means "not yet known"
   // (loading), a populated object with `isRepo: false` means "known to be a
@@ -77,39 +85,47 @@ export default function FileExplorer() {
   const load = useCallback(
     async (path?: string) => {
       if (!api) return
+      const gen = ++loadGen.current
       setErr(null)
       try {
         const l = await api.list(path)
+        // Stale response: a newer load (or session switch) already started.
+        if (gen !== loadGen.current) return
         loadedPath.current = l.path
         setListing(l)
         setSel(null)
         setMultiSel(new Set())
       } catch (e) {
+        if (gen !== loadGen.current) return
         setErr(String((e as Error).message || e))
       }
     },
     [api]
   )
 
-  // When the active session changes, reset and load its cwd (or home).
+  // When the active session changes, reset and load its shell directory (or home).
+  // Prefer live cwd, then startCwd; only fall back to home when neither is known.
   useEffect(() => {
+    loadGen.current++
     setListing(null)
     setSel(null)
     setMultiSel(new Set())
     loadedPath.current = null
     setGitStatus(null)
     if (api) {
-      if (cwd) load(cwd)
+      if (targetPath) load(targetPath)
       else load()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active?.id])
 
   // Follow the shell: when cwd changes (and differs from what's shown), navigate.
+  // Also re-run when startCwd is the only known path (e.g. just restored).
   useEffect(() => {
-    if (api && cwd && cwd !== loadedPath.current) load(cwd)
+    if (!api || !targetPath) return
+    if (targetPath !== loadedPath.current) load(targetPath)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cwd])
+  }, [targetPath])
 
   // Keep the editable path box in sync with the directory being shown.
   useEffect(() => {
