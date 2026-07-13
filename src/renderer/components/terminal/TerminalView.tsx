@@ -189,7 +189,12 @@ function TerminalView({ session }: { session: Session }) {
     // completion popup. `sendInput` is wired once the pty/ssh backend is known.
     // Registered so snippets/the palette can write to this shell by session id
     // (the local pty id is private to this effect).
-    let sendInput: (data: string) => void = () => {}
+    //
+    // Queue input that arrives before the local PTY is created. Callers such as
+    // grid broadcast, snippets, and the command palette may send a command as
+    // soon as the terminal mounts, before node-pty has finished starting.
+    const inputQueue: string[] = []
+    let sendInput: (data: string) => void = (d) => inputQueue.push(d)
     registerTerminalInput(session.id, (d) => sendInput(d))
     const suggest = attachAutosuggest(term, host, {
       query:
@@ -459,10 +464,15 @@ function TerminalView({ session }: { session: Session }) {
             }
           })
         )
-        sendInput = (d) => window.devterm.pty.input(id, d)
+        const ptyId = id
+        sendInput = (d) => window.devterm.pty.input(ptyId, d)
+        // Deliver any input that arrived before the PTY was created (e.g. a grid
+        // broadcast sent while TerminalView was still mounting).
+        for (const d of inputQueue) sendInput(d)
+        inputQueue.length = 0
         term.onData((d) => {
           onUserInput(d)
-          window.devterm.pty.input(id, d)
+          window.devterm.pty.input(ptyId, d)
         })
         wireResize((c, r) => window.devterm.pty.resize(id, c, r))
         cleanups.push(() => window.devterm.pty.kill(id))

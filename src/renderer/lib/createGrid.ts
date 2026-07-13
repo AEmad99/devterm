@@ -1,7 +1,7 @@
 import { useSessions } from '../store/sessions'
 import { useLayout } from '../store/layout'
 import { buildGridSnapshot, clampGridSpec, gridCellCount, validateGridSpec } from './grid'
-import { broadcastToSessions } from './input'
+import { sendToSession } from './input'
 import { focusTerminal } from './terms'
 
 export type GridCellKind = 'local' | 'remote'
@@ -71,19 +71,39 @@ export function createTerminalGrid(req: CreateGridRequest): CreateGridResult {
   useSessions.getState().setActive(ids[0])
 
   if (req.broadcast?.command.trim()) {
-    // Local TerminalViews need one render frame to mount and register their input
-    // sender; retry any failures once after a short delay. Remote sessions are
-    // reached immediately through ssh:input.
-    const runBroadcast = () => {
-      const { failed } = broadcastToSessions(ids, req.broadcast!.command, req.broadcast!.execute)
-      if (failed.length) {
-        setTimeout(() => {
-          broadcastToSessions(failed, req.broadcast!.command, req.broadcast!.execute)
-        }, 400)
+    // TerminalViews mount asynchronously after the layout snapshot is restored,
+    // and their local PTYs are created async after that. Poll until every cell's
+    // input sender is wired, retrying only the cells that are not ready yet, so
+    // the command is sent exactly once per terminal. Cap total wait at 5s.
+    const command = req.broadcast.command
+    const execute = req.broadcast.execute
+    const data = execute ? command + '\r' : command
+    const sent = new Set<string>()
+    let historyRecorded = false
+    let attempts = 0
+    const maxAttempts = 50 // 50 * 100ms = 5s
+    const timer = window.setInterval(() => {
+      attempts++
+      const pending = ids.filter((id) => !sent.has(id))
+      if (pending.length === 0) {
+        window.clearInterval(timer)
+        setTimeout(() => focusTerminal(ids[0]), 0)
+        return
       }
-      setTimeout(() => focusTerminal(ids[0]), 0)
-    }
-    setTimeout(runBroadcast, 300)
+      for (const id of pending) {
+        if (sendToSession(id, data)) {
+          sent.add(id)
+        }
+      }
+      if (execute && command.trim() && sent.size > 0 && !historyRecorded) {
+        historyRecorded = true
+        void window.devterm.history.record(command, 'local')
+      }
+      if (attempts >= maxAttempts) {
+        window.clearInterval(timer)
+        setTimeout(() => focusTerminal(ids[0]), 0)
+      }
+    }, 100)
   }
 
   return { groupId, sessionIds: ids, requested: count, created: ids.length, errors: [] }
