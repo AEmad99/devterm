@@ -1,6 +1,6 @@
 {
   "name": "devterm",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "description": "DevTerm — SSH/SFTP terminal with a pi/claude/opencode coding agent bridge",
   "main": "out/main/index.js",
   "author": "DevTerm",
