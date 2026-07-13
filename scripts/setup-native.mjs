@@ -101,4 +101,35 @@ if (process.platform === 'win32') {
   }
 }
 
+// 4) onnxruntime-web wasm blobs for local (offline, CSP-safe) speech-to-text.
+//    Transformers.js defaults to fetching ORT's wasm from a CDN, which the
+//    renderer CSP forbids and which breaks offline. Copy the prebuilt wasm/mjs
+//    from node_modules into the renderer's public/ort so Vite serves them at
+//    /ort/ in dev and bundles them into the packaged app. The STT worker points
+//    env.backends.onnx.wasm.wasmPaths at that folder.
+{
+  const ortDist = join(nm, 'onnxruntime-web', 'dist')
+  const ortDest = join(root, 'src', 'renderer', 'public', 'ort')
+  const ortFiles = [
+    'ort-wasm-simd-threaded.wasm',
+    'ort-wasm-simd-threaded.mjs',
+    'ort-wasm-simd-threaded.jsep.wasm',
+    'ort-wasm-simd-threaded.jsep.mjs'
+  ]
+  if (!existsSync(ortDist)) {
+    console.warn('! onnxruntime-web not found; skipping STT wasm copy (voice dictation will be unavailable)')
+  } else {
+    mkdirSync(ortDest, { recursive: true })
+    let copied = 0
+    for (const f of ortFiles) {
+      const src = join(ortDist, f)
+      if (existsSync(src)) {
+        copyFileSync(src, join(ortDest, f))
+        copied++
+      }
+    }
+    console.log(`✓ ONNX Runtime wasm copied for STT (${copied}/${ortFiles.length} files)`)
+  }
+}
+
 console.log('Native setup complete. Next: npm run dev')

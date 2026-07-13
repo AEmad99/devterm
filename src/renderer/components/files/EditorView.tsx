@@ -9,7 +9,7 @@ import { useSessions } from '../../store/sessions'
 import { languageFor } from '../../lib/cm-languages'
 import { sendTerminalInput } from '../../lib/terms'
 import { isMarkdownName } from '../../lib/markdown-preview'
-import { IconLocal, IconRemote } from '../common/Icons'
+import { IconLocal, IconRemote, IconTerminals } from '../common/Icons'
 import MarkdownPreview from './MarkdownPreview'
 
 /**
@@ -45,6 +45,7 @@ export default function EditorView() {
   const activeId = useEditors((s) => s.activeId)
   const save = useEditors((s) => s.save)
   const setPreviewMode = useEditors((s) => s.setPreviewMode)
+  const editorBlur = useEditors((s) => s.blur)
   const active = docs.find((d) => d.id === activeId) || null
   const activeSession = useSessions((s) =>
     active
@@ -96,6 +97,16 @@ export default function EditorView() {
   return (
     <div className="editor-area">
       <div className="editor-toolbar">
+        <button
+          className="editor-back"
+          onClick={editorBlur}
+          title="Back to terminals (Esc)"
+          aria-label="Back to terminals"
+        >
+          <IconTerminals size={14} />
+          <span className="editor-back-label">Terminals</span>
+        </button>
+        <span className="editor-toolbar-sep" aria-hidden="true" />
         <span
           className="editor-scope"
           title={active.scope === 'remote' ? 'Remote (SFTP)' : 'Local'}

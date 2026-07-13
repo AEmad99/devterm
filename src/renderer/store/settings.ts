@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { AgentKind, DefaultShellPref } from '@shared/types'
+import type { AgentKind, DefaultShellPref, STTSettings, STTModelId, STTLanguage } from '@shared/types'
 import type { HotkeyId } from '../lib/hotkeys'
 
 /**
@@ -81,12 +81,19 @@ export interface AppSettings {
    */
   defaultShell: DefaultShellPref
   /**
+   * Whether the Git panel is shown in the right sidebar. When on, the
+   * sidebar splits into a Files pane (left) and a Git pane (right).
+   */
+  gitPanelOpen: boolean
+  /**
    * Custom keyboard shortcuts. Only overrides are stored; missing ids fall back
    * to the built-in defaults in lib/hotkeys.ts.
    */
   keybindings: Partial<
     Record<HotkeyId, { mod?: boolean; shift?: boolean; alt?: boolean; key: string }>
   >
+  /** Local voice dictation (offline Whisper speech-to-text into the active terminal). */
+  stt: STTSettings
 }
 
 /**
@@ -171,7 +178,15 @@ const DEFAULTS: AppSettings = {
   agentKind: 'claude',
   transfersPanelOpen: false,
   defaultShell: { kind: 'auto' },
-  keybindings: {}
+  gitPanelOpen: false,
+  keybindings: {},
+  stt: {
+    enabled: true,
+    modelId: 'base',
+    language: 'auto',
+    appendSpace: true,
+    showFloatingStatus: true
+  }
 }
 
 const STORAGE_KEY = 'devterm.settings.v1'
@@ -220,7 +235,10 @@ function load(): AppSettings {
           ? parsed.transfersPanelOpen
           : DEFAULTS.transfersPanelOpen,
       defaultShell: normalizeDefaultShell(parsed?.defaultShell),
-      keybindings: normalizeKeybindings(parsed?.keybindings)
+      gitPanelOpen:
+        typeof parsed?.gitPanelOpen === 'boolean' ? parsed.gitPanelOpen : DEFAULTS.gitPanelOpen,
+      keybindings: normalizeKeybindings(parsed?.keybindings),
+      stt: normalizeStt(parsed?.stt)
     }
   } catch {
     return DEFAULTS
@@ -262,6 +280,44 @@ function normalizeKeybindings(raw: unknown): AppSettings['keybindings'] {
   return out
 }
 
+/**
+ * Validate the persisted STT settings. Unknown model ids / languages fall back
+ * to defaults so a hand-edited or older localStorage never breaks the worker.
+ */
+function normalizeStt(raw: unknown): STTSettings {
+  if (!raw || typeof raw !== 'object') return DEFAULTS.stt
+  const r = raw as Partial<STTSettings>
+  const models: STTModelId[] = ['tiny', 'base', 'small']
+  const languages: STTLanguage[] = [
+    'auto',
+    'en',
+    'es',
+    'fr',
+    'de',
+    'it',
+    'pt',
+    'nl',
+    'ru',
+    'zh',
+    'ja',
+    'ko',
+    'ar',
+    'hi'
+  ]
+  return {
+    enabled: typeof r.enabled === 'boolean' ? r.enabled : DEFAULTS.stt.enabled,
+    modelId: models.includes(r.modelId as STTModelId) ? (r.modelId as STTModelId) : DEFAULTS.stt.modelId,
+    language: languages.includes(r.language as STTLanguage)
+      ? (r.language as STTLanguage)
+      : DEFAULTS.stt.language,
+    appendSpace: typeof r.appendSpace === 'boolean' ? r.appendSpace : DEFAULTS.stt.appendSpace,
+    showFloatingStatus:
+      typeof r.showFloatingStatus === 'boolean'
+        ? r.showFloatingStatus
+        : DEFAULTS.stt.showFloatingStatus
+  }
+}
+
 interface SettingsState extends AppSettings {
   setThemeId: (id: string) => void
   setTerminalBg: (patch: Partial<TerminalBg>) => void
@@ -277,11 +333,13 @@ interface SettingsState extends AppSettings {
   setAgentKind: (v: AgentKind) => void
   setTransfersPanelOpen: (v: boolean) => void
   setDefaultShell: (pref: DefaultShellPref) => void
+  setGitPanelOpen: (v: boolean) => void
   setKeybinding: (
     id: HotkeyId,
     combo: { mod?: boolean; shift?: boolean; alt?: boolean; key: string } | null
   ) => void
   resetKeybindings: () => void
+  setStt: (patch: Partial<STTSettings>) => void
   reset: () => void
 }
 
@@ -304,7 +362,9 @@ function persist(state: AppSettings): void {
         agentKind: state.agentKind,
         transfersPanelOpen: state.transfersPanelOpen,
         defaultShell: state.defaultShell,
-        keybindings: state.keybindings
+        gitPanelOpen: state.gitPanelOpen,
+        keybindings: state.keybindings,
+        stt: state.stt
       })
     )
   } catch {
@@ -391,6 +451,11 @@ export const useSettings = create<SettingsState>((set, get) => ({
     persist(snapshot(get()))
   },
 
+  setGitPanelOpen: (v) => {
+    set({ gitPanelOpen: v })
+    persist(snapshot(get()))
+  },
+
   setKeybinding: (id, combo) => {
     const keybindings = { ...get().keybindings }
     if (combo) keybindings[id] = combo
@@ -401,6 +466,12 @@ export const useSettings = create<SettingsState>((set, get) => ({
 
   resetKeybindings: () => {
     set({ keybindings: DEFAULTS.keybindings })
+    persist(snapshot(get()))
+  },
+
+  setStt: (patch) => {
+    const stt = { ...get().stt, ...patch }
+    set({ stt })
     persist(snapshot(get()))
   },
 
@@ -420,7 +491,8 @@ export const useSettings = create<SettingsState>((set, get) => ({
       agentKind: DEFAULTS.agentKind,
       transfersPanelOpen: DEFAULTS.transfersPanelOpen,
       defaultShell: DEFAULTS.defaultShell,
-      keybindings: DEFAULTS.keybindings
+      keybindings: DEFAULTS.keybindings,
+      stt: DEFAULTS.stt
     })
     persist(DEFAULTS)
     void window.devterm.ssh.setReconnectPolicy?.(DEFAULTS.autoReconnect).catch(() => undefined)
@@ -445,6 +517,8 @@ function snapshot(s: SettingsState): AppSettings {
     agentKind: s.agentKind,
     transfersPanelOpen: s.transfersPanelOpen,
     defaultShell: s.defaultShell,
-    keybindings: s.keybindings
+    gitPanelOpen: s.gitPanelOpen,
+    keybindings: s.keybindings,
+    stt: s.stt
   }
 }

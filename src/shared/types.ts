@@ -385,6 +385,53 @@ export interface TransferProgress {
 }
 
 // ---------------------------------------------------------------------------
+// Speech-to-text dictation (renderer-only: Web Worker + Web Audio, no IPC)
+// ---------------------------------------------------------------------------
+
+/**
+ * Whisper model variant to download and run locally via Transformers.js.
+ * `tiny` < `base` < `small` in size/accuracy. `base` (~140MB) is the default —
+ * a good CPU/GPU tradeoff. Maps to the `Xenova/whisper-<id>` HF repo.
+ */
+export type STTModelId = 'tiny' | 'base' | 'small'
+
+/**
+ * ONNX Runtime backend chosen at worker boot. `wasm` runs everywhere (CPU);
+ * `webgpu` is preferred when available (much faster, especially for `small`).
+ */
+export type STTBackend = 'webgpu' | 'wasm'
+
+/** Language hint passed to Whisper. `auto` lets Whisper detect the language. */
+export type STTLanguage =
+  | 'auto'
+  | 'en'
+  | 'es'
+  | 'fr'
+  | 'de'
+  | 'it'
+  | 'pt'
+  | 'nl'
+  | 'ru'
+  | 'zh'
+  | 'ja'
+  | 'ko'
+  | 'ar'
+  | 'hi'
+
+export interface STTSettings {
+  /** Master switch. When off, the toolbar mic button is hidden and the hotkey is a no-op. */
+  enabled: boolean
+  /** Which Whisper variant to download and use. */
+  modelId: STTModelId
+  /** Language hint; passed to the pipeline's `language` option unless `auto`. */
+  language: STTLanguage
+  /** Append a single trailing space after the transcript so the next token isn't glued to it. */
+  appendSpace: boolean
+  /** Show the floating status pill (independent of the toolbar; visible in zen mode). */
+  showFloatingStatus: boolean
+}
+
+// ---------------------------------------------------------------------------
 // IPC channel names — single source of truth for both ends.
 // ---------------------------------------------------------------------------
 
@@ -524,6 +571,39 @@ export const IPC = {
   gitStatus: 'git:status',
   gitDiff: 'git:diff',
   gitOnChange: 'git:on-change', // suffixed :<path>
+
+  // git read-side: branches, remotes, log, stash, tags, contributors
+  gitBranches: 'git:branches',
+  gitRemotes: 'git:remotes',
+  gitLog: 'git:log',
+  gitStash: 'git:stash',
+  gitTags: 'git:tags',
+  gitFileAt: 'git:file-at',
+  gitBlame: 'git:blame',
+  gitShow: 'git:show',
+  gitFullDiff: 'git:full-diff',
+  gitContributors: 'git:contributors',
+
+  // git write-side: checkout / branch / fetch / pull / push / stash / commit / stage / tag
+  gitCheckout: 'git:checkout',
+  gitCreateBranch: 'git:create-branch',
+  gitDeleteBranch: 'git:delete-branch',
+  gitRenameBranch: 'git:rename-branch',
+  gitFetch: 'git:fetch',
+  gitPull: 'git:pull',
+  gitPush: 'git:push',
+  gitStashApply: 'git:stash-apply',
+  gitStashDrop: 'git:stash-drop',
+  gitStashPop: 'git:stash-pop',
+  gitCommit: 'git:commit',
+  gitStage: 'git:stage',
+  gitUnstage: 'git:unstage',
+  gitDiscard: 'git:discard',
+  gitTagCreate: 'git:tag-create',
+  gitTagDelete: 'git:tag-delete',
+  gitAddRemote: 'git:add-remote',
+  gitRemoveRemote: 'git:remove-remote',
+  gitMerge: 'git:merge',
 
   // Cluster D: persistent transfer queue
   transfersList: 'transfers:list',
@@ -778,6 +858,15 @@ export interface DevTermApi {
    * `diff` returns the textual diff for one file. `onChange` subscribes to live
    * updates — the main process polls the source every few seconds and pushes
    * the latest status to the matching renderer.
+   *
+   * Warp-style git panel additions: branches, remotes, log, stash, tags, file
+   * history, blame, full diff, contributors, and a write-side surface
+   * (checkout, commit, stage/unstage, fetch/pull/push, stash apply/drop/pop,
+   * branch create/delete/rename, tag create/delete, remote add/remove, merge).
+   * All write operations accept `sessionId?: string` so they apply to local or
+   * remote (over the session's existing exec channel — never a new SSH
+   * connection) and return a structured result so the UI can show the git
+   * command's exit code + stderr cleanly.
    */
   git: {
     /**
@@ -806,6 +895,209 @@ export interface DevTermApi {
      * returned by `onChange`. Best-effort: a missing main process is fine.
      */
     watch(target: { sessionId?: string; path: string }): void
+
+    // ---- read-side additions ------------------------------------------------
+
+    /** List local + remote branches with HEAD pointers. */
+    branches(target: { sessionId?: string; path: string }): Promise<GitBranches>
+    /** List git remotes with URLs. */
+    remotes(target: { sessionId?: string; path: string }): Promise<GitRemote[]>
+    /** Show the commit log (newest first) for the current HEAD. */
+    log(target: {
+      sessionId?: string
+      path: string
+      maxCount?: number
+      /** Optional ref to start from (default HEAD). */
+      ref?: string
+      /** Optional path filter (repo-relative). */
+      file?: string
+    }): Promise<GitLogEntry[]>
+    /** List stashes (most recent first). */
+    stash(target: { sessionId?: string; path: string }): Promise<GitStashEntry[]>
+    /** List tags (lightweight + annotated) with their target OIDs. */
+    tags(target: { sessionId?: string; path: string }): Promise<GitTag[]>
+    /** Show the contents of a file at a given ref (HEAD by default). */
+    fileAt(target: {
+      sessionId?: string
+      path: string
+      file: string
+      ref?: string
+    }): Promise<string>
+    /** Blame for a file: per-line author + sha + line text. */
+    blame(target: {
+      sessionId?: string
+      path: string
+      file: string
+    }): Promise<GitBlameLine[]>
+    /** Show one commit (message + stat). */
+    show(target: {
+      sessionId?: string
+      path: string
+      sha: string
+    }): Promise<GitShowResult | null | undefined>
+    /** Full working-tree diff (all tracked changes) as a single patch. */
+    fullDiff(target: {
+      sessionId?: string
+      path: string
+      /** Restrict to one file (repo-relative). */
+      file?: string
+      /** Restrict to staged changes (`git diff --cached`). */
+      staged?: boolean
+    }): Promise<string>
+    /** Aggregated contributors ranked by commit count. */
+    contributors(target: {
+      sessionId?: string
+      path: string
+      maxCount?: number
+    }): Promise<GitContributor[]>
+
+    // ---- write-side mutations ----------------------------------------------
+
+    /**
+     * Switch the working tree to `target` — a branch name, remote ref
+     * (`origin/main`), tag, or commit SHA. When `create` is true the branch is
+     * created first (analogous to `git checkout -b`). When `force` is true
+     * a dirty working tree is still swapped (analogous to `git checkout -f`).
+     */
+    checkout(target: {
+      sessionId?: string
+      path: string
+      target: string
+      create?: boolean
+      force?: boolean
+    }): Promise<GitCommandResult>
+    /** Create a new branch without switching (analogous to `git branch <name>`). */
+    createBranch(target: {
+      sessionId?: string
+      path: string
+      name: string
+      /** Branch off this ref instead of HEAD. */
+      from?: string
+      /** When true, the new branch is set to track `from` (e.g. a remote). */
+      track?: boolean
+      /** Overwrite an existing branch (only valid when `from` differs). */
+      force?: boolean
+    }): Promise<GitCommandResult>
+    /** Delete one or more branches (uses `git branch -d`; pass `force` for `-D`). */
+    deleteBranch(target: {
+      sessionId?: string
+      path: string
+      names: string[]
+      force?: boolean
+    }): Promise<GitCommandResult>
+    /** Rename the current branch (or `oldName` if provided). */
+    renameBranch(target: {
+      sessionId?: string
+      path: string
+      oldName?: string
+      newName: string
+      force?: boolean
+    }): Promise<GitCommandResult>
+    /** Fetch from a remote (default `origin`). Pass `prune: true` for `git fetch --prune`. */
+    fetch(target: {
+      sessionId?: string
+      path: string
+      remote?: string
+      prune?: boolean
+    }): Promise<GitCommandResult>
+    /** Pull from `remote`/`branch`. Pass `rebase: true` for `git pull --rebase`. */
+    pull(target: {
+      sessionId?: string
+      path: string
+      remote?: string
+      branch?: string
+      rebase?: boolean
+    }): Promise<GitCommandResult>
+    /** Push to `remote`/`branch`. `setUpstream` adds `-u`. `force` is `git push --force-with-lease`. */
+    push(target: {
+      sessionId?: string
+      path: string
+      remote?: string
+      branch?: string
+      setUpstream?: boolean
+      force?: boolean
+    }): Promise<GitCommandResult>
+    /** Apply a stash without dropping it (`git stash apply <ref>`). */
+    stashApply(target: {
+      sessionId?: string
+      path: string
+      ref?: string
+    }): Promise<GitCommandResult>
+    /** Drop a stash (`git stash drop <ref>`). */
+    stashDrop(target: {
+      sessionId?: string
+      path: string
+      ref?: string
+    }): Promise<GitCommandResult>
+    /** Pop the top of the stash (or `ref` if given). */
+    stashPop(target: {
+      sessionId?: string
+      path: string
+      ref?: string
+    }): Promise<GitCommandResult>
+    /** Create a commit. `files` stages the given paths before committing; omit to commit staged. */
+    commit(target: {
+      sessionId?: string
+      path: string
+      message: string
+      files?: string[]
+      amend?: boolean
+      signOff?: boolean
+    }): Promise<GitCommandResult>
+    /** Stage one or more paths (analogous to `git add <path>…`; paths are repo-relative). */
+    stage(target: {
+      sessionId?: string
+      path: string
+      files: string[]
+    }): Promise<GitCommandResult>
+    /** Unstage one or more paths (analogous to `git restore --staged <path>…`). */
+    unstage(target: {
+      sessionId?: string
+      path: string
+      files: string[]
+    }): Promise<GitCommandResult>
+    /** Discard working-tree changes to one or more paths (analogous to `git restore <path>…`). */
+    discard(target: {
+      sessionId?: string
+      path: string
+      files: string[]
+    }): Promise<GitCommandResult>
+    /** Create a tag at HEAD (or `ref` if provided). Annotated when `message` is set. */
+    tagCreate(target: {
+      sessionId?: string
+      path: string
+      name: string
+      ref?: string
+      message?: string
+      force?: boolean
+    }): Promise<GitCommandResult>
+    /** Delete one or more tags (local). */
+    tagDelete(target: {
+      sessionId?: string
+      path: string
+      names: string[]
+    }): Promise<GitCommandResult>
+    /** Add a remote (`git remote add`). */
+    addRemote(target: {
+      sessionId?: string
+      path: string
+      name: string
+      url: string
+    }): Promise<GitCommandResult>
+    /** Remove a remote (`git remote remove`). */
+    removeRemote(target: {
+      sessionId?: string
+      path: string
+      name: string
+    }): Promise<GitCommandResult>
+    /** Merge `target` into the current branch (`git merge --no-ff` optional). */
+    merge(target: {
+      sessionId?: string
+      path: string
+      target: string
+      noFastForward?: boolean
+      message?: string
+    }): Promise<GitCommandResult>
   }
 
   // -------------------------------------------------------------------------
@@ -1046,6 +1338,173 @@ export interface GitStatus {
   entries: Record<string, GitFileStatus>
   /** True when the file count was capped at the safety limit. */
   truncated?: boolean
+}
+
+// ---------------------------------------------------------------------------
+// Git read-side + write-side (Warp-style panel)
+// ---------------------------------------------------------------------------
+
+/** A single branch reference returned by `git.branches()`. */
+export interface GitBranch {
+  /** Short branch name, e.g. "main". */
+  name: string
+  /** Resolved commit SHA (HEAD of the branch). */
+  sha: string
+  /** True for the currently checked-out branch. */
+  current: boolean
+  /** Upstream tracking ref (e.g. "origin/main") or null when not set. */
+  upstream: string | null
+  /** True for remote-tracking refs (prefixed "origin/"). */
+  remote: boolean
+  /** Commits ahead of upstream; -1 when no upstream. */
+  ahead: number
+  /** Commits behind upstream; -1 when no upstream. */
+  behind: number
+}
+
+/** Result of `git.branches()`. */
+export interface GitBranches {
+  /** All branches, including remotes; `current` flag identifies HEAD. */
+  branches: GitBranch[]
+  /** Best-effort default branch (e.g. "origin/main" or "main"). */
+  defaultBranch: string | null
+}
+
+/** A single git remote (result of `git remotes -v`). */
+export interface GitRemote {
+  /** Remote name (e.g. "origin"). */
+  name: string
+  /** Fetch URL (may be empty for push-only remotes). */
+  fetchUrl: string
+  /** Push URL (often identical to fetch URL). */
+  pushUrl: string
+}
+
+/** A single commit in `git log` output. */
+export interface GitLogEntry {
+  /** Full commit SHA. */
+  sha: string
+  /** Short SHA (first 7 chars). */
+  shortSha: string
+  /** Commit subject (first line). */
+  subject: string
+  /** Full commit body (everything after the first blank line). */
+  body: string
+  /** Author name. */
+  authorName: string
+  /** Author email. */
+  authorEmail: string
+  /** Committer name (often same as author on local commits). */
+  committerName: string
+  /** Committer email. */
+  committerEmail: string
+  /** ISO 8601 author timestamp. */
+  authorDate: string
+  /** ISO 8601 committer timestamp. */
+  committerDate: string
+  /** First parent (preceding commit) or null for the root. */
+  parent: string | null
+  /** Total parents (≥2 for merge commits). */
+  parentCount: number
+  /** Refs (branches/tags) that point at this commit, e.g. ["origin/main", "HEAD"]. */
+  refs: string[]
+}
+
+/** A single stash entry (`git stash list`). */
+export interface GitStashEntry {
+  /** Full stash ref, e.g. "stash@{0}". */
+  ref: string
+  /** Stash message (e.g. "WIP on main: abcdef1 …"). */
+  message: string
+  /** SHA the stash was created from. */
+  sha: string
+  /** Branch the stash was created on, when known. */
+  branch: string | null
+  /** Unix-millis when the stash was created. */
+  date: number
+}
+
+/** A single tag. */
+export interface GitTag {
+  /** Tag name. */
+  name: string
+  /** SHA the tag points at. */
+  sha: string
+  /** Tag message (empty for lightweight tags). */
+  message: string
+  /** Tagger name (annotated only). */
+  taggerName: string
+  /** Tagger email (annotated only). */
+  taggerEmail: string
+  /** ISO 8601 tag date (annotated only). */
+  date: string
+  /** True for annotated tags. */
+  annotated: boolean
+}
+
+/** One line of `git blame` output. */
+export interface GitBlameLine {
+  /** 1-based line number. */
+  line: number
+  /** Commit SHA the line was last changed in. */
+  sha: string
+  /** Short SHA. */
+  shortSha: string
+  /** Author name. */
+  author: string
+  /** ISO 8601 author date. */
+  date: string
+  /** Line content (no trailing newline). */
+  text: string
+}
+
+/** Result of `git show <sha>`. */
+export interface GitShowResult {
+  sha: string
+  shortSha: string
+  subject: string
+  body: string
+  authorName: string
+  authorEmail: string
+  authorDate: string
+  /** Files changed with stats. */
+  files: Array<{
+    /** Repo-relative path. */
+    path: string
+    /** Status: "M" / "A" / "D" / "R" / "C". */
+    status: string
+    /** Additions in this file. */
+    additions: number
+    /** Deletions in this file. */
+    deletions: number
+  }>
+  /** The raw patch for this commit. */
+  patch: string
+}
+
+/** Aggregated author statistics (`git shortlog -sn`). */
+export interface GitContributor {
+  name: string
+  email: string
+  commits: number
+}
+
+/**
+ * Generic result envelope for write-side git operations. Most callers only
+ * care about `ok`; the others let the UI show git's own stderr so the user
+ * can debug failures (auth, conflicts, pre-commit hook rejects, etc.).
+ */
+export interface GitCommandResult {
+  /** True when `code === 0`. */
+  ok: boolean
+  /** Exit code (null on timeout). */
+  code: number | null
+  /** Captured stdout (often empty for mutation commands). */
+  stdout: string
+  /** Captured stderr (may include hints from git itself). */
+  stderr: string
+  /** True when the command exceeded its timeout. */
+  timedOut: boolean
 }
 
 // ---------------------------------------------------------------------------

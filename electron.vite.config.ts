@@ -32,6 +32,16 @@ export default defineConfig({
         '@shared': resolve(__dirname, 'src/shared')
       }
     },
+    // Transformers.js + onnxruntime-web ship their own WebGPU/WASM backend
+    // detection using dynamic import(). Prebundling with esbuild can mangle that
+    // and break backend selection, so exclude them and let Vite serve them as-is.
+    optimizeDeps: {
+      exclude: ['@huggingface/transformers', 'onnxruntime-web']
+    },
+    // The speech-to-text Web Worker is emitted as an ES module.
+    worker: {
+      format: 'es'
+    },
     build: {
       rollupOptions: {
         input: { index: resolve(__dirname, 'src/renderer/index.html') }

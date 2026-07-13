@@ -26,6 +26,15 @@ import {
   type ApprovalRule,
   type PortForward,
   type GitStatus,
+  type GitBranches,
+  type GitRemote,
+  type GitLogEntry,
+  type GitStashEntry,
+  type GitTag,
+  type GitBlameLine,
+  type GitShowResult,
+  type GitContributor,
+  type GitCommandResult,
   type TransferItemV2,
   type TransferEvent,
   type TransferListResult,
@@ -225,8 +234,12 @@ const api: DevTermApi = {
   },
 
   // -------------------------------------------------------------------------
-  // Git awareness (read-only): status snapshot, per-file diff, and live push
-  // notifications. Mutations (add/commit/push/checkout) are NOT exposed.
+  // Git awareness + Warp-style panel: read-side (status/diff/branches/
+  // remotes/log/stash/tags/blame/show/fullDiff/contributors/fileAt) and
+  // write-side (checkout, branch create/delete/rename, fetch/pull/push,
+  // stash apply/drop/pop, commit, stage/unstage/discard, tag create/delete,
+  // remote add/remove, merge). All ops are sessionId-aware so they work
+  // locally or on an existing SSH connection's exec channel.
   // -------------------------------------------------------------------------
   git: {
     status: (target: { sessionId?: string; path: string }): Promise<GitStatus> =>
@@ -242,17 +255,11 @@ const api: DevTermApi = {
       target: { sessionId?: string; path: string },
       cb: (status: GitStatus) => void
     ): (() => void) => {
-      // Channel key mirrors main's cacheKey(): scope by session so a local and a
-      // remote repo at the same path string don't cross-talk, and so the
-      // unsubscribe removes the exact entry `watch()` added (the old path-only
-      // key never matched remote watches, leaking a 5s SSH git poll per dir).
       const key = target.sessionId ? `r:${target.sessionId}:${target.path}` : `l:${target.path}`
       const channel = `${IPC.gitOnChange}:${key}`
       const off = subscribe<GitStatus>(channel, cb)
       return () => {
         off()
-        // Best-effort: tell main we no longer care. Failure (e.g. main quit)
-        // is fine — the next GC pass cleans the watch list.
         ipcRenderer.send(`${IPC.gitOnChange}:remove`, target)
       }
     },
@@ -262,7 +269,129 @@ const api: DevTermApi = {
      */
     watch: (target: { sessionId?: string; path: string }): void => {
       ipcRenderer.send(`${IPC.gitOnChange}:add`, target)
-    }
+    },
+
+    // Read-side additions
+    branches: (target: { sessionId?: string; path: string }): Promise<GitBranches> =>
+      ipcRenderer.invoke(IPC.gitBranches, target),
+    remotes: (target: { sessionId?: string; path: string }): Promise<GitRemote[]> =>
+      ipcRenderer.invoke(IPC.gitRemotes, target),
+    log: (
+      target: { sessionId?: string; path: string; maxCount?: number; ref?: string; file?: string }
+    ): Promise<GitLogEntry[]> => ipcRenderer.invoke(IPC.gitLog, target),
+    stash: (target: { sessionId?: string; path: string }): Promise<GitStashEntry[]> =>
+      ipcRenderer.invoke(IPC.gitStash, target),
+    tags: (target: { sessionId?: string; path: string }): Promise<GitTag[]> =>
+      ipcRenderer.invoke(IPC.gitTags, target),
+    fileAt: (
+      target: { sessionId?: string; path: string; file: string; ref?: string }
+    ): Promise<string> => ipcRenderer.invoke(IPC.gitFileAt, target),
+    blame: (
+      target: { sessionId?: string; path: string; file: string }
+    ): Promise<GitBlameLine[]> => ipcRenderer.invoke(IPC.gitBlame, target),
+    show: (
+      target: { sessionId?: string; path: string; sha: string }
+    ): Promise<GitShowResult | null | undefined> =>
+      ipcRenderer.invoke(IPC.gitShow, target),
+    fullDiff: (
+      target: { sessionId?: string; path: string; file?: string; staged?: boolean }
+    ): Promise<string> => ipcRenderer.invoke(IPC.gitFullDiff, target),
+    contributors: (
+      target: { sessionId?: string; path: string; maxCount?: number }
+    ): Promise<GitContributor[]> => ipcRenderer.invoke(IPC.gitContributors, target),
+
+    // Write-side mutations
+    checkout: (
+      target: { sessionId?: string; path: string; target: string; create?: boolean; force?: boolean }
+    ): Promise<GitCommandResult> => ipcRenderer.invoke(IPC.gitCheckout, target),
+    createBranch: (
+      target: {
+        sessionId?: string
+        path: string
+        name: string
+        from?: string
+        track?: boolean
+        force?: boolean
+      }
+    ): Promise<GitCommandResult> => ipcRenderer.invoke(IPC.gitCreateBranch, target),
+    deleteBranch: (
+      target: { sessionId?: string; path: string; names: string[]; force?: boolean }
+    ): Promise<GitCommandResult> => ipcRenderer.invoke(IPC.gitDeleteBranch, target),
+    renameBranch: (
+      target: { sessionId?: string; path: string; oldName?: string; newName: string; force?: boolean }
+    ): Promise<GitCommandResult> => ipcRenderer.invoke(IPC.gitRenameBranch, target),
+    fetch: (
+      target: { sessionId?: string; path: string; remote?: string; prune?: boolean }
+    ): Promise<GitCommandResult> => ipcRenderer.invoke(IPC.gitFetch, target),
+    pull: (
+      target: { sessionId?: string; path: string; remote?: string; branch?: string; rebase?: boolean }
+    ): Promise<GitCommandResult> => ipcRenderer.invoke(IPC.gitPull, target),
+    push: (
+      target: {
+        sessionId?: string
+        path: string
+        remote?: string
+        branch?: string
+        setUpstream?: boolean
+        force?: boolean
+      }
+    ): Promise<GitCommandResult> => ipcRenderer.invoke(IPC.gitPush, target),
+    stashApply: (
+      target: { sessionId?: string; path: string; ref?: string }
+    ): Promise<GitCommandResult> => ipcRenderer.invoke(IPC.gitStashApply, target),
+    stashDrop: (
+      target: { sessionId?: string; path: string; ref?: string }
+    ): Promise<GitCommandResult> => ipcRenderer.invoke(IPC.gitStashDrop, target),
+    stashPop: (
+      target: { sessionId?: string; path: string; ref?: string }
+    ): Promise<GitCommandResult> => ipcRenderer.invoke(IPC.gitStashPop, target),
+    commit: (
+      target: {
+        sessionId?: string
+        path: string
+        message: string
+        files?: string[]
+        amend?: boolean
+        signOff?: boolean
+      }
+    ): Promise<GitCommandResult> => ipcRenderer.invoke(IPC.gitCommit, target),
+    stage: (
+      target: { sessionId?: string; path: string; files: string[] }
+    ): Promise<GitCommandResult> => ipcRenderer.invoke(IPC.gitStage, target),
+    unstage: (
+      target: { sessionId?: string; path: string; files: string[] }
+    ): Promise<GitCommandResult> => ipcRenderer.invoke(IPC.gitUnstage, target),
+    discard: (
+      target: { sessionId?: string; path: string; files: string[] }
+    ): Promise<GitCommandResult> => ipcRenderer.invoke(IPC.gitDiscard, target),
+    tagCreate: (
+      target: {
+        sessionId?: string
+        path: string
+        name: string
+        ref?: string
+        message?: string
+        force?: boolean
+      }
+    ): Promise<GitCommandResult> => ipcRenderer.invoke(IPC.gitTagCreate, target),
+    tagDelete: (
+      target: { sessionId?: string; path: string; names: string[] }
+    ): Promise<GitCommandResult> => ipcRenderer.invoke(IPC.gitTagDelete, target),
+    addRemote: (
+      target: { sessionId?: string; path: string; name: string; url: string }
+    ): Promise<GitCommandResult> => ipcRenderer.invoke(IPC.gitAddRemote, target),
+    removeRemote: (
+      target: { sessionId?: string; path: string; name: string }
+    ): Promise<GitCommandResult> => ipcRenderer.invoke(IPC.gitRemoveRemote, target),
+    merge: (
+      target: {
+        sessionId?: string
+        path: string
+        target: string
+        noFastForward?: boolean
+        message?: string
+      }
+    ): Promise<GitCommandResult> => ipcRenderer.invoke(IPC.gitMerge, target)
   },
 
   // -------------------------------------------------------------------------

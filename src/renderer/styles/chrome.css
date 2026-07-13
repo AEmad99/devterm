@@ -784,6 +784,18 @@
   color: var(--fg);
   filter: none;
 }
+
+/* Voice dictation mic button states. */
+.titlebar button.mic-btn.recording {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+.titlebar button.mic-btn.busy {
+  color: var(--accent);
+}
+.titlebar button.mic-btn.error {
+  color: color-mix(in srgb, var(--accent) 40%, #e06c75);
+}
 .titlebar svg,
 .top-nav svg,
 .group-tab svg,
@@ -1100,4 +1112,59 @@ textarea:focus {
 .zen-exit:hover {
   opacity: 1;
   background: var(--panel-2);
+}
+
+/* ---- Voice dictation floating status pill ---------------------------------
+   Fixed to the bottom-right so it's visible even in zen mode. The wrapper
+   ignores pointer events so it never blocks the terminal; the pill itself is
+   interactive (it carries a Stop button while recording). --- */
+.dictation-status-wrap {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 60;
+  pointer-events: none;
+}
+.dictation-status {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
+  border: 1px solid var(--border);
+  color: var(--fg);
+  font-size: 12px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(8px);
+}
+.dictation-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex: 0 0 auto;
+}
+.dictation-status.status-error .dictation-dot {
+  background: color-mix(in srgb, var(--accent) 30%, #e06c75);
+}
+.dictation-status.status-error {
+  color: color-mix(in srgb, var(--fg) 70%, #e06c75);
+}
+.dictation-label {
+  white-space: nowrap;
+}
+.dictation-action {
+  margin-left: 4px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--fg);
+  font-size: 11px;
+  cursor: pointer;
+}
+.dictation-action:hover {
+  background: var(--hover);
 }

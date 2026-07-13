@@ -14,6 +14,7 @@ export default function TransfersPanel() {
   const setOpen = useSettings((s) => s.setTransfersPanelOpen)
   const items = useTransfers(selectVisible)
   const progress = useTransfers((s) => s.progress)
+  const setItems = useTransfers((s) => s.setItems)
 
   if (!open) return null
   return (
@@ -23,14 +24,32 @@ export default function TransfersPanel() {
         <span className="transfers-count">{items.length}</span>
         <span className="spacer" />
         <button
-          className="ghost small"
-          onClick={() => void window.devterm.transfers.clearFinished()}
+          className="transfers-action"
+          onClick={async () => {
+            // `clearFinished` returns the post-clear list from main; sync the
+            // renderer cache to it so errored/interrupted rows that survived
+            // the previous filter bug actually disappear.
+            const remaining = await window.devterm.transfers.clearFinished()
+            setItems(remaining)
+          }}
           disabled={items.every((it) => !it.done)}
         >
           Clear finished
         </button>
-        <button className="ghost small" onClick={() => setOpen(false)} title="Hide panel">
-          ✕
+        <button
+          className="transfers-close"
+          onClick={() => setOpen(false)}
+          aria-label="Hide panel"
+          title="Hide panel"
+        >
+          <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+            <path
+              d="M3.5 3.5l9 9M12.5 3.5l-9 9"
+              stroke="currentColor"
+              strokeWidth="1.6"
+              strokeLinecap="round"
+            />
+          </svg>
         </button>
       </div>
       {items.length === 0 ? (
@@ -103,11 +122,11 @@ function TransferRow({
       </div>
       <span className="transfers-status">{status === 'running' ? `${percent}%` : status}</span>
       {!item.done ? (
-        <button className="ghost small" onClick={onCancel}>
+        <button className="transfers-row-action" onClick={onCancel}>
           Cancel
         </button>
       ) : status === 'error' || status === 'canceled' || status === 'interrupted' ? (
-        <button className="ghost small" onClick={onRetry}>
+        <button className="transfers-row-action transfers-row-retry" onClick={onRetry}>
           Retry
         </button>
       ) : (

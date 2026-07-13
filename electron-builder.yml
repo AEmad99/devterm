@@ -11,6 +11,9 @@ files:
   - "!**/node_modules/node-pty/prebuilds/linux-*/**"
 asarUnpack:
   - "**/node_modules/node-pty/**"
+  # onnxruntime-web's wasm for local speech-to-text. Large WASM binaries can fail
+  # to instantiate from inside the asar archive over file://, so keep them on disk.
+  - "**/ort/*.wasm"
 win:
   icon: resources/icon.ico
   target:

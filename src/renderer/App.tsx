@@ -22,9 +22,12 @@ import { useSessions } from './store/sessions'
 import { useEditors } from './store/editors'
 import { useLayout, DEFAULT_GROUP, groupActiveSession, allLeaves } from './store/layout'
 import { useSettings } from './store/settings'
-import { matchHotkey, resolveHotkeys } from './lib/hotkeys'
+import { matchHotkey, resolveHotkeys, comboLabel, HOTKEYS } from './lib/hotkeys'
 import { focusTerminal, clearTerminal } from './lib/terms'
 import { capturableSessions, captureWorkspace } from './lib/workspace'
+import { dictation } from './lib/stt/dictation'
+import DictationStatus from './components/dictation/DictationStatus'
+import GitPanel from './components/git/GitPanel'
 import type { HostContext } from '@shared/types'
 import type { View, BottomPanelMode } from './components/chrome/types'
 
@@ -55,6 +58,8 @@ export default function App() {
   const agentActivityCollapsed = useSettings((s) => s.agentActivityCollapsed)
   const setAgentActivityCollapsed = useSettings((s) => s.setAgentActivityCollapsed)
   const zenMode = useSettings((s) => s.zenMode)
+  const gitPanelOpen = useSettings((s) => s.gitPanelOpen)
+  const setGitPanelOpen = useSettings((s) => s.setGitPanelOpen)
 
   const bottomPanelMode: BottomPanelMode = transfersPanelOpen
     ? 'transfers'
@@ -152,10 +157,21 @@ export default function App() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && useLayout.getState().focusedId) {
-        e.preventDefault()
-        useLayout.getState().setFocus(null)
-        return
+      if (e.key === 'Escape') {
+        if (useLayout.getState().focusedId) {
+          e.preventDefault()
+          useLayout.getState().setFocus(null)
+          return
+        }
+        // No terminal is focus-magnified, but the editor may have stolen the
+        // pane. Esc returns control to the terminals without forcing the user
+        // to hunt for a back button.
+        const ed = useEditors.getState()
+        if (ed.focused) {
+          e.preventDefault()
+          ed.blur()
+          return
+        }
       }
       const keybindings = useSettings.getState().keybindings
       const id = matchHotkey(e, resolveHotkeys(keybindings))
@@ -245,6 +261,9 @@ export default function App() {
         case 'globalSearch':
           setGlobalSearchOpen((v) => !v)
           break
+        case 'dictate':
+          if (useSettings.getState().stt.enabled) void dictation.toggle()
+          break
       }
     }
     window.addEventListener('keydown', onKey)
@@ -314,6 +333,12 @@ export default function App() {
     })
   }
 
+  const isMac = local?.os === 'mac'
+  const dictateHotkey =
+    resolveHotkeys(useSettings.getState().keybindings).find((h) => h.id === 'dictate') ??
+    HOTKEYS.find((h) => h.id === 'dictate')
+  const dictateHotkeyLabel = dictateHotkey ? comboLabel(dictateHotkey, !!isMac) : undefined
+
   return (
     <div className="app" data-zen={zenMode ? 'on' : undefined}>
       {!zenMode && (
@@ -324,8 +349,11 @@ export default function App() {
           bottomPanelMode={bottomPanelMode}
           setBottomPanelMode={setBottomPanelMode}
           local={local}
+          gitPanelOpen={gitPanelOpen}
+          setGitPanelOpen={(v) => setGitPanelOpen(typeof v === 'function' ? v(gitPanelOpen) : v)}
           onSettings={() => setShowSettings(true)}
           onShortcuts={() => setShowShortcuts(true)}
+          dictateHotkey={dictateHotkeyLabel}
         />
       )}
 
@@ -340,6 +368,12 @@ export default function App() {
               onDelta={(d) => setSidebarWidth((w) => clamp(w + d, 180, 600))}
             />
           </>
+        )}
+
+        {gitPanelOpen && !zenMode && (
+          <aside className="git-sidebar">
+            <GitPanel />
+          </aside>
         )}
 
         <div className="main">
@@ -469,6 +503,7 @@ export default function App() {
           Exit zen mode
         </button>
       )}
+      <DictationStatus />
     </div>
   )
 }

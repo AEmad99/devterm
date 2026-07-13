@@ -81,6 +81,14 @@ export const IconKeyboard = (p: IconProps) => (
   </Svg>
 )
 
+/** Microphone — voice dictation. */
+export const IconMic = (p: IconProps) => (
+  <Svg {...p}>
+    <rect x="9" y="2.5" width="6" height="11" rx="3" />
+    <path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21M8.5 21h7" />
+  </Svg>
+)
+
 /** Local shell — a monitor with a prompt chevron. */
 export const IconLocal = (p: IconProps) => (
   <Svg {...p}>

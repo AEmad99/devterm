@@ -101,12 +101,15 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
   const setActivityIndicators = useSettings((s) => s.setActivityIndicators)
   const zenMode = useSettings((s) => s.zenMode)
   const setZenMode = useSettings((s) => s.setZenMode)
+  const stt = useSettings((s) => s.stt)
+  const setStt = useSettings((s) => s.setStt)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [shellHint, setShellHint] = useState<string | null>(null)
   const [pwshBusy, setPwshBusy] = useState(false)
   const [ioHint, setIoHint] = useState<string | null>(null)
   const [capturing, setCapturing] = useState<HotkeyId | null>(null)
+  const [sttHint, setSttHint] = useState<string | null>(null)
   const hintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
@@ -513,6 +516,121 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
               />
             </span>
           </label>
+        </section>
+
+        <section className="settings-section">
+          <h3>Voice dictation</h3>
+          <div className="settings-sub-hint">
+            Speak into the active terminal. Audio is transcribed <strong>locally</strong> by a
+            Whisper speech model (WebGPU when available, otherwise CPU) — nothing is sent to the
+            cloud. The model downloads once on first use and is cached for offline use. Toggle with
+            the toolbar mic button or the dictation hotkey.
+          </div>
+
+          <label className="settings-row">
+            <span className="settings-label">Enable voice dictation</span>
+            <span className="settings-control">
+              <input
+                type="checkbox"
+                checked={stt.enabled}
+                onChange={(e) => setStt({ enabled: e.target.checked })}
+              />
+            </span>
+          </label>
+
+          <label className="settings-row">
+            <span className="settings-label">Model</span>
+            <span className="settings-control">
+              <select
+                className="settings-select"
+                value={stt.modelId}
+                disabled={!stt.enabled}
+                onChange={(e) => setStt({ modelId: e.target.value as typeof stt.modelId })}
+              >
+                <option value="tiny">Tiny — fastest, ~75 MB, lower accuracy</option>
+                <option value="base">Base — balanced, ~140 MB (recommended)</option>
+                <option value="small">Small — most accurate, ~470 MB, GPU preferred</option>
+              </select>
+            </span>
+          </label>
+
+          <label className="settings-row">
+            <span className="settings-label">Language</span>
+            <span className="settings-control">
+              <select
+                className="settings-select"
+                value={stt.language}
+                disabled={!stt.enabled}
+                onChange={(e) => setStt({ language: e.target.value as typeof stt.language })}
+              >
+                <option value="auto">Auto-detect</option>
+                <option value="en">English</option>
+                <option value="es">Spanish</option>
+                <option value="fr">French</option>
+                <option value="de">German</option>
+                <option value="it">Italian</option>
+                <option value="pt">Portuguese</option>
+                <option value="nl">Dutch</option>
+                <option value="ru">Russian</option>
+                <option value="zh">Chinese</option>
+                <option value="ja">Japanese</option>
+                <option value="ko">Korean</option>
+                <option value="ar">Arabic</option>
+                <option value="hi">Hindi</option>
+              </select>
+            </span>
+          </label>
+
+          <label className="settings-row">
+            <span className="settings-label">Append a trailing space after transcript</span>
+            <span className="settings-control">
+              <input
+                type="checkbox"
+                checked={stt.appendSpace}
+                disabled={!stt.enabled}
+                onChange={(e) => setStt({ appendSpace: e.target.checked })}
+              />
+            </span>
+          </label>
+
+          <label className="settings-row">
+            <span className="settings-label">Show floating status pill</span>
+            <span className="settings-control">
+              <input
+                type="checkbox"
+                checked={stt.showFloatingStatus}
+                disabled={!stt.enabled}
+                onChange={(e) => setStt({ showFloatingStatus: e.target.checked })}
+              />
+            </span>
+          </label>
+
+          <label className="settings-row">
+            <span className="settings-label">Cached model</span>
+            <span className="settings-control">
+              <button
+                className="ghost small"
+                onClick={async () => {
+                  try {
+                    const keys = await caches.keys()
+                    const targets = keys.filter((k) => /transformers|onnx|hf/i.test(k))
+                    await Promise.all(targets.map((k) => caches.delete(k)))
+                    setSttHint(
+                      targets.length
+                        ? `Cleared ${targets.length} cached model store(s).`
+                        : 'No cached model found.'
+                    )
+                  } catch (err) {
+                    setSttHint(err instanceof Error ? err.message : 'Could not clear the cache.')
+                  }
+                }}
+                title="Delete the downloaded speech model; it will re-download on next use"
+              >
+                Clear cached model
+              </button>
+            </span>
+          </label>
+          {sttHint && <div className="settings-sub-hint">{sttHint}</div>}
         </section>
 
         <section className="settings-section">

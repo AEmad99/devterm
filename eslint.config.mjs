@@ -5,8 +5,10 @@ import prettier from 'eslint-config-prettier'
 
 export default tseslint.config(
   {
-    // Build output, deps, and packaging artifacts are not linted.
-    ignores: ['out/**', 'dist/**', 'node_modules/**', 'resources/**'],
+    // Build output, deps, and packaging artifacts are not linted. The public/
+    // ort folder holds onnxruntime-web's prebuilt (minified) wasm loader glue,
+    // copied from node_modules by scripts/setup-native.mjs — never our source.
+    ignores: ['out/**', 'dist/**', 'node_modules/**', 'resources/**', 'src/renderer/public/**'],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,

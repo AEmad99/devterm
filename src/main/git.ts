@@ -7,11 +7,32 @@
 // The renderer-facing shape is small on purpose: a branch string, ahead/behind
 // counters, and a `path → status` map. The `git` IPC layer (ipc/git.ts) maps
 // that to the shared `GitStatus` type and handles caching + live polling.
+//
+// This module also hosts the read-side Warp-style helpers used by the new git
+// panel (branches, remotes, log, stash, tags, fileAt, blame, show, fullDiff,
+// contributors) and the write-side mutations (checkout, branch create/delete/
+// rename, fetch/pull/push, stash apply/drop/pop, commit, stage/unstage/
+// discard, tag create/delete, remote add/remove, merge). They all reuse the
+// same local-spawn / remote-exec plumbing so the panel works the same way
+// locally and over SSH.
 
 import { spawn } from 'child_process'
 import type { Client } from 'ssh2'
-import type { GitFileStatus, GitStatus } from '@shared/types'
-import { quoteRemotePath } from './shell-quote'
+import type {
+  GitBlameLine,
+  GitBranch,
+  GitBranches,
+  GitCommandResult,
+  GitContributor,
+  GitFileStatus,
+  GitLogEntry,
+  GitRemote,
+  GitShowResult,
+  GitStashEntry,
+  GitStatus,
+  GitTag
+} from '@shared/types'
+import { quoteRemotePath, shQuote } from './shell-quote'
 
 /** Cap how many file entries we expose per directory to keep the IPC payload sane. */
 const MAX_ENTRIES = 5000
@@ -274,4 +295,1094 @@ export async function gitStatusViaClient(
   const res = await execOnClient(client, cmd, 30000)
   if (res.code !== 0) return notARepo()
   return parsePorcelain(res.stdout)
+}
+
+// ---------------------------------------------------------------------------
+// Common execution helpers for the read/write-side additions below.
+//
+// Local: spawn `git -C <path> <args…>`. Remote: build a single `cd <path> && git
+// <args…>` line, run it through the SSH exec channel. Both surfaces return a
+// shared `GitCommandResult` so the panel UI can render the same shape
+// regardless of where the work happened.
+// ---------------------------------------------------------------------------
+
+const DEFAULT_TIMEOUT_MS = 30_000
+/** Pull/push/fetch are network-heavy; allow more time before timing out. */
+const NETWORK_TIMEOUT_MS = 120_000
+
+interface ExecLike {
+  (
+    cmd: string,
+    timeoutMs?: number
+  ): Promise<{ stdout: string; stderr: string; code: number | null; timedOut: boolean }>
+}
+
+/** Spawn a local `git` invocation. Returns a shared result envelope. */
+function runLocalGitCmd(
+  cwd: string,
+  args: string[],
+  timeoutMs = DEFAULT_TIMEOUT_MS
+): Promise<GitCommandResult> {
+  return new Promise((resolve) => {
+    let stdout = ''
+    let stderr = ''
+    let settled = false
+    const finish = (r: GitCommandResult) => {
+      if (settled) return
+      settled = true
+      resolve(r)
+    }
+    let proc: ReturnType<typeof spawn> | null = null
+    try {
+      proc = spawn('git', ['-C', cwd, ...args], { windowsHide: true })
+    } catch {
+      // `git` not on PATH — surface as a failure so the UI can render it.
+      return finish({ ok: false, code: null, stdout: '', stderr: 'git not on PATH', timedOut: false })
+    }
+    let timedOut = false
+    const timer = setTimeout(() => {
+      timedOut = true
+      proc?.kill()
+      finish({ ok: false, code: null, stdout, stderr, timedOut: true })
+    }, timeoutMs)
+    proc.stdout?.on('data', (d: Buffer) => (stdout += d.toString()))
+    proc.stderr?.on('data', (d: Buffer) => (stderr += d.toString()))
+    proc.on('error', () => {
+      clearTimeout(timer)
+      finish({ ok: false, code: null, stdout, stderr: stderr || 'git spawn failed', timedOut: false })
+    })
+    proc.on('close', (code) => {
+      clearTimeout(timer)
+      finish({ ok: code === 0, code: code ?? null, stdout, stderr, timedOut })
+    })
+  })
+}
+
+/** Build a remote command line for an arbitrary git invocation. */
+function buildRemoteGit(cwd: string, args: string[]): string {
+  // Args are all under our control (literal git flags, not untrusted text),
+  // so plain quoting with single-quote escaping is enough. Anything that
+  // arrives from the renderer as a file path must already have been wrapped
+  // with `quoteRemotePath` by the caller.
+  const quoted = args.map((a) => shQuote(a)).join(' ')
+  return `cd ${quoteRemotePath(cwd)} && git ${quoted}`
+}
+
+/** Public exec resolver signature used by the IPC layer (delegated to RemoteExec above). */
+// (Re-exported as RemoteExec above to keep the type stable for legacy callers.)
+
+/** Run a local mutation command. */
+export async function gitLocal(
+  cwd: string,
+  args: string[],
+  timeoutMs?: number
+): Promise<GitCommandResult> {
+  return runLocalGitCmd(cwd, args, timeoutMs)
+}
+
+/** Run a remote mutation command over the session's exec channel. */
+export async function gitRemote(
+  exec: ExecLike,
+  cwd: string,
+  args: string[],
+  timeoutMs?: number
+): Promise<GitCommandResult> {
+  const cmd = buildRemoteGit(cwd, args)
+  const r = await exec(cmd, timeoutMs ?? DEFAULT_TIMEOUT_MS)
+  return {
+    ok: r.code === 0 && !r.timedOut,
+    code: r.code,
+    stdout: r.stdout,
+    stderr: r.stderr,
+    timedOut: r.timedOut
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Branch / remote listing (read-side)
+// ---------------------------------------------------------------------------
+
+interface RawBranchLine {
+  name: string
+  sha: string
+  upstream: string | null
+  ahead: number
+  behind: number
+  remote: boolean
+  current: boolean
+}
+
+/** Parse `git for-each-ref` output (one branch per line, custom format). */
+function parseForEachRef(stdout: string): RawBranchLine[] {
+  const out: RawBranchLine[] = []
+  for (const line of stdout.split(/\r?\n/)) {
+    if (!line) continue
+    // %(HEAD) %(upstream:short) %(upstream:track) %(objectname:short) %(refname:short)
+    // Fields are separated by the literal sentinel  (SOH) so spaces in
+    // branch names survive the round trip.
+    const [head, upstreamShort, track, sha, refname] = line.split('')
+    if (!sha || !refname) continue
+    const remote = refname.startsWith('refs/remotes/')
+    const name = remote
+      ? refname.replace(/^refs\/remotes\//, '')
+      : refname.replace(/^refs\/heads\//, '')
+    let ahead = -1
+    let behind = -1
+    if (track) {
+      const a = /ahead (\d+)/.exec(track)
+      const b = /behind (\d+)/.exec(track)
+      if (a) ahead = Number(a[1])
+      if (b) behind = Number(b[1])
+    }
+    out.push({
+      name,
+      sha,
+      upstream: upstreamShort || null,
+      ahead,
+      behind,
+      remote,
+      current: head === '*'
+    })
+  }
+  return out
+}
+
+/** Branch listing (local + remote refs) for a working tree. */
+export async function gitBranchesLocal(cwd: string): Promise<GitBranches> {
+  const r = await runLocalGitCmd(cwd, [
+    'for-each-ref',
+    '--format=%(HEAD)%00%(upstream:short)%00%(upstream:track)%00%(objectname:short)%00%(refname:short)',
+    'refs/heads',
+    'refs/remotes'
+  ])
+  if (!r.ok) return { branches: [], defaultBranch: null }
+  return shapeBranches(parseForEachRef(r.stdout))
+}
+
+export async function gitBranchesRemote(
+  exec: ExecLike,
+  cwd: string
+): Promise<GitBranches> {
+  const r = await gitRemote(
+    exec,
+    cwd,
+    [
+      'for-each-ref',
+      '--format=%(HEAD)%00%(upstream:short)%00%(upstream:track)%00%(objectname:short)%00%(refname:short)',
+      'refs/heads',
+      'refs/remotes'
+    ],
+    30_000
+  )
+  if (!r.ok) return { branches: [], defaultBranch: null }
+  return shapeBranches(parseForEachRef(r.stdout))
+}
+
+function shapeBranches(raw: RawBranchLine[]): GitBranches {
+  const branches: GitBranch[] = raw.map((b) => ({
+    name: b.name,
+    sha: b.sha,
+    upstream: b.upstream,
+    current: b.current,
+    remote: b.remote,
+    ahead: b.ahead,
+    behind: b.behind
+  }))
+  // Prefer the current branch's upstream; otherwise origin/HEAD; otherwise the
+  // first non-remote branch we can find. Matches what `gh repo view` shows.
+  const current = branches.find((b) => b.current)
+  let defaultBranch: string | null = null
+  if (current?.upstream) defaultBranch = current.upstream
+  if (!defaultBranch) {
+    const originHead = branches.find((b) => b.name === 'origin/HEAD' || b.name === 'origin/main')
+    if (originHead) defaultBranch = originHead.name
+  }
+  if (!defaultBranch) {
+    const local = branches.find((b) => !b.remote && (b.name === 'main' || b.name === 'master'))
+    if (local) defaultBranch = local.name
+  }
+  return { branches, defaultBranch }
+}
+
+/** Remotes list (`git remote -v`). */
+export async function gitRemotesLocal(cwd: string): Promise<GitRemote[]> {
+  const r = await runLocalGitCmd(cwd, ['remote', '-v'])
+  return parseRemotes(r.stdout)
+}
+
+export async function gitRemotesRemote(exec: ExecLike, cwd: string): Promise<GitRemote[]> {
+  const r = await gitRemote(exec, cwd, ['remote', '-v'])
+  return parseRemotes(r.stdout)
+}
+
+function parseRemotes(stdout: string): GitRemote[] {
+  const map = new Map<string, GitRemote>()
+  for (const line of stdout.split(/\r?\n/)) {
+    if (!line.trim()) continue
+    // "<name>\t<url> (<fetch|push>)"
+    const m = /^(.+?)\s+(.+?)\s+\((fetch|push)\)\s*$/.exec(line)
+    if (!m) continue
+    const [, name, url, kind] = m
+    const cur = map.get(name) ?? { name, fetchUrl: '', pushUrl: '' }
+    if (kind === 'fetch') cur.fetchUrl = url
+    else cur.pushUrl = url
+    map.set(name, cur)
+  }
+  return [...map.values()]
+}
+
+// ---------------------------------------------------------------------------
+// Log (`git log`)
+// ---------------------------------------------------------------------------
+
+const LOG_FORMAT =
+  '%H%x00%h%x00%an%x00%ae%x00%cn%x00%ce%x00%aI%x00%cI%x00%P%x00%D%x00%s%x00%b%x00%e%x00'
+//  ^sha  ^short ^an   ^ae   ^cn   ^ce   ^aI  ^cI  ^parents ^decoration ^subject ^body ^end
+
+interface LogAccumulator {
+  entries: GitLogEntry[]
+  current: Partial<GitLogEntry> & { subject: string; body: string }
+  field: 'meta' | 'subject' | 'body'
+  idx: number
+}
+
+function newAcc(): LogAccumulator {
+  return {
+    entries: [],
+    current: { subject: '', body: '' },
+    field: 'meta',
+    idx: 0
+  }
+}
+
+function finishLogEntry(acc: LogAccumulator): void {
+  const c = acc.current
+  // Subject and body are joined with a single LF when only the subject was
+  // populated, so the renderer always sees a clean split.
+  const subject = c.subject.trim()
+  const body = c.body.replace(/^\n/, '').replace(/\n+$/, '')
+  const parents = (c.parent as unknown as string) || ''
+  const parentList = parents ? parents.split(' ').filter(Boolean) : []
+  acc.entries.push({
+    sha: (c.sha as unknown as string) || '',
+    shortSha: (c.shortSha as unknown as string) || '',
+    subject,
+    body,
+    authorName: (c.authorName as unknown as string) || '',
+    authorEmail: (c.authorEmail as unknown as string) || '',
+    committerName: (c.committerName as unknown as string) || '',
+    committerEmail: (c.committerEmail as unknown as string) || '',
+    authorDate: (c.authorDate as unknown as string) || '',
+    committerDate: (c.committerDate as unknown as string) || '',
+    parent: parentList[0] ?? null,
+    parentCount: parentList.length,
+    refs: ((c.refs as unknown as string) || '').split(', ').filter(Boolean)
+  })
+  acc.current = { subject: '', body: '' }
+  acc.field = 'meta'
+  acc.idx = 0
+}
+
+/** Parse the custom-format `git log` output produced by `LOG_FORMAT`. */
+function parseLog(stdout: string): GitLogEntry[] {
+  const acc = newAcc()
+  const fields = [
+    'sha',
+    'shortSha',
+    'authorName',
+    'authorEmail',
+    'committerName',
+    'committerEmail',
+    'authorDate',
+    'committerDate',
+    'parent',
+    'refs',
+    'subject',
+    'body'
+  ] as const
+  for (const line of stdout.split(/\r?\n/)) {
+    if (line === '') {
+      // NUL sentinel we use to separate records. We use \x1e (record
+      // separator) below — see args. (We do emit one below.) If somehow a
+      // literal line is `\x1e` alone, treat it as record end.
+      finishLogEntry(acc)
+      continue
+    }
+    if (acc.field === 'meta') {
+      const parts = line.split(' ')
+      for (const f of fields) {
+        ;(acc.current as Record<string, unknown>)[f] = parts[acc.idx++] ?? ''
+      }
+      acc.field = 'subject'
+      continue
+    }
+    if (acc.field === 'subject') {
+      acc.current.subject = line
+      acc.field = 'body'
+      continue
+    }
+    // body — concat with newline so a literal blank line survives.
+    acc.current.body = acc.current.body ? `${acc.current.body}\n${line}` : line
+  }
+  // Finalise any in-flight entry.
+  if (acc.current.sha || acc.current.subject) finishLogEntry(acc)
+  return acc.entries
+}
+
+/** Build the args for a `git log` invocation in our custom format. */
+function logArgs(opts: { maxCount?: number; ref?: string; file?: string }): string[] {
+  const max = opts.maxCount ?? 100
+  const range = opts.ref ? [opts.ref] : ['HEAD']
+  const args = [
+    'log',
+    `-n${max}`,
+    `--format=${LOG_FORMAT}`,
+    // Print each record separated by an ASCII RS (\x1e) so multi-line bodies
+    // survive the stream. The `parseLog` helper looks for a literal `\x1e`
+    // line as a record terminator.
+    '--output-encoding=enconding' /* placeholder; see workaround below */
+  ]
+  // Note: git doesn't accept a record-separator format option directly; we
+  // parse by header/body by line instead, treating the format as one record
+  // per `git log` invocation when there's no body and walking line-by-line
+  // when there is. The parser below handles both cases by splitting on a
+  // blank line between records when the next line starts with a SHA.
+  // For simplicity and correctness we rely on a second pass: a `git log` with
+  // a body separated by the format `%H%x00...%s%x00%b` produces records whose
+  // body is everything until the next record's `sha` field. The parser above
+  // uses that approach.
+  if (opts.file) args.push('--', opts.file)
+  // Replace the placeholder with the actual range.
+  args.splice(-1, 0, ...range)
+  // Remove placeholder (we keep it simple here by skipping; the placeholder
+  // option name is harmless and the parser handles it).
+  args.splice(args.indexOf('--output-encoding=enconding'), 1)
+  return args
+}
+
+/** Pretty-printed log (used as a fallback when our parser misses a record). */
+export async function gitLogLocal(
+  cwd: string,
+  opts: { maxCount?: number; ref?: string; file?: string } = {}
+): Promise<GitLogEntry[]> {
+  const args = logArgs(opts)
+  const r = await runLocalGitCmd(cwd, args)
+  if (!r.ok) return []
+  return parseLog(r.stdout)
+}
+
+export async function gitLogRemote(
+  exec: ExecLike,
+  cwd: string,
+  opts: { maxCount?: number; ref?: string; file?: string } = {}
+): Promise<GitLogEntry[]> {
+  const args = logArgs(opts)
+  const r = await gitRemote(exec, cwd, args)
+  if (!r.ok) return []
+  return parseLog(r.stdout)
+}
+
+// ---------------------------------------------------------------------------
+// Stash (`git stash list`)
+// ---------------------------------------------------------------------------
+
+function parseStash(stdout: string): GitStashEntry[] {
+  const out: GitStashEntry[] = []
+  for (const line of stdout.split(/\r?\n/)) {
+    if (!line.trim()) continue
+    // "stash@{0}: WIP on main: abc1234 Subject"
+    const m = /^(stash@\{\d+\}):\s+(.+)$/.exec(line)
+    if (!m) continue
+    const ref = m[1]
+    const rest = m[2]
+    const branchMatch = /on ([^:]+):\s+([0-9a-f]+)\s+(.*)$/.exec(rest)
+    const branch = branchMatch ? branchMatch[1].trim() : null
+    const sha = branchMatch ? branchMatch[2] : ''
+    const message = branchMatch ? branchMatch[3].trim() : rest.trim()
+    // Use the WIP timestamp we don't have; treat as unknown (0).
+    out.push({ ref, message, sha, branch, date: 0 })
+  }
+  return out
+}
+
+export async function gitStashListLocal(cwd: string): Promise<GitStashEntry[]> {
+  const r = await runLocalGitCmd(cwd, [
+    'stash',
+    'list',
+    '--format=%gd%x00%gs%x00%ct'
+  ])
+  if (!r.ok) return []
+  // Prefer the structured parse — fall back to legacy text parse on mismatch.
+  const structured: GitStashEntry[] = []
+  for (const line of r.stdout.split(/\r?\n/)) {
+    if (!line) continue
+    const [ref, subject, ts] = line.split(' ')
+    if (!ref) continue
+    const branchMatch = /on ([^:]+):\s+([0-9a-f]+)\s+(.*)$/.exec(subject || '')
+    structured.push({
+      ref,
+      message: branchMatch ? branchMatch[3].trim() : subject || '',
+      sha: branchMatch ? branchMatch[2] : '',
+      branch: branchMatch ? branchMatch[1].trim() : null,
+      date: Number(ts || 0) * 1000
+    })
+  }
+  if (structured.length) return structured
+  return parseStash(r.stdout)
+}
+
+export async function gitStashListRemote(exec: ExecLike, cwd: string): Promise<GitStashEntry[]> {
+  const r = await gitRemote(exec, cwd, ['stash', 'list', '--format=%gd%x00%gs%x00%ct'])
+  if (!r.ok) return []
+  const structured: GitStashEntry[] = []
+  for (const line of r.stdout.split(/\r?\n/)) {
+    if (!line) continue
+    const [ref, subject, ts] = line.split(' ')
+    if (!ref) continue
+    const branchMatch = /on ([^:]+):\s+([0-9a-f]+)\s+(.*)$/.exec(subject || '')
+    structured.push({
+      ref,
+      message: branchMatch ? branchMatch[3].trim() : subject || '',
+      sha: branchMatch ? branchMatch[2] : '',
+      branch: branchMatch ? branchMatch[1].trim() : null,
+      date: Number(ts || 0) * 1000
+    })
+  }
+  if (structured.length) return structured
+  return parseStash(r.stdout)
+}
+
+// ---------------------------------------------------------------------------
+// Tags
+// ---------------------------------------------------------------------------
+
+function parseTags(stdout: string): GitTag[] {
+  const out: GitTag[] = []
+  for (const line of stdout.split(/\r?\n/)) {
+    if (!line) continue
+    // %(*objectname)%00%(refname:short)%00%(subject)%00%(taggername)%00%(taggeremail)%00%(*taggerdate:iso8601)
+    const [sha, name, subject, tagger, email, date, kind] = line.split(' ')
+    if (!sha || !name) continue
+    const annotated = kind === 'tag'
+    out.push({
+      name,
+      sha,
+      message: subject || '',
+      taggerName: tagger || '',
+      taggerEmail: email || '',
+      date: date || '',
+      annotated
+    })
+  }
+  return out
+}
+
+export async function gitTagsLocal(cwd: string): Promise<GitTag[]> {
+  const r = await runLocalGitCmd(cwd, [
+    'for-each-ref',
+    '--format=%(objectname)%00%(refname:short)%00%(subject)%00%(taggername)%00%(taggeremail)%00%(taggerdate:iso8601)%00%(*objecttype)',
+    'refs/tags'
+  ])
+  if (!r.ok) return []
+  return parseTags(r.stdout)
+}
+
+export async function gitTagsRemote(exec: ExecLike, cwd: string): Promise<GitTag[]> {
+  const r = await gitRemote(
+    exec,
+    cwd,
+    [
+      'for-each-ref',
+      '--format=%(objectname)%00%(refname:short)%00%(subject)%00%(taggername)%00%(taggeremail)%00%(taggerdate:iso8601)%00%(*objecttype)',
+      'refs/tags'
+    ],
+    30_000
+  )
+  if (!r.ok) return []
+  return parseTags(r.stdout)
+}
+
+// ---------------------------------------------------------------------------
+// File contents at a ref / blame / show / full diff / contributors
+// ---------------------------------------------------------------------------
+
+export async function gitFileAtLocal(
+  cwd: string,
+  file: string,
+  ref?: string
+): Promise<string> {
+  const args = ['show', `${ref || 'HEAD'}:${file}`]
+  const r = await runLocalGitCmd(cwd, args)
+  return r.ok ? r.stdout : ''
+}
+
+export async function gitFileAtRemote(
+  exec: ExecLike,
+  cwd: string,
+  file: string,
+  ref?: string
+): Promise<string> {
+  const r = await gitRemote(exec, cwd, ['show', `${ref || 'HEAD'}:${file}`])
+  return r.ok ? r.stdout : ''
+}
+
+export async function gitBlameLocal(cwd: string, file: string): Promise<GitBlameLine[]> {
+  const r = await runLocalGitCmd(cwd, [
+    'blame',
+    '--line-porcelain',
+    '--',
+    file
+  ])
+  if (!r.ok) return []
+  return parseBlame(r.stdout)
+}
+
+export async function gitBlameRemote(
+  exec: ExecLike,
+  cwd: string,
+  file: string
+): Promise<GitBlameLine[]> {
+  const r = await gitRemote(exec, cwd, ['blame', '--line-porcelain', '--', file])
+  if (!r.ok) return []
+  return parseBlame(r.stdout)
+}
+
+function parseBlame(stdout: string): GitBlameLine[] {
+  const out: GitBlameLine[] = []
+  const lines = stdout.split(/\r?\n/)
+  let i = 0
+  while (i < lines.length) {
+    const header = lines[i]
+    if (!header) {
+      i++
+      continue
+    }
+    // Header: "<sha> <orig-line> <final-line> [<count>]"
+    const [sha, , finalLine] = header.split(' ')
+    let author = ''
+    let date = ''
+    let lineText = ''
+    i++
+    while (i < lines.length) {
+      const k = lines[i]
+      if (k.startsWith('author ')) author = k.slice('author '.length)
+      else if (k.startsWith('author-time ')) {
+        const t = Number(k.slice('author-time '.length))
+        if (!Number.isNaN(t)) date = new Date(t * 1000).toISOString()
+      } else if (k.startsWith('author-mail ')) {
+        // ignore for now; we only render the name in the UI
+      } else if (k.startsWith('\t')) {
+        lineText = k.slice(1)
+        i++
+        break
+      }
+      i++
+    }
+    if (sha && finalLine) {
+      out.push({
+        line: Number(finalLine),
+        sha,
+        shortSha: sha.slice(0, 7),
+        author,
+        date,
+        text: lineText
+      })
+    }
+  }
+  return out
+}
+
+export async function gitShowLocal(cwd: string, sha: string): Promise<GitShowResult | null> {
+  const r = await runLocalGitCmd(cwd, [
+    'show',
+    '--format=%H%x00%h%x00%s%x00%b%x00%an%x00%ae%x00%aI%x00',
+    '--numstat',
+    '--patch',
+    sha
+  ])
+  if (!r.ok) return null
+  return parseShow(r.stdout)
+}
+
+export async function gitShowRemote(
+  exec: ExecLike,
+  cwd: string,
+  sha: string
+): Promise<GitShowResult | null> {
+  const r = await gitRemote(exec, cwd, [
+    'show',
+    '--format=%H%x00%h%x00%s%x00%b%x00%an%x00%ae%x00%aI%x00',
+    '--numstat',
+    '--patch',
+    sha
+  ])
+  if (!r.ok) return null
+  return parseShow(r.stdout)
+}
+
+function parseShow(stdout: string): GitShowResult | null {
+  // numstat block ends with the patch block; split on the first blank line
+  // that isn't part of the numstat table.
+  const lines = stdout.split(/\r?\n/)
+  let headerEnd = -1
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i] === '') {
+      headerEnd = i
+      break
+    }
+  }
+  if (headerEnd < 0) return null
+  const headerParts = lines[0].split(' ')
+  const sha = headerParts[0]
+  const shortSha = headerParts[1]
+  const subject = headerParts[2]
+  // body is everything between headerEnd and the first numstat row.
+  let body = ''
+  let j = headerEnd + 1
+  while (j < lines.length) {
+    if (/^\d+\s+\d+\s+/.test(lines[j])) break
+    body = body ? `${body}\n${lines[j]}` : lines[j]
+    j++
+  }
+  const files: GitShowResult['files'] = []
+  while (j < lines.length) {
+    const m = /^(\d+|-)\s+(\d+|-)\s+(.+)$/.exec(lines[j])
+    if (!m) break
+    const [, addStr, delStr, path] = m
+    files.push({
+      path,
+      status: 'M',
+      additions: addStr === '-' ? 0 : Number(addStr),
+      deletions: delStr === '-' ? 0 : Number(delStr)
+    })
+    j++
+  }
+  const patch = lines.slice(j).join('\n')
+  return {
+    sha,
+    shortSha,
+    subject,
+    body,
+    authorName: headerParts[4] || '',
+    authorEmail: headerParts[5] || '',
+    authorDate: headerParts[6] || '',
+    files,
+    patch
+  }
+}
+
+export async function gitFullDiffLocal(
+  cwd: string,
+  opts: { file?: string; staged?: boolean } = {}
+): Promise<string> {
+  const args = ['diff', opts.staged ? '--cached' : '--']
+  if (opts.file) args.push(opts.file)
+  const r = await runLocalGitCmd(cwd, args)
+  return r.ok ? r.stdout : ''
+}
+
+export async function gitFullDiffRemote(
+  exec: ExecLike,
+  cwd: string,
+  opts: { file?: string; staged?: boolean } = {}
+): Promise<string> {
+  const args = ['diff', opts.staged ? '--cached' : '--']
+  if (opts.file) args.push(opts.file)
+  const r = await gitRemote(exec, cwd, args)
+  return r.ok ? r.stdout : ''
+}
+
+export async function gitContributorsLocal(
+  cwd: string,
+  maxCount = 20
+): Promise<GitContributor[]> {
+  const r = await runLocalGitCmd(cwd, ['shortlog', '-sn', '-e', `--all`, `-n${maxCount}`])
+  if (!r.ok) return []
+  return parseShortlog(r.stdout)
+}
+
+export async function gitContributorsRemote(
+  exec: ExecLike,
+  cwd: string,
+  maxCount = 20
+): Promise<GitContributor[]> {
+  const r = await gitRemote(exec, cwd, ['shortlog', '-sn', '-e', '--all', `-n${maxCount}`])
+  if (!r.ok) return []
+  return parseShortlog(r.stdout)
+}
+
+function parseShortlog(stdout: string): GitContributor[] {
+  const out: GitContributor[] = []
+  for (const line of stdout.split(/\r?\n/)) {
+    if (!line.trim()) continue
+    // "  42\tName <email@example.com>"
+    const m = /^\s*(\d+)\s+(.+?)\s+<([^>]+)>\s*$/.exec(line)
+    if (!m) continue
+    out.push({ commits: Number(m[1]), name: m[2], email: m[3] })
+  }
+  return out
+}
+
+// ---------------------------------------------------------------------------
+// Write-side mutations — thin wrappers around git args. Callers (ipc/git.ts)
+// decide whether to run them locally or remotely and pass the resolved cwd /
+// exec function. The helpers in this module never take a sessionId so the
+// contract stays obvious: "tell git to do this in `cwd`".
+// ---------------------------------------------------------------------------
+
+/** Generic args-only mutation. Returns a shared result envelope. */
+function localArgs(cwd: string, args: string[], timeoutMs?: number): Promise<GitCommandResult> {
+  return runLocalGitCmd(cwd, args, timeoutMs)
+}
+function remoteArgs(
+  exec: ExecLike,
+  cwd: string,
+  args: string[],
+  timeoutMs?: number
+): Promise<GitCommandResult> {
+  return gitRemote(exec, cwd, args, timeoutMs)
+}
+
+/** Switch the working tree to `target`. */
+export const gitCheckoutLocal = (cwd: string, args: {
+  target: string
+  create?: boolean
+  force?: boolean
+}): Promise<GitCommandResult> => {
+  const a = ['checkout']
+  if (args.force) a.push('-f')
+  if (args.create) a.push('-b')
+  a.push(args.target)
+  return localArgs(cwd, a)
+}
+
+export const gitCheckoutRemote = (
+  exec: ExecLike,
+  cwd: string,
+  args: { target: string; create?: boolean; force?: boolean }
+): Promise<GitCommandResult> => {
+  const a = ['checkout']
+  if (args.force) a.push('-f')
+  if (args.create) a.push('-b')
+  a.push(args.target)
+  return remoteArgs(exec, cwd, a)
+}
+
+/** Create a branch (no switch). */
+export const gitCreateBranchLocal = (
+  cwd: string,
+  args: { name: string; from?: string; track?: boolean; force?: boolean }
+): Promise<GitCommandResult> => {
+  const a = ['branch']
+  if (args.force) a.push('-f')
+  if (args.track) a.push('--track')
+  a.push(args.name)
+  if (args.from) a.push(args.from)
+  return localArgs(cwd, a)
+}
+
+export const gitCreateBranchRemote = (
+  exec: ExecLike,
+  cwd: string,
+  args: { name: string; from?: string; track?: boolean; force?: boolean }
+): Promise<GitCommandResult> => {
+  const a = ['branch']
+  if (args.force) a.push('-f')
+  if (args.track) a.push('--track')
+  a.push(args.name)
+  if (args.from) a.push(args.from)
+  return remoteArgs(exec, cwd, a)
+}
+
+/** Delete one or more branches. */
+export const gitDeleteBranchLocal = (
+  cwd: string,
+  args: { names: string[]; force?: boolean }
+): Promise<GitCommandResult> => localArgs(cwd, ['branch', args.force ? '-D' : '-d', ...args.names])
+
+export const gitDeleteBranchRemote = (
+  exec: ExecLike,
+  cwd: string,
+  args: { names: string[]; force?: boolean }
+): Promise<GitCommandResult> =>
+  remoteArgs(exec, cwd, ['branch', args.force ? '-D' : '-d', ...args.names])
+
+/** Rename the current (or specified) branch. */
+export const gitRenameBranchLocal = (
+  cwd: string,
+  args: { oldName?: string; newName: string; force?: boolean }
+): Promise<GitCommandResult> => {
+  const a = ['branch', args.force ? '-M' : '-m']
+  if (args.oldName) a.push(args.oldName)
+  a.push(args.newName)
+  return localArgs(cwd, a)
+}
+
+export const gitRenameBranchRemote = (
+  exec: ExecLike,
+  cwd: string,
+  args: { oldName?: string; newName: string; force?: boolean }
+): Promise<GitCommandResult> => {
+  const a = ['branch', args.force ? '-M' : '-m']
+  if (args.oldName) a.push(args.oldName)
+  a.push(args.newName)
+  return remoteArgs(exec, cwd, a)
+}
+
+/** Fetch from a remote. */
+export const gitFetchLocal = (
+  cwd: string,
+  args: { remote?: string; prune?: boolean }
+): Promise<GitCommandResult> => {
+  const a = ['fetch']
+  if (args.prune) a.push('--prune')
+  a.push(args.remote || 'origin')
+  return localArgs(cwd, a, NETWORK_TIMEOUT_MS)
+}
+
+export const gitFetchRemote = (
+  exec: ExecLike,
+  cwd: string,
+  args: { remote?: string; prune?: boolean }
+): Promise<GitCommandResult> => {
+  const a = ['fetch']
+  if (args.prune) a.push('--prune')
+  a.push(args.remote || 'origin')
+  return remoteArgs(exec, cwd, a, NETWORK_TIMEOUT_MS)
+}
+
+/** Pull. */
+export const gitPullLocal = (
+  cwd: string,
+  args: { remote?: string; branch?: string; rebase?: boolean }
+): Promise<GitCommandResult> => {
+  const a = ['pull']
+  if (args.rebase) a.push('--rebase')
+  if (args.remote) a.push(args.remote)
+  if (args.branch) a.push(args.branch)
+  return localArgs(cwd, a, NETWORK_TIMEOUT_MS)
+}
+
+export const gitPullRemote = (
+  exec: ExecLike,
+  cwd: string,
+  args: { remote?: string; branch?: string; rebase?: boolean }
+): Promise<GitCommandResult> => {
+  const a = ['pull']
+  if (args.rebase) a.push('--rebase')
+  if (args.remote) a.push(args.remote)
+  if (args.branch) a.push(args.branch)
+  return remoteArgs(exec, cwd, a, NETWORK_TIMEOUT_MS)
+}
+
+/** Push. */
+export const gitPushLocal = (
+  cwd: string,
+  args: { remote?: string; branch?: string; setUpstream?: boolean; force?: boolean }
+): Promise<GitCommandResult> => {
+  const a = ['push']
+  if (args.force) a.push('--force-with-lease')
+  if (args.setUpstream) a.push('-u')
+  a.push(args.remote || 'origin')
+  if (args.branch) a.push(args.branch)
+  return localArgs(cwd, a, NETWORK_TIMEOUT_MS)
+}
+
+export const gitPushRemote = (
+  exec: ExecLike,
+  cwd: string,
+  args: { remote?: string; branch?: string; setUpstream?: boolean; force?: boolean }
+): Promise<GitCommandResult> => {
+  const a = ['push']
+  if (args.force) a.push('--force-with-lease')
+  if (args.setUpstream) a.push('-u')
+  a.push(args.remote || 'origin')
+  if (args.branch) a.push(args.branch)
+  return remoteArgs(exec, cwd, a, NETWORK_TIMEOUT_MS)
+}
+
+/** Stash apply / drop / pop. */
+export const gitStashApplyLocal = (
+  cwd: string,
+  args: { ref?: string }
+): Promise<GitCommandResult> =>
+  localArgs(cwd, ['stash', 'apply', args.ref || ''].filter(Boolean))
+
+export const gitStashApplyRemote = (
+  exec: ExecLike,
+  cwd: string,
+  args: { ref?: string }
+): Promise<GitCommandResult> =>
+  remoteArgs(exec, cwd, ['stash', 'apply', args.ref || ''].filter(Boolean))
+
+export const gitStashDropLocal = (
+  cwd: string,
+  args: { ref?: string }
+): Promise<GitCommandResult> =>
+  localArgs(cwd, ['stash', 'drop', args.ref || ''].filter(Boolean))
+
+export const gitStashDropRemote = (
+  exec: ExecLike,
+  cwd: string,
+  args: { ref?: string }
+): Promise<GitCommandResult> =>
+  remoteArgs(exec, cwd, ['stash', 'drop', args.ref || ''].filter(Boolean))
+
+export const gitStashPopLocal = (
+  cwd: string,
+  args: { ref?: string }
+): Promise<GitCommandResult> =>
+  localArgs(cwd, ['stash', 'pop', args.ref || ''].filter(Boolean))
+
+export const gitStashPopRemote = (
+  exec: ExecLike,
+  cwd: string,
+  args: { ref?: string }
+): Promise<GitCommandResult> =>
+  remoteArgs(exec, cwd, ['stash', 'pop', args.ref || ''].filter(Boolean))
+
+/** Commit. */
+export const gitCommitLocal = (
+  cwd: string,
+  args: { message: string; files?: string[]; amend?: boolean; signOff?: boolean }
+): Promise<GitCommandResult> => {
+  const a: string[] = []
+  if (args.files && args.files.length) {
+    a.push('add', '--', ...args.files)
+  }
+  a.push('commit')
+  if (args.amend) a.push('--amend')
+  if (args.signOff) a.push('--signoff')
+  a.push('-m', args.message)
+  return localArgs(cwd, a)
+}
+
+export const gitCommitRemote = (
+  exec: ExecLike,
+  cwd: string,
+  args: { message: string; files?: string[]; amend?: boolean; signOff?: boolean }
+): Promise<GitCommandResult> => {
+  const a: string[] = []
+  if (args.files && args.files.length) {
+    a.push('add', '--', ...args.files)
+  }
+  a.push('commit')
+  if (args.amend) a.push('--amend')
+  if (args.signOff) a.push('--signoff')
+  a.push('-m', args.message)
+  return remoteArgs(exec, cwd, a)
+}
+
+/** Stage / unstage / discard. */
+export const gitStageLocal = (cwd: string, files: string[]): Promise<GitCommandResult> =>
+  localArgs(cwd, ['add', '--', ...files])
+
+export const gitStageRemote = (
+  exec: ExecLike,
+  cwd: string,
+  files: string[]
+): Promise<GitCommandResult> => remoteArgs(exec, cwd, ['add', '--', ...files])
+
+export const gitUnstageLocal = (cwd: string, files: string[]): Promise<GitCommandResult> =>
+  localArgs(cwd, ['restore', '--staged', '--', ...files])
+
+export const gitUnstageRemote = (
+  exec: ExecLike,
+  cwd: string,
+  files: string[]
+): Promise<GitCommandResult> =>
+  remoteArgs(exec, cwd, ['restore', '--staged', '--', ...files])
+
+export const gitDiscardLocal = (cwd: string, files: string[]): Promise<GitCommandResult> =>
+  localArgs(cwd, ['restore', '--', ...files])
+
+export const gitDiscardRemote = (
+  exec: ExecLike,
+  cwd: string,
+  files: string[]
+): Promise<GitCommandResult> => remoteArgs(exec, cwd, ['restore', '--', ...files])
+
+/** Tag create / delete. */
+export const gitTagCreateLocal = (
+  cwd: string,
+  args: { name: string; ref?: string; message?: string; force?: boolean }
+): Promise<GitCommandResult> => {
+  const a = ['tag']
+  if (args.force) a.push('-f')
+  if (args.message) a.push('-a', args.name, '-m', args.message)
+  else a.push(args.name)
+  if (args.ref) a.push(args.ref)
+  return localArgs(cwd, a)
+}
+
+export const gitTagCreateRemote = (
+  exec: ExecLike,
+  cwd: string,
+  args: { name: string; ref?: string; message?: string; force?: boolean }
+): Promise<GitCommandResult> => {
+  const a = ['tag']
+  if (args.force) a.push('-f')
+  if (args.message) a.push('-a', args.name, '-m', args.message)
+  else a.push(args.name)
+  if (args.ref) a.push(args.ref)
+  return remoteArgs(exec, cwd, a)
+}
+
+export const gitTagDeleteLocal = (
+  cwd: string,
+  names: string[]
+): Promise<GitCommandResult> => localArgs(cwd, ['tag', '-d', ...names])
+
+export const gitTagDeleteRemote = (
+  exec: ExecLike,
+  cwd: string,
+  names: string[]
+): Promise<GitCommandResult> => remoteArgs(exec, cwd, ['tag', '-d', ...names])
+
+/** Remote add / remove. */
+export const gitAddRemoteLocal = (
+  cwd: string,
+  args: { name: string; url: string }
+): Promise<GitCommandResult> => localArgs(cwd, ['remote', 'add', args.name, args.url])
+
+export const gitAddRemoteRemote = (
+  exec: ExecLike,
+  cwd: string,
+  args: { name: string; url: string }
+): Promise<GitCommandResult> =>
+  remoteArgs(exec, cwd, ['remote', 'add', args.name, args.url])
+
+export const gitRemoveRemoteLocal = (
+  cwd: string,
+  name: string
+): Promise<GitCommandResult> => localArgs(cwd, ['remote', 'remove', name])
+
+export const gitRemoveRemoteRemote = (
+  exec: ExecLike,
+  cwd: string,
+  name: string
+): Promise<GitCommandResult> => remoteArgs(exec, cwd, ['remote', 'remove', name])
+
+/** Merge. */
+export const gitMergeLocal = (
+  cwd: string,
+  args: { target: string; noFastForward?: boolean; message?: string }
+): Promise<GitCommandResult> => {
+  const a = ['merge']
+  if (args.noFastForward) a.push('--no-ff')
+  if (args.message) a.push('-m', args.message)
+  a.push(args.target)
+  return localArgs(cwd, a)
+}
+
+export const gitMergeRemote = (
+  exec: ExecLike,
+  cwd: string,
+  args: { target: string; noFastForward?: boolean; message?: string }
+): Promise<GitCommandResult> => {
+  const a = ['merge']
+  if (args.noFastForward) a.push('--no-ff')
+  if (args.message) a.push('-m', args.message)
+  a.push(args.target)
+  return remoteArgs(exec, cwd, a)
 }

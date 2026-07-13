@@ -35,7 +35,6 @@ export default function StatusBar() {
   const active = useSessions((s) => s.sessions.find((x) => x.id === s.activeId))
   const showStatusBar = useSettings((s) => s.showStatusBar)
   const zenMode = useSettings((s) => s.zenMode)
-  const fontSize = useSettings((s) => s.prefs.fontSize)
   const [git, setGit] = useState<GitStatus | null>(null)
   const [latency, setLatency] = useState<{ ms: number | null; err?: string } | null>(null)
 
@@ -103,11 +102,6 @@ export default function StatusBar() {
       <div className="statusbar" role="status" aria-label="Session status">
         <span className="status-cell">ready</span>
         <span className="spacer" />
-        <span className="statusbar-right">
-          <span className="status-cell" title="Terminal font size">
-            {fontSize}px
-          </span>
-        </span>
       </div>
     )
   }
@@ -132,11 +126,6 @@ export default function StatusBar() {
             <ContextBadge ctx={active.context} />
             {active.status && <span className="status-msg">{active.status}</span>}
           </>
-        )}
-        {active.cwd && (
-          <span className="status-cell status-cwd" title={active.cwd}>
-            {active.cwd}
-          </span>
         )}
         {active.kind === 'local' && git?.isRepo && (
           <span className="status-cell status-git" title={`Branch: ${git.branch}`}>
@@ -163,9 +152,6 @@ export default function StatusBar() {
             {agentState}
           </span>
         )}
-        <span className="status-cell" title="Terminal font size">
-          {fontSize}px
-        </span>
       </span>
     </div>
   )

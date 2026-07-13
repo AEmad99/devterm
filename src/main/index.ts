@@ -218,6 +218,17 @@ function createWindow(): void {
     if (!isAppUrl(url)) e.preventDefault()
   })
 
+  // The app shell itself is trusted (unlike the <webview> browser pane, which is
+  // default-denied above). Voice dictation captures the microphone via
+  // getUserMedia from the renderer; without an explicit handler on the main
+  // window's own session, packaged Electron silently denies the `media`
+  // permission. Grant only `media` here; everything else falls through to
+  // Chromium's defaults. Transcription runs fully locally (Whisper/WASM), so no
+  // audio ever leaves the machine.
+  mainWindow.webContents.session.setPermissionRequestHandler((_wc, permission, callback) => {
+    callback(permission === 'media')
+  })
+
   if (process.env.ELECTRON_RENDERER_URL) {
     mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL)
   } else {

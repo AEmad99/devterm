@@ -194,6 +194,18 @@
   .ws-card button.primary:hover {
     transform: translateY(-1px);
   }
+
+  /* --- Voice dictation: pulse the mic icon while recording and the status dot
+     while recording/transcribing. Opacity/transform only, gated here so it's
+     silent under reduced-motion. --- */
+  .titlebar button.mic-btn.recording svg {
+    animation: activity-pulse 1.4s ease-in-out infinite;
+  }
+  .dictation-status.status-recording .dictation-dot,
+  .dictation-status.status-transcribing .dictation-dot,
+  .dictation-status.status-loading .dictation-dot {
+    animation: activity-pulse 1.2s ease-in-out infinite;
+  }
 }
 
 @keyframes reconnect-pulse {

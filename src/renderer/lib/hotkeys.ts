@@ -32,6 +32,7 @@ export type HotkeyId =
   | 'toggleZenMode'
   | 'shortcuts'
   | 'saveEditor'
+  | 'dictate'
 
 export interface Hotkey {
   id: HotkeyId
@@ -73,7 +74,8 @@ export const HOTKEYS: Hotkey[] = [
   { id: 'settings', mod: true, key: ',', label: 'Settings' },
   { id: 'globalSearch', mod: true, alt: true, key: 'f', label: 'Search across all terminals' },
   { id: 'shortcuts', mod: true, key: '/', label: 'Keyboard shortcuts' },
-  { id: 'saveEditor', mod: true, key: 's', label: 'Save file' }
+  { id: 'saveEditor', mod: true, key: 's', label: 'Save file' },
+  { id: 'dictate', mod: true, shift: true, key: 'm', label: 'Toggle voice dictation' }
 ]
 
 interface Keyish {

@@ -85,11 +85,13 @@ export class TransferStore {
   }
 
   /**
-   * Drop the items that are done, canceled, or errored. Returns the
-   * surviving list. Active items are untouched.
+   * Drop the items that are done. Returns the surviving list. Active items
+   * are untouched. An item is considered finished when it is done and not
+   * actively running — that covers success, cancellation, error, and the
+   * post-restart 'interrupted' rows that `load()` synthesizes.
    */
   async clearFinished(): Promise<TransferItemV2[]> {
-    this.items = this.items.filter((x) => !x.done && !x.canceled)
+    this.items = this.items.filter((x) => !x.done)
     await this.flushNow()
     return this.list()
   }

@@ -1,6 +1,8 @@
 import TopNav from './TopNav'
 import BottomPanelToggle from './BottomPanelToggle'
 import { LogoMark, IconMenu, IconSettings, IconKeyboard } from '../common/Icons'
+import { IconBranch } from '../git/GitIcons'
+import MicButton from '../dictation/MicButton'
 import type { HostContext } from '@shared/types'
 import type { View, BottomPanelMode } from './types'
 
@@ -24,8 +26,11 @@ interface AppToolbarProps {
   bottomPanelMode: BottomPanelMode
   setBottomPanelMode: (mode: BottomPanelMode) => void
   local: HostContext | null
+  gitPanelOpen: boolean
+  setGitPanelOpen: (v: boolean | ((prev: boolean) => boolean)) => void
   onSettings: () => void
   onShortcuts: () => void
+  dictateHotkey?: string
 }
 
 export default function AppToolbar({
@@ -35,8 +40,11 @@ export default function AppToolbar({
   bottomPanelMode,
   setBottomPanelMode,
   local,
+  gitPanelOpen,
+  setGitPanelOpen,
   onSettings,
-  onShortcuts
+  onShortcuts,
+  dictateHotkey
 }: AppToolbarProps) {
   return (
     <div className="titlebar">
@@ -54,7 +62,16 @@ export default function AppToolbar({
       <span className="badge">{local ? `${local.hostname} · ${osLabel(local.os)}` : ''}</span>
       <TopNav view={view} setView={setView} />
       <span className="spacer" />
+      <button
+        className={`settings-btn ${gitPanelOpen ? 'active' : ''}`}
+        title="Toggle Git panel (branches, log, changes, stash, tags, remotes)"
+        aria-pressed={gitPanelOpen}
+        onClick={() => setGitPanelOpen((v) => !v)}
+      >
+        <IconBranch size={17} />
+      </button>
       <BottomPanelToggle mode={bottomPanelMode} setMode={setBottomPanelMode} />
+      <MicButton hotkey={dictateHotkey} />
       <button
         className="settings-btn"
         title="Keyboard shortcuts (Ctrl/Cmd+/)"
