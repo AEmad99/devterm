@@ -418,9 +418,9 @@ function parseForEachRef(stdout: string): RawBranchLine[] {
   for (const line of stdout.split(/\r?\n/)) {
     if (!line) continue
     // %(HEAD) %(upstream:short) %(upstream:track) %(objectname:short) %(refname:short)
-    // Fields are separated by the literal sentinel  (SOH) so spaces in
+    // Fields are separated by the literal sentinel \x01 (SOH) so spaces in
     // branch names survive the round trip.
-    const [head, upstreamShort, track, sha, refname] = line.split('')
+    const [head, upstreamShort, track, sha, refname] = line.split('\x01')
     if (!sha || !refname) continue
     const remote = refname.startsWith('refs/remotes/')
     const name = remote
@@ -536,129 +536,94 @@ function parseRemotes(stdout: string): GitRemote[] {
 // ---------------------------------------------------------------------------
 
 const LOG_FORMAT =
-  '%H%x00%h%x00%an%x00%ae%x00%cn%x00%ce%x00%aI%x00%cI%x00%P%x00%D%x00%s%x00%b%x00%e%x00'
-//  ^sha  ^short ^an   ^ae   ^cn   ^ce   ^aI  ^cI  ^parents ^decoration ^subject ^body ^end
+  '%H%x00%h%x00%an%x00%ae%x00%cn%x00%ce%x00%aI%x00%cI%x00%P%x00%D%x00%s%x00%b'
+//  ^sha  ^short ^an   ^ae   ^cn   ^ce   ^aI  ^cI  ^parents ^decoration ^subject ^body
+// Records are NUL-terminated by `-z`; internal fields are split on `\x00`.
+// Body lines (after the first newline in a record block) are preserved
+// verbatim until the next NUL.
 
-interface LogAccumulator {
-  entries: GitLogEntry[]
-  current: Partial<GitLogEntry> & { subject: string; body: string }
-  field: 'meta' | 'subject' | 'body'
-  idx: number
-}
+const LOG_FIELDS = [
+  'sha',
+  'shortSha',
+  'authorName',
+  'authorEmail',
+  'committerName',
+  'committerEmail',
+  'authorDate',
+  'committerDate',
+  'parent',
+  'refs',
+  'subject',
+  'body'
+] as const
 
-function newAcc(): LogAccumulator {
-  return {
-    entries: [],
-    current: { subject: '', body: '' },
-    field: 'meta',
-    idx: 0
-  }
-}
 
-function finishLogEntry(acc: LogAccumulator): void {
-  const c = acc.current
-  // Subject and body are joined with a single LF when only the subject was
-  // populated, so the renderer always sees a clean split.
-  const subject = c.subject.trim()
-  const body = c.body.replace(/^\n/, '').replace(/\n+$/, '')
-  const parents = (c.parent as unknown as string) || ''
-  const parentList = parents ? parents.split(' ').filter(Boolean) : []
-  acc.entries.push({
-    sha: (c.sha as unknown as string) || '',
-    shortSha: (c.shortSha as unknown as string) || '',
-    subject,
-    body,
-    authorName: (c.authorName as unknown as string) || '',
-    authorEmail: (c.authorEmail as unknown as string) || '',
-    committerName: (c.committerName as unknown as string) || '',
-    committerEmail: (c.committerEmail as unknown as string) || '',
-    authorDate: (c.authorDate as unknown as string) || '',
-    committerDate: (c.committerDate as unknown as string) || '',
-    parent: parentList[0] ?? null,
-    parentCount: parentList.length,
-    refs: ((c.refs as unknown as string) || '').split(', ').filter(Boolean)
-  })
-  acc.current = { subject: '', body: '' }
-  acc.field = 'meta'
-  acc.idx = 0
-}
-
-/** Parse the custom-format `git log` output produced by `LOG_FORMAT`. */
+/** Parse the -z-terminated, NUL-field-delimited git log output. */
 function parseLog(stdout: string): GitLogEntry[] {
-  const acc = newAcc()
-  const fields = [
-    'sha',
-    'shortSha',
-    'authorName',
-    'authorEmail',
-    'committerName',
-    'committerEmail',
-    'authorDate',
-    'committerDate',
-    'parent',
-    'refs',
-    'subject',
-    'body'
-  ] as const
-  for (const line of stdout.split(/\r?\n/)) {
-    if (line === '') {
-      // NUL sentinel we use to separate records. We use \x1e (record
-      // separator) below — see args. (We do emit one below.) If somehow a
-      // literal line is `\x1e` alone, treat it as record end.
-      finishLogEntry(acc)
-      continue
-    }
-    if (acc.field === 'meta') {
-      const parts = line.split(' ')
-      for (const f of fields) {
-        ;(acc.current as Record<string, unknown>)[f] = parts[acc.idx++] ?? ''
-      }
-      acc.field = 'subject'
-      continue
-    }
-    if (acc.field === 'subject') {
-      acc.current.subject = line
-      acc.field = 'body'
-      continue
-    }
-    // body — concat with newline so a literal blank line survives.
-    acc.current.body = acc.current.body ? `${acc.current.body}\n${line}` : line
+  // With -z, each commit is NUL-terminated. Internal fields are still split
+  // on the same byte from the format string. Body lines are preserved
+  // verbatim within the record block; they are everything after the first
+  // newline of the record up to the trailing NUL.
+  const out: GitLogEntry[] = []
+  const NUL = String.fromCharCode(0)
+  const records = stdout.split(NUL).filter((r) => r.length > 0)
+  for (const rec of records) {
+    const newlineIdx = rec.indexOf('\n')
+    const metaLine = newlineIdx === -1 ? rec : rec.slice(0, newlineIdx)
+    const body =
+      newlineIdx === -1
+        ? ''
+        : rec
+            .slice(newlineIdx + 1)
+            .replace(/^\n/, '')
+            .replace(/\n+$/, '')
+    const metaParts = metaLine.split('\x00')
+    // The trailing \x00 after %b produces an empty final element. Drop it.
+    const trimmed =
+      metaParts[metaParts.length - 1] === '' ? metaParts.slice(0, -1) : metaParts
+    const meta: Record<string, string> = {}
+    LOG_FIELDS.forEach((f, i) => {
+      meta[f] = trimmed[i] ?? ''
+    })
+    const parentList = meta.parent ? meta.parent.split(' ').filter(Boolean) : []
+    out.push({
+      sha: meta.sha,
+      shortSha: meta.shortSha,
+      subject: meta.subject.trim(),
+      body,
+      authorName: meta.authorName,
+      authorEmail: meta.authorEmail,
+      committerName: meta.committerName,
+      committerEmail: meta.committerEmail,
+      authorDate: meta.authorDate,
+      committerDate: meta.committerDate,
+      parent: parentList[0] ?? null,
+      parentCount: parentList.length,
+      parents: parentList,
+      refs: meta.refs.split(', ').filter(Boolean)
+    })
   }
-  // Finalise any in-flight entry.
-  if (acc.current.sha || acc.current.subject) finishLogEntry(acc)
-  return acc.entries
+  return out
 }
-
-/** Build the args for a `git log` invocation in our custom format. */
 function logArgs(opts: { maxCount?: number; ref?: string; file?: string }): string[] {
   const max = opts.maxCount ?? 100
   const range = opts.ref ? [opts.ref] : ['HEAD']
   const args = [
     'log',
     `-n${max}`,
-    `--format=${LOG_FORMAT}`,
-    // Print each record separated by an ASCII RS (\x1e) so multi-line bodies
-    // survive the stream. The `parseLog` helper looks for a literal `\x1e`
-    // line as a record terminator.
-    '--output-encoding=enconding' /* placeholder; see workaround below */
+    // -z NUL-terminates each commit so multi-commit output is unambiguous.
+    // --topo-order puts parents before children; required for the graph
+    // layout pass in the renderer.
+    '-z',
+    '--topo-order',
+    '--no-color',
+    `--format=${LOG_FORMAT}`
   ]
-  // Note: git doesn't accept a record-separator format option directly; we
-  // parse by header/body by line instead, treating the format as one record
-  // per `git log` invocation when there's no body and walking line-by-line
-  // when there is. The parser below handles both cases by splitting on a
-  // blank line between records when the next line starts with a SHA.
-  // For simplicity and correctness we rely on a second pass: a `git log` with
-  // a body separated by the format `%H%x00...%s%x00%b` produces records whose
-  // body is everything until the next record's `sha` field. The parser above
-  // uses that approach.
   if (opts.file) args.push('--', opts.file)
-  // Replace the placeholder with the actual range.
-  args.splice(-1, 0, ...range)
-  // Remove placeholder (we keep it simple here by skipping; the placeholder
-  // option name is harmless and the parser handles it).
-  args.splice(args.indexOf('--output-encoding=enconding'), 1)
+  args.push(...range)
   return args
 }
+
 
 /** Pretty-printed log (used as a fallback when our parser misses a record). */
 export async function gitLogLocal(
@@ -716,7 +681,7 @@ export async function gitStashListLocal(cwd: string): Promise<GitStashEntry[]> {
   const structured: GitStashEntry[] = []
   for (const line of r.stdout.split(/\r?\n/)) {
     if (!line) continue
-    const [ref, subject, ts] = line.split(' ')
+    const [ref, subject, ts] = line.split('\x00')
     if (!ref) continue
     const branchMatch = /on ([^:]+):\s+([0-9a-f]+)\s+(.*)$/.exec(subject || '')
     structured.push({
@@ -737,7 +702,7 @@ export async function gitStashListRemote(exec: ExecLike, cwd: string): Promise<G
   const structured: GitStashEntry[] = []
   for (const line of r.stdout.split(/\r?\n/)) {
     if (!line) continue
-    const [ref, subject, ts] = line.split(' ')
+    const [ref, subject, ts] = line.split('\x00')
     if (!ref) continue
     const branchMatch = /on ([^:]+):\s+([0-9a-f]+)\s+(.*)$/.exec(subject || '')
     structured.push({
@@ -761,7 +726,7 @@ function parseTags(stdout: string): GitTag[] {
   for (const line of stdout.split(/\r?\n/)) {
     if (!line) continue
     // %(*objectname)%00%(refname:short)%00%(subject)%00%(taggername)%00%(taggeremail)%00%(*taggerdate:iso8601)
-    const [sha, name, subject, tagger, email, date, kind] = line.split(' ')
+    const [sha, name, subject, tagger, email, date, kind] = line.split('\x00')
     if (!sha || !name) continue
     const annotated = kind === 'tag'
     out.push({
@@ -932,7 +897,7 @@ function parseShow(stdout: string): GitShowResult | null {
     }
   }
   if (headerEnd < 0) return null
-  const headerParts = lines[0].split(' ')
+  const headerParts = lines[0].split('\x00')
   const sha = headerParts[0]
   const shortSha = headerParts[1]
   const subject = headerParts[2]

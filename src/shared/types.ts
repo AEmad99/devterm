@@ -1406,6 +1406,9 @@ export interface GitLogEntry {
   parent: string | null
   /** Total parents (≥2 for merge commits). */
   parentCount: number
+  /** All parent SHAs in order. Length matches `parentCount`; the first entry
+   *  equals `parent`. Source of truth for the graph layout pass. */
+  parents: string[]
   /** Refs (branches/tags) that point at this commit, e.g. ["origin/main", "HEAD"]. */
   refs: string[]
 }

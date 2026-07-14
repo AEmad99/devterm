@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import ConnectionForm from './components/connections/ConnectionForm'
 import FileExplorer from './components/files/FileExplorer'
 import ConfirmActionModal from './components/modals/ConfirmActionModal'
@@ -26,6 +26,7 @@ import { matchHotkey, resolveHotkeys, comboLabel, HOTKEYS } from './lib/hotkeys'
 import { focusTerminal, clearTerminal } from './lib/terms'
 import { capturableSessions, captureWorkspace } from './lib/workspace'
 import { dictation } from './lib/stt/dictation'
+import { useDictation } from './store/dictation'
 import DictationStatus from './components/dictation/DictationStatus'
 import GitPanel from './components/git/GitPanel'
 import type { HostContext } from '@shared/types'
@@ -261,14 +262,73 @@ export default function App() {
         case 'globalSearch':
           setGlobalSearchOpen((v) => !v)
           break
-        case 'dictate':
-          if (useSettings.getState().stt.enabled) void dictation.toggle()
-          break
+        // 'dictate' is owned by the push-to-talk useEffect below.
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Push-to-talk dictation. Holds the dictate hotkey to record, releases to
+  // transcribe. Runs as a separate effect so we can own the keyup/blur path
+  // without disturbing the keydown switch above. A `pttActiveKey` ref guards
+  // against spurious stops from a different key being released while the
+  // dictate combo is still held.
+  const pttActiveKey = useRef<string | null>(null)
+
+  useEffect(() => {
+    const matchesDictate = (e: KeyboardEvent, h: ReturnType<typeof resolveHotkeys>[number] | undefined) => {
+      if (!h) return false
+      const mod = e.ctrlKey || e.metaKey
+      const key = e.key.length === 1 ? e.key.toLowerCase() : e.key
+      return (
+        Boolean(h.mod) === mod &&
+        Boolean(h.shift) === e.shiftKey &&
+        Boolean(h.alt) === e.altKey &&
+        h.key === key
+      )
+    }
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!useSettings.getState().stt.enabled) return
+      if (e.repeat) return
+      const hotkeys = resolveHotkeys(useSettings.getState().keybindings)
+      const dictate = hotkeys.find((h) => h.id === 'dictate')
+      if (!matchesDictate(e, dictate)) return
+      const status = useDictation.getState().status
+      if (status !== 'idle' && status !== 'error') return
+      pttActiveKey.current = e.key.toLowerCase()
+      void dictation.start()
+    }
+
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (!pttActiveKey.current) return
+      if (e.key.toLowerCase() !== pttActiveKey.current) return
+      pttActiveKey.current = null
+      if (useDictation.getState().status === 'recording') {
+        void dictation.stop()
+      }
+    }
+
+    const onBlur = () => {
+      if (!pttActiveKey.current) return
+      // Don't cancel mid-press; finalize so the audio isn't lost. The ref is
+      // also cleared so a later (out-of-window) keyup doesn't double-stop.
+      pttActiveKey.current = null
+      if (useDictation.getState().status === 'recording') {
+        void dictation.stop()
+      }
+    }
+
+    window.addEventListener('keydown', onKeyDown)
+    window.addEventListener('keyup', onKeyUp)
+    window.addEventListener('blur', onBlur)
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('keyup', onKeyUp)
+      window.removeEventListener('blur', onBlur)
+    }
   }, [])
 
   const sessionKey = useMemo(

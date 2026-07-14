@@ -120,3 +120,23 @@ export const IconUnstage = (p: IconProps) => (
     <path d="M5 12h14" />
   </Svg>
 )
+
+/** Graph view — node with a branch curve. */
+export const IconGraph = (p: IconProps) => (
+  <Svg {...p}>
+    <circle cx="6" cy="6" r="2" />
+    <circle cx="6" cy="18" r="2" />
+    <circle cx="18" cy="12" r="2" />
+    <path d="M6 8v8" />
+    <path d="M6 12h6a4 4 0 0 1 4 4" />
+  </Svg>
+)
+
+/** List view — three stacked rows. */
+export const IconList = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M4 6h16" />
+    <path d="M4 12h16" />
+    <path d="M4 18h16" />
+  </Svg>
+)

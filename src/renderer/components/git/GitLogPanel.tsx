@@ -1,14 +1,22 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { GitLogEntry, GitShowResult } from '@shared/types'
 import type { GitScope } from './GitPanel'
+import GitGraphView from './GitGraphView'
+import { IconGraph, IconList } from './GitIcons'
 
 /**
  * The Log tab — newest-first commit history. Each row shows the short SHA,
  * author, relative time, and the first line of the subject. Click a row to
  * expand a detail view: subject + body, files changed, and the patch.
+ *
+ * Two views: graph (default, VSCode Git Graph-style lanes) and a flat list.
+ * The choice is local to the panel for now — it's a small preference that
+ * doesn't justify a settings field.
  */
 
 const RELOAD_MS = 30_000
+
+type LogView = 'graph' | 'list'
 
 export default function GitLogPanel({ scope }: { scope: GitScope }) {
   const [entries, setEntries] = useState<GitLogEntry[] | null>(null)
@@ -16,6 +24,7 @@ export default function GitLogPanel({ scope }: { scope: GitScope }) {
   const [show, setShow] = useState<GitShowResult | null | undefined>(undefined)
   const [ref, setRef] = useState<string>('')
   const [busy, setBusy] = useState(false)
+  const [view, setView] = useState<LogView>('graph')
 
   const reload = useCallback(() => {
     setBusy(true)
@@ -53,6 +62,8 @@ export default function GitLogPanel({ scope }: { scope: GitScope }) {
     }
   }, [selected, scope.sessionId, scope.path])
 
+  const handleSelect = (sha: string) => setSelected(selected === sha ? null : sha)
+
   return (
     <div className="git-log">
       <div className="git-log-toolbar">
@@ -67,17 +78,48 @@ export default function GitLogPanel({ scope }: { scope: GitScope }) {
         <button className="git-mini" onClick={reload} disabled={busy}>
           Refresh
         </button>
+        <span className="git-log-toolbar-spacer" />
+        <div className="git-log-view-toggle" role="group" aria-label="Log view">
+          <button
+            type="button"
+            className={`git-log-view-btn ${view === 'graph' ? 'on' : ''}`}
+            onClick={() => setView('graph')}
+            title="Graph view"
+            aria-label="Graph view"
+            aria-pressed={view === 'graph'}
+          >
+            <IconGraph size={13} />
+          </button>
+          <button
+            type="button"
+            className={`git-log-view-btn ${view === 'list' ? 'on' : ''}`}
+            onClick={() => setView('list')}
+            title="List view"
+            aria-label="List view"
+            aria-pressed={view === 'list'}
+          >
+            <IconList size={13} />
+          </button>
+        </div>
       </div>
       {entries === null && <div className="git-loading">loading…</div>}
       {entries !== null && entries.length === 0 && <div className="git-empty">no commits</div>}
-      {entries && entries.length > 0 && (
+      {entries && entries.length > 0 && view === 'graph' && (
+        <GitGraphView
+          entries={entries}
+          selected={selected}
+          onSelect={handleSelect}
+          formatRel={formatRel}
+        />
+      )}
+      {entries && entries.length > 0 && view === 'list' && (
         <div className="git-log-list">
           {entries.map((e) => (
             <LogRow
               key={e.sha}
               entry={e}
               selected={selected === e.sha}
-              onSelect={() => setSelected(selected === e.sha ? null : e.sha)}
+              onSelect={() => handleSelect(e.sha)}
             />
           ))}
         </div>

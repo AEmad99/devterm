@@ -3496,6 +3496,117 @@
   font-family: var(--font-mono);
 }
 
+/* ---- Log tab: view toggle + graph view ---------------------------------- */
+
+.git-log-toolbar-spacer {
+  flex: 1 1 auto;
+}
+
+.git-log-view-toggle {
+  display: inline-flex;
+  align-items: stretch;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  overflow: hidden;
+  flex: 0 0 auto;
+}
+.git-log-view-btn {
+  background: transparent;
+  border: 0;
+  color: var(--muted);
+  padding: 3px 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.git-log-view-btn:hover {
+  color: var(--fg);
+}
+.git-log-view-btn.on {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
+}
+.git-log-view-btn + .git-log-view-btn {
+  border-left: 1px solid var(--border);
+}
+
+.git-graph-list {
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+  flex: 1 1 auto;
+}
+
+.git-graph-row {
+  display: flex;
+  align-items: center;
+  height: 26px;
+  padding: 0 8px 0 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  cursor: pointer;
+  gap: 0;
+}
+.git-graph-row:hover {
+  background: var(--panel-2);
+}
+.git-graph-row.sel {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+.git-graph-svg {
+  flex: 0 0 auto;
+  display: block;
+}
+.git-graph-lane {
+  stroke: var(--muted);
+  stroke-width: 1.2;
+  fill: none;
+}
+.git-graph-curve {
+  stroke: var(--accent);
+  stroke-width: 1.2;
+  fill: none;
+}
+.git-graph-curve.merge {
+  stroke: var(--muted);
+  stroke-dasharray: 2 2;
+}
+.git-graph-dot {
+  fill: var(--accent);
+  stroke: var(--bg);
+  stroke-width: 1.2;
+}
+.git-graph-message {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding-left: 6px;
+  overflow: hidden;
+}
+.git-graph-subject {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--fg);
+  font-size: 12px;
+}
+.git-graph-meta {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  align-items: baseline;
+}
+.git-graph-author {
+  font-family: var(--font-ui);
+}
+
 .git-show-detail {
   border-top: 1px solid var(--border);
   background: var(--bg-term);
