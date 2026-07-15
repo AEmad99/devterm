@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { useSettings } from '../../store/settings'
-import type { DefaultShellPref } from '@shared/types'
+import { useSessions } from '../../store/sessions'
+import type { ApprovalRule, DefaultShellPref } from '@shared/types'
 import { THEMES, getTheme, applyTheme, type Theme } from '../../lib/themes'
 import { HOTKEYS, comboLabel, captureCombo, type HotkeyId } from '../../lib/hotkeys'
 import { chime } from '../../lib/attention'
@@ -99,6 +100,8 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
   const setSftpSidePane = useSettings((s) => s.setSftpSidePane)
   const activityIndicators = useSettings((s) => s.activityIndicators)
   const setActivityIndicators = useSettings((s) => s.setActivityIndicators)
+  const searchPersist = useSettings((s) => s.searchPersist)
+  const setSearchPersist = useSettings((s) => s.setSearchPersist)
   const zenMode = useSettings((s) => s.zenMode)
   const setZenMode = useSettings((s) => s.setZenMode)
   const stt = useSettings((s) => s.stt)
@@ -110,6 +113,14 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
   const [ioHint, setIoHint] = useState<string | null>(null)
   const [capturing, setCapturing] = useState<HotkeyId | null>(null)
   const [sttHint, setSttHint] = useState<string | null>(null)
+  // Agent guardrails (approval rules) — list + add/remove UI.
+  const [rules, setRules] = useState<ApprovalRule[]>([])
+  const [rulePrefix, setRulePrefix] = useState('')
+  const [ruleOutcome, setRuleOutcome] = useState<ApprovalRule['outcome']>('allow')
+  const [ruleScope, setRuleScope] = useState<'global' | 'session'>('global')
+  const [ruleSessionId, setRuleSessionId] = useState('')
+  const [ruleBusy, setRuleBusy] = useState(false)
+  const [ruleHint, setRuleHint] = useState<string | null>(null)
   const hintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
@@ -120,6 +131,62 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
       }
     }
   }, [])
+
+  // Load agent approval rules when the modal opens; refresh on focus so a
+  // rule added via the "Remember my choice" checkbox in ConfirmActionModal
+  // shows up here without a manual reload.
+  const refreshRules = () => {
+    window.devterm.approvalRules
+      .list()
+      .then(setRules)
+      .catch(() => undefined)
+  }
+  useEffect(() => {
+    refreshRules()
+    const onFocus = () => refreshRules()
+    window.addEventListener('focus', onFocus)
+    return () => window.removeEventListener('focus', onFocus)
+  }, [])
+
+  const remoteSessions = useSessions((s) => s.sessions.filter((x) => x.kind === 'remote'))
+
+  const addRule = async () => {
+    const prefix = rulePrefix.trim()
+    if (!prefix) {
+      setRuleHint('Enter a command prefix first')
+      return
+    }
+    const sessionId = ruleScope === 'session' ? ruleSessionId.trim() : undefined
+    if (ruleScope === 'session' && !sessionId) {
+      setRuleHint('Pick a session or switch scope to Global')
+      return
+    }
+    setRuleBusy(true)
+    setRuleHint(null)
+    try {
+      const next = await window.devterm.approvalRules.add({
+        commandPrefix: prefix,
+        outcome: ruleOutcome,
+        sessionId
+      })
+      setRules(next)
+      setRulePrefix('')
+      setRuleHint(`Added ${ruleOutcome} rule for “${prefix}”`)
+    } catch (e) {
+      setRuleHint(`Add failed: ${(e as Error).message || String(e)}`)
+    } finally {
+      setRuleBusy(false)
+    }
+  }
+
+  const removeRule = async (id: string) => {
+    try {
+      const next = await window.devterm.approvalRules.remove(id)
+      setRules(next)
+    } catch (e) {
+      setRuleHint(`Remove failed: ${(e as Error).message || String(e)}`)
+    }
+  }
 
   useEffect(() => {
     if (!capturing) return
@@ -411,6 +478,22 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                 type="checkbox"
                 checked={activityIndicators}
                 onChange={(e) => setActivityIndicators(e.target.checked)}
+              />
+            </span>
+          </label>
+
+          <label className="settings-row">
+            <span className="settings-label">
+              Persist search history
+              <span className="settings-sub-hint" style={{ marginLeft: 6 }}>
+                (5000 lines/session)
+              </span>
+            </span>
+            <span className="settings-control">
+              <input
+                type="checkbox"
+                checked={searchPersist}
+                onChange={(e) => setSearchPersist(e.target.checked)}
               />
             </span>
           </label>
@@ -793,6 +876,139 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
               />
             </span>
           </label>
+        </section>
+
+        <section className="settings-section">
+          <h3>Agent guardrails</h3>
+          <div className="settings-sub-hint">
+            Approval rules that override the per-session policy mode. Longest
+            prefix wins; per-session rules beat same-length global rules.
+            Rules added via &ldquo;Remember my choice&rdquo; in a confirm
+            prompt land here.
+          </div>
+
+          <div className="rule-form">
+            <label className="settings-row">
+              <span className="settings-label">Command prefix</span>
+              <span className="settings-control">
+                <input
+                  type="text"
+                  className="text-input"
+                  value={rulePrefix}
+                  placeholder="e.g. kubectl get"
+                  onChange={(e) => setRulePrefix(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') void addRule()
+                  }}
+                />
+              </span>
+            </label>
+
+            <label className="settings-row">
+              <span className="settings-label">Outcome</span>
+              <span className="settings-control">
+                <select
+                  className="text-input"
+                  value={ruleOutcome}
+                  onChange={(e) =>
+                    setRuleOutcome(e.target.value as ApprovalRule['outcome'])
+                  }
+                >
+                  <option value="allow">Allow (skip confirm)</option>
+                  <option value="deny">Deny (always block)</option>
+                  <option value="ask">Ask (always confirm)</option>
+                </select>
+              </span>
+            </label>
+
+            <label className="settings-row">
+              <span className="settings-label">Scope</span>
+              <span className="settings-control">
+                <select
+                  className="text-input"
+                  value={ruleScope}
+                  onChange={(e) =>
+                    setRuleScope(e.target.value as 'global' | 'session')
+                  }
+                >
+                  <option value="global">Global (all sessions)</option>
+                  <option value="session">Per remote session</option>
+                </select>
+              </span>
+            </label>
+
+            {ruleScope === 'session' && (
+              <label className="settings-row">
+                <span className="settings-label">Session</span>
+                <span className="settings-control">
+                  <select
+                    className="text-input"
+                    value={ruleSessionId}
+                    onChange={(e) => setRuleSessionId(e.target.value)}
+                  >
+                    <option value="" disabled>
+                      Pick a session…
+                    </option>
+                    {remoteSessions.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.context?.hostname || s.title || s.id}
+                      </option>
+                    ))}
+                  </select>
+                </span>
+              </label>
+            )}
+
+            <div className="settings-row">
+              <span className="settings-label" />
+              <span className="settings-control">
+                <button
+                  className="primary"
+                  disabled={ruleBusy || !rulePrefix.trim()}
+                  onClick={() => void addRule()}
+                >
+                  {ruleBusy ? 'Adding…' : 'Add rule'}
+                </button>
+                {ruleHint && <span className="settings-hint">{ruleHint}</span>}
+              </span>
+            </div>
+          </div>
+
+          {rules.length === 0 ? (
+            <div className="settings-empty">No approval rules yet.</div>
+          ) : (
+            <ul className="rule-list">
+              {rules.map((r) => (
+                <li key={r.id} className="rule-row">
+                  <span
+                    className={`rule-outcome rule-outcome-${r.outcome}`}
+                    title={
+                      r.outcome === 'allow'
+                        ? 'Allow without prompting'
+                        : r.outcome === 'deny'
+                          ? 'Always block'
+                          : 'Always prompt'
+                    }
+                  >
+                    {r.outcome}
+                  </span>
+                  <code className="rule-prefix">{r.commandPrefix}</code>
+                  <span className="rule-scope">
+                    {r.sessionId
+                      ? `session: ${r.sessionId.slice(0, 8)}…`
+                      : 'global'}
+                  </span>
+                  <button
+                    className="ghost small"
+                    onClick={() => void removeRule(r.id)}
+                    title="Delete rule"
+                  >
+                    Delete
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
         </section>
 
         <section className="settings-section">

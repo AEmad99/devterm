@@ -2,7 +2,15 @@
  * Global Terminal Search Index (MVP)
  * Stores the most recent N lines from each session and supports simple
  * string search. Lines carry lightweight metadata for rendering results.
+ *
+ * The in-memory ring is the hot path. When `search.persist` is on,
+ * `pushLine` also appends each line to the optional JSONL tail
+ * (`./persist.ts`) so the index survives a restart. The tail is
+ * rehydrated by callers via `rehydrateSession` (which then calls
+ * `seedLines`).
  */
+
+import * as persist from './persist'
 
 export interface SearchResult {
   sessionId: string
@@ -45,11 +53,18 @@ export class SearchIndex {
       rec.lines.shift()
       for (let i = 0; i < rec.lines.length; i++) rec.lines[i].lineNumber = i + 1
     }
+    // Fire-and-forget: a persist failure must never break the live data path.
+    try {
+      persist.push(sessionId, text)
+    } catch {
+      /* ignore */
+    }
   }
 
   /** Remove all lines for a session (on kill). */
   clearSession(sessionId: string) {
     this.index.delete(sessionId)
+    void persist.clearSession(sessionId)
   }
 
   /**
@@ -89,3 +104,20 @@ export class SearchIndex {
 
 // Singleton used by IPC + pty data stream.
 export const globalSearchIndex = new SearchIndex()
+
+/** Forwarded setter so the main module can wire the renderer's setting
+ * without exposing the SearchIndex internals. */
+export function setPersistEnabled(v: boolean): void {
+  persist.setEnabled(v)
+}
+
+/** Rehydrate a session from its on-disk tail (returns the lines so the
+ * caller can decide whether to feed them through `seedLines`). */
+export async function rehydrateSession(sessionId: string): Promise<string[]> {
+  return persist.rehydrate(sessionId)
+}
+
+/** Flush every pending persist write (called on app quit). */
+export async function flushPersist(): Promise<void> {
+  return persist.flushAll()
+}

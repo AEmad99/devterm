@@ -65,6 +65,24 @@ export default function AgentActivityPanel({
     return entries.filter(isError)
   }, [entries, filter])
 
+  const doExport = async (sid: string) => {
+    try {
+      const written = await window.devterm.bridgeActivity.export(sid)
+      if (written == null) return // user canceled
+      // Subtle confirmation via the title attribute on the next render
+      // would be noisy; use a brief inline message instead.
+      const actions = document.querySelector('.agent-activity-actions')
+      if (!actions) return
+      const prev = actions.getAttribute('data-last-export') ?? ''
+      actions.setAttribute('data-last-export', `Exported ${written} entries`)
+      setTimeout(() => {
+        actions.setAttribute('data-last-export', prev)
+      }, 2000)
+    } catch (e) {
+      console.warn('export failed', e)
+    }
+  }
+
   return (
     <div className="agent-activity">
       <div className="agent-activity-head">
@@ -89,6 +107,14 @@ export default function AgentActivityPanel({
           ))}
         </div>
         <div className="agent-activity-actions">
+          <button
+            className="ghost small"
+            onClick={() => void doExport(sessionId)}
+            title="Export every entry for this session (in-memory + on-disk tail) as JSONL"
+            disabled={loading}
+          >
+            Export
+          </button>
           <button
             className="ghost small"
             onClick={clear}

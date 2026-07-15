@@ -394,7 +394,11 @@ if (process.argv.includes('--self-test')) {
   app.on('window-all-closed', () => {
     agentController?.closeAll()
     fileController?.stopWatches()
-    fileController?.transfers.cancelAll()
+    // Cancel any in-flight persistent transfers. The persistent queue
+    // already cancels in `before-quit`; doing it here too means a window
+    // close without a quit (e.g. dock-quit on macOS) doesn't leak active
+    // streams.
+    void transfersController?.shutdown()
     ptyManager?.killAll()
     sshManager?.disconnectAll()
     if (process.platform !== 'darwin') app.quit()
@@ -403,11 +407,19 @@ if (process.argv.includes('--self-test')) {
   app.on('before-quit', () => {
     agentController?.closeAll()
     fileController?.stopWatches()
-    fileController?.transfers.cancelAll()
     ptyManager?.killAll()
     sshManager?.disconnectAll()
     // Cluster D: persist the transfer queue and the browser zoom map.
     void transfersController?.shutdown()
     void browserController?.shutdown()
+    // Optional persistent search tail (when search.persist is on).
+    void flushPersistSearch()
   })
+}
+
+async function flushPersistSearch(): Promise<void> {
+  // Imported here to avoid a circular import: search/index re-exports from
+  // search/persist, and importing at the top pulls in `electron` early.
+  const { flushPersist } = await import('./search')
+  await flushPersist()
 }

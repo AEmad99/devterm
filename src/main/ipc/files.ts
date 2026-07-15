@@ -1,5 +1,5 @@
 import { ipcMain, BrowserWindow } from 'electron'
-import { IPC, type TransferStartOpts } from '@shared/types'
+import { IPC } from '@shared/types'
 import {
   listLocal,
   localHome,
@@ -20,13 +20,11 @@ import {
   readFileRemote,
   writeFileRemote
 } from '../ssh/sftp'
-import { TransferManager } from '../transfer'
 import { FsWatchManager } from '../fs/watch'
 import { SftpWatchManager } from '../ssh/watch'
 import type { SSHManager } from '../ssh/manager'
 
 export interface FileController {
-  transfers: TransferManager
   /** Stop every live directory watch (on quit). */
   stopWatches: () => void
 }
@@ -88,16 +86,7 @@ export function registerFileIpc(
   ipcMain.handle(IPC.sftpWatch, (_e, sid: string, p: string) => sftpWatcher.start(sid, p))
   ipcMain.on(IPC.sftpUnwatch, (_e, id: string) => sftpWatcher.stop(id))
 
-  // Transfers
-  const transfers = new TransferManager({
-    getSftp: (sid) => ssh.getSftp(sid),
-    onProgress: (id, p) => send(`${IPC.transferProgress}:${id}`, p)
-  })
-  ipcMain.handle(IPC.transferStart, (_e, opts: TransferStartOpts) => transfers.start(opts))
-  ipcMain.on(IPC.transferCancel, (_e, id: string) => transfers.cancel(id))
-
   return {
-    transfers,
     stopWatches: () => {
       fsWatcher.stopAll()
       sftpWatcher.stopAll()

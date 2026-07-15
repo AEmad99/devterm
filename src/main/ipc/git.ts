@@ -543,19 +543,16 @@ export function registerGitIpc(ssh: SSHManager, getWindow: () => BrowserWindow |
   // Live status push (unchanged behavior)
   // ---------------------------------------------------------------------
 
-  const watched = new Set<string>()
+  const watched = new Map<string, { sessionId?: string; path: string }>()
   const lastPushed = new Map<string, string>()
   const interval = setInterval(() => void tick(), POLL_MS)
   const tick = async () => {
     if (watched.size === 0) return
-    for (const key of [...watched]) {
-      const [scope, sidRaw, ...rest] = key.split(':')
-      const path = rest.join(':')
-      const sessionId = scope === 'r' ? sidRaw : undefined
+    for (const [key, target] of [...watched]) {
       try {
-        const next = sessionId
-          ? await resolveRemote(ssh, sessionId, path)
-          : await resolveLocal(path)
+        const next = target.sessionId
+          ? await resolveRemote(ssh, target.sessionId, target.path)
+          : await resolveLocal(target.path)
         const sig = signature(next)
         if (lastPushed.get(key) !== sig) {
           lastPushed.set(key, sig)
@@ -567,7 +564,7 @@ export function registerGitIpc(ssh: SSHManager, getWindow: () => BrowserWindow |
     }
   }
   ipcMain.handle(`${IPC.gitOnChange}:add`, (_e, target: { sessionId?: string; path: string }) => {
-    watched.add(cacheKey(target.sessionId, target.path))
+    watched.set(cacheKey(target.sessionId, target.path), target)
     return true
   })
   ipcMain.handle(

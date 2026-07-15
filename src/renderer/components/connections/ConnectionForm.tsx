@@ -90,9 +90,12 @@ export default function ConnectionForm({
   // The id of the saved connection currently loaded (so Save overwrites it).
   const [editingId, setEditingId] = useState<string | null>(initial?.id ?? null)
   const [doSave, setDoSave] = useState(false)
+  // QuickConnect: recent host:port:user for the host-input datalist.
+  const [recent, setRecent] = useState<{ host: string; port: number; username: string }[]>([])
 
   useEffect(() => {
     window.devterm.connections.list().then(setSaved)
+    window.devterm.quickConnect.list().then(setRecent).catch(() => undefined)
   }, [])
 
   const set = (k: keyof FormState) => (e: React.ChangeEvent<HTMLInputElement>) =>
@@ -106,6 +109,9 @@ export default function ConnectionForm({
 
   const connectSavedNow = (c: SavedConnection) => {
     const { id: _id, name: _name, ...profile } = c
+    void window.devterm.quickConnect
+      .record(profile.host, profile.port, profile.username)
+      .catch(() => undefined)
     connectSsh(profile, { connectionId: c.id })
     onClose()
   }
@@ -131,6 +137,10 @@ export default function ConnectionForm({
           (c) => c.name === name && c.host === profile.host && c.username === profile.username
         )?.id
     }
+    // Record the host for QuickConnect autocomplete (no secrets).
+    void window.devterm.quickConnect
+      .record(profile.host, profile.port, profile.username)
+      .catch(() => undefined)
     connectSsh(profile, { connectionId })
     onClose()
   }
@@ -198,7 +208,17 @@ export default function ConnectionForm({
               required
               placeholder="10.0.0.5"
               autoFocus
+              list="dt-quick-connect"
             />
+            {recent.length > 0 && (
+              <datalist id="dt-quick-connect">
+                {recent.map((r, i) => (
+                  <option key={i} value={r.host}>
+                    {r.username}@{r.host}:{r.port}
+                  </option>
+                ))}
+              </datalist>
+            )}
           </label>
           <label className="port">
             Port

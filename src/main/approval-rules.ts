@@ -67,10 +67,32 @@ export async function remove(id: string): Promise<void> {
  */
 export async function match(sessionId: string, command: string): Promise<ApprovalRule | undefined> {
   const all = await readAll()
+  return matchRules(all, sessionId, command)
+}
+
+/**
+ * Pure, side-effect-free longest-prefix match. Exported for unit tests so
+ * the matching rules can be verified without loading the on-disk store
+ * (which requires Electron's `app` module).
+ *
+ * Specificity = `commandPrefix.length`. A longer global rule beats a
+ * shorter session-specific one. A session-specific rule beats a global rule
+ * of the same length. Session rules only match their session; global rules
+ * match anywhere.
+ *
+ * The prefix must end at a token boundary (whitespace, `|`, `&`, `;`,
+ * `>`, `<`, `(`, or end-of-string) so `kubectl` matches `kubectl get pods`
+ * but NOT `kubectlized`.
+ */
+export function matchRules(
+  rules: ApprovalRule[],
+  sessionId: string,
+  command: string
+): ApprovalRule | undefined {
   const cmd = command.trimStart()
   if (cmd.length === 0) return undefined
   let best: ApprovalRule | undefined
-  for (const r of all) {
+  for (const r of rules) {
     // Session rules only match their session; global rules match anywhere.
     if (r.sessionId != null && r.sessionId !== sessionId) continue
     if (cmd.length < r.commandPrefix.length) continue

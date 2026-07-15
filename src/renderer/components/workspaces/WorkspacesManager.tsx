@@ -1,8 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { SavedConnection, Workspace, WorkspaceItem } from '@shared/types'
-import { useSessions } from '../../store/sessions'
-import { useLayout } from '../../store/layout'
-import { toLiveSnapshot } from '../../lib/workspace'
+import { launchWorkspaceIntoGroup } from '../../lib/workspace'
 import ManagerList from '../common/ManagerList'
 import ManagerRow from '../common/ManagerRow'
 import Button from '../common/Button'
@@ -23,9 +21,6 @@ import { IconGroup, IconConnect, IconTrash, IconEdit, IconCopy } from '../common
  * "Save as workspace" button).
  */
 export default function WorkspacesManager({ onLaunch }: { onLaunch: () => void }) {
-  const connectSsh = useSessions((s) => s.connectSsh)
-  const addLocal = useSessions((s) => s.addLocal)
-
   const [list, setList] = useState<Workspace[]>([])
   const [conns, setConns] = useState<SavedConnection[]>([])
   // Inline editor state. `null` = closed. `id` picks the row, `name` + `description`
@@ -86,54 +81,19 @@ export default function WorkspacesManager({ onLaunch }: { onLaunch: () => void }
 
   const launch = async (ws: Workspace) => {
     onLaunch()
-    // Each launch opens into its own group tab (named after the workspace), so it
-    // sits beside — never on top of — whatever terminals are already open.
-    const groupId = `ws-${ws.id}-${Date.now()}`
-    const layout = useLayout.getState()
-    layout.ensureGroup(groupId, ws.name)
-    // Tag the group as launched from this workspace so the group bar can offer
-    // a "Save changes back to this workspace" action. Done BEFORE the terminals
-    // open so the flag is set even if the user immediately closes the group.
-    layout.flagGroupLaunched(groupId, ws.id)
+    // Each launch opens into its own group tab (named after the workspace), so
+    // it sits beside — never on top of — whatever terminals are already open.
+    // `recordLaunch: true` so the server-side count is bumped for the user's
+    // click (auto-launch on app boot does NOT count; the count tracks
+    // operator-initiated launches).
+    await launchWorkspaceIntoGroup(ws, conns, { recordLaunch: true })
+    // Refresh the list to pick up the new lastLaunchedAt / launchCount.
+    refresh()
+  }
 
-    const map = new Map<string, string>() // workspace-item id -> new live session id
-    // Open each terminal. Locals are synchronous; remotes connect in parallel.
-    await Promise.all(
-      ws.items.map(async (it) => {
-        if (it.kind === 'local') {
-          map.set(it.id, addLocal({ cwd: it.cwd, groupId }))
-          return
-        }
-        const c = conns.find((x) => x.id === it.connectionId)
-        if (!c) return
-        const { id: _id, name: _n, ...profile } = c
-        const sid = await connectSsh(profile, {
-          connectionId: it.connectionId,
-          startCwd: it.cwd,
-          groupId
-        })
-        if (sid) map.set(it.id, sid)
-      })
-    )
-    const snap = ws.layout ? toLiveSnapshot(ws.layout, map) : null
-    // Let App's layout-sync effect stack the new sessions into the group first,
-    // then either overwrite with the saved split arrangement, or — if there's no
-    // saved layout — just focus the group (the stacked layout already stands;
-    // calling restoreGroup with null would wipe those freshly-added tabs).
-    const layoutTimer = setTimeout(() => {
-      const layout2 = useLayout.getState()
-      if (snap) layout2.restoreGroup(groupId, ws.name, snap)
-      else layout2.setActiveGroup(groupId)
-    }, 80)
-    return () => clearTimeout(layoutTimer)
-
-    // Record the launch in the workspace stats (lastLaunchedAt + launchCount).
-    // Fire-and-forget: the UI already shows the freshly-launched group, the
-    // server-side count is only used to render the row on next visit.
-    void window.devterm.workspaces
-      .recordLaunch(ws.id)
-      .then(setList)
-      .catch(() => undefined)
+  const toggleAutoLaunch = async (ws: Workspace, value: boolean) => {
+    const next = await window.devterm.workspaces.save({ ...ws, autoLaunch: value })
+    setList(next)
   }
 
   const counts = (ws: Workspace) => {
@@ -218,17 +178,24 @@ export default function WorkspacesManager({ onLaunch }: { onLaunch: () => void }
                         {counts(ws) ? ` · ${counts(ws)}` : ''} ·{' '}
                         {ws.items.map(itemLabel).join(', ')}
                       </div>
-                      {(launched || (ws.launchCount ?? 0) > 0) && (
-                        <div className="mr-stats">
-                          {launched && <span>last launched {launched}</span>}
-                          {launched && (ws.launchCount ?? 0) > 0 ? ' · ' : ''}
-                          {(ws.launchCount ?? 0) > 0 && (
-                            <span>
-                              {ws.launchCount} launch{ws.launchCount === 1 ? '' : 'es'}
-                            </span>
-                          )}
-                        </div>
-                      )}
+                      <div className="mr-stats">
+                        {launched && <span>last launched {launched}</span>}
+                        {launched && ((ws.launchCount ?? 0) > 0 || ws.autoLaunch) ? ' · ' : ''}
+                        {(ws.launchCount ?? 0) > 0 && (
+                          <span>
+                            {ws.launchCount} launch{ws.launchCount === 1 ? '' : 'es'}
+                          </span>
+                        )}
+                        {(ws.launchCount ?? 0) > 0 && ws.autoLaunch ? ' · ' : ''}
+                        <label className="ws-auto-launch">
+                          <input
+                            type="checkbox"
+                            checked={ws.autoLaunch === true}
+                            onChange={(e) => void toggleAutoLaunch(ws, e.target.checked)}
+                          />
+                          <span>auto-launch on startup</span>
+                        </label>
+                      </div>
                     </>
                   )
                 }

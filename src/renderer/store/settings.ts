@@ -94,6 +94,13 @@ export interface AppSettings {
   >
   /** Local voice dictation (offline Whisper speech-to-text into the active terminal). */
   stt: STTSettings
+  /**
+   * Persist global-search lines to `userData/search/<sid>.jsonl` so they
+   * survive a restart. Off by default — the in-memory index is the hot
+   * path. When on, the main process tails every push (local + remote
+   * PTY) so a closed session's recent output is still searchable.
+   */
+  searchPersist: boolean
 }
 
 /**
@@ -186,7 +193,8 @@ const DEFAULTS: AppSettings = {
     language: 'auto',
     appendSpace: true,
     showFloatingStatus: true
-  }
+  },
+  searchPersist: false
 }
 
 const STORAGE_KEY = 'devterm.settings.v1'
@@ -238,7 +246,11 @@ function load(): AppSettings {
       gitPanelOpen:
         typeof parsed?.gitPanelOpen === 'boolean' ? parsed.gitPanelOpen : DEFAULTS.gitPanelOpen,
       keybindings: normalizeKeybindings(parsed?.keybindings),
-      stt: normalizeStt(parsed?.stt)
+      stt: normalizeStt(parsed?.stt),
+      searchPersist:
+        typeof parsed?.searchPersist === 'boolean'
+          ? parsed.searchPersist
+          : DEFAULTS.searchPersist
     }
   } catch {
     return DEFAULTS
@@ -340,35 +352,53 @@ interface SettingsState extends AppSettings {
   ) => void
   resetKeybindings: () => void
   setStt: (patch: Partial<STTSettings>) => void
+  /** Toggle the optional persistent search index tail (off by default). */
+  setSearchPersist: (v: boolean) => void
+  /**
+   * Apply an imported settings snapshot (received from `settings:imported`)
+   * to the live store and localStorage. Unknown/missing fields fall back to
+   * the existing value rather than the default — the snapshot is merged
+   * with defaults on the main side, so this is the authoritative shape.
+   * Also pushes the live SSH reconnect policy to main since the renderer's
+   * setter normally does that.
+   */
+  applyImported: (s: import('@shared/types').SettingsSnapshot) => void
   reset: () => void
 }
 
 function persist(state: AppSettings): void {
+  const payload: AppSettings = {
+    themeId: state.themeId,
+    terminalBg: state.terminalBg,
+    prefs: state.prefs,
+    autoReconnect: state.autoReconnect,
+    attention: state.attention,
+    showStatusBar: state.showStatusBar,
+    agentActivityCollapsed: state.agentActivityCollapsed,
+    inactivePaneDimming: state.inactivePaneDimming,
+    sftpSidePane: state.sftpSidePane,
+    activityIndicators: state.activityIndicators,
+    zenMode: state.zenMode,
+    agentKind: state.agentKind,
+    transfersPanelOpen: state.transfersPanelOpen,
+    defaultShell: state.defaultShell,
+    gitPanelOpen: state.gitPanelOpen,
+    keybindings: state.keybindings,
+    stt: state.stt,
+    searchPersist: state.searchPersist
+  }
   try {
-    localStorage.setItem(
-      STORAGE_KEY,
-      JSON.stringify({
-        themeId: state.themeId,
-        terminalBg: state.terminalBg,
-        prefs: state.prefs,
-        autoReconnect: state.autoReconnect,
-        attention: state.attention,
-        showStatusBar: state.showStatusBar,
-        agentActivityCollapsed: state.agentActivityCollapsed,
-        inactivePaneDimming: state.inactivePaneDimming,
-        sftpSidePane: state.sftpSidePane,
-        activityIndicators: state.activityIndicators,
-        zenMode: state.zenMode,
-        agentKind: state.agentKind,
-        transfersPanelOpen: state.transfersPanelOpen,
-        defaultShell: state.defaultShell,
-        gitPanelOpen: state.gitPanelOpen,
-        keybindings: state.keybindings,
-        stt: state.stt
-      })
-    )
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(payload))
   } catch {
     /* storage full / unavailable — settings simply won't persist */
+  }
+  // Fire-and-forget push to main so `userData/settings.json` stays canonical
+  // for the settings export bundle. Settings live in renderer localStorage;
+  // main mirrors the snapshot. A sync failure here never affects the live UI.
+  try {
+    window.devterm.settingsIo.sync(payload)
+  } catch {
+    /* preload bridge not ready (e.g. very early boot) — ignore */
   }
 }
 
@@ -475,6 +505,63 @@ export const useSettings = create<SettingsState>((set, get) => ({
     persist(snapshot(get()))
   },
 
+  setSearchPersist: (v) => {
+    set({ searchPersist: v })
+    persist(snapshot(get()))
+  },
+
+  applyImported: (s) => {
+    if (!s || typeof s !== 'object') return
+    // Merge over current state so a partial snapshot (older bundle) doesn't
+    // wipe fields the bundle didn't carry. Every field is independently
+    // type-checked via the `??` fallbacks.
+    const cur = get()
+    const next: AppSettings = {
+      themeId: typeof s.themeId === 'string' ? s.themeId : cur.themeId,
+      terminalBg: s.terminalBg ? { ...cur.terminalBg, ...s.terminalBg } : cur.terminalBg,
+      prefs: s.prefs ? { ...cur.prefs, ...s.prefs } : cur.prefs,
+      autoReconnect: s.autoReconnect
+        ? { ...cur.autoReconnect, ...s.autoReconnect }
+        : cur.autoReconnect,
+      attention: s.attention ? { ...cur.attention, ...s.attention } : cur.attention,
+      showStatusBar:
+        typeof s.showStatusBar === 'boolean' ? s.showStatusBar : cur.showStatusBar,
+      agentActivityCollapsed:
+        typeof s.agentActivityCollapsed === 'boolean'
+          ? s.agentActivityCollapsed
+          : cur.agentActivityCollapsed,
+      inactivePaneDimming:
+        typeof s.inactivePaneDimming === 'boolean'
+          ? s.inactivePaneDimming
+          : cur.inactivePaneDimming,
+      sftpSidePane:
+        typeof s.sftpSidePane === 'boolean' ? s.sftpSidePane : cur.sftpSidePane,
+      activityIndicators:
+        typeof s.activityIndicators === 'boolean'
+          ? s.activityIndicators
+          : cur.activityIndicators,
+      zenMode: typeof s.zenMode === 'boolean' ? s.zenMode : cur.zenMode,
+      agentKind: s.agentKind ?? cur.agentKind,
+      transfersPanelOpen:
+        typeof s.transfersPanelOpen === 'boolean'
+          ? s.transfersPanelOpen
+          : cur.transfersPanelOpen,
+      defaultShell: s.defaultShell ?? cur.defaultShell,
+      gitPanelOpen:
+        typeof s.gitPanelOpen === 'boolean' ? s.gitPanelOpen : cur.gitPanelOpen,
+      keybindings: s.keybindings ?? cur.keybindings,
+      stt: s.stt ? { ...cur.stt, ...s.stt } : cur.stt,
+      searchPersist:
+        typeof s.searchPersist === 'boolean' ? s.searchPersist : cur.searchPersist
+    }
+    set(next)
+    persist(next)
+    // The setter side-effects (push live auto-reconnect policy to main) won't
+    // fire when we `set()` directly; do it here so the imported reconnect
+    // policy takes effect on the SSH manager without a restart.
+    void window.devterm.ssh.setReconnectPolicy?.(next.autoReconnect).catch(() => undefined)
+  },
+
   reset: () => {
     set({
       themeId: DEFAULTS.themeId,
@@ -492,12 +579,25 @@ export const useSettings = create<SettingsState>((set, get) => ({
       transfersPanelOpen: DEFAULTS.transfersPanelOpen,
       defaultShell: DEFAULTS.defaultShell,
       keybindings: DEFAULTS.keybindings,
-      stt: DEFAULTS.stt
+      stt: DEFAULTS.stt,
+      searchPersist: DEFAULTS.searchPersist
     })
     persist(DEFAULTS)
     void window.devterm.ssh.setReconnectPolicy?.(DEFAULTS.autoReconnect).catch(() => undefined)
   }
 }))
+
+/**
+ * Re-apply imported settings to the live store as soon as main fires
+ * `settings:imported` (after a successful import). Wired once at module
+ * load so it survives component remounts. `applyImported` itself is part
+ * of the store so callers can also trigger it directly.
+ */
+if (typeof window !== 'undefined' && window.devterm?.settingsIo) {
+  window.devterm.settingsIo.onImported((snapshot) => {
+    if (snapshot) useSettings.getState().applyImported(snapshot)
+  })
+}
 
 /** Build a plain `AppSettings` snapshot from the live store (used by every
  * setter so we don't have to repeat the same set of fields on every call). */
@@ -519,6 +619,7 @@ function snapshot(s: SettingsState): AppSettings {
     defaultShell: s.defaultShell,
     gitPanelOpen: s.gitPanelOpen,
     keybindings: s.keybindings,
-    stt: s.stt
+    stt: s.stt,
+    searchPersist: s.searchPersist
   }
 }

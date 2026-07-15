@@ -1,6 +1,7 @@
 import { app } from 'electron'
 import { createHash } from 'crypto'
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs'
+import { promises as fsp } from 'fs'
 import { dirname, join } from 'path'
 
 /**
@@ -13,6 +14,12 @@ import { dirname, join } from 'path'
 export type HostKeyVerdict =
   | { ok: true; firstUse: boolean; fingerprint: string }
   | { ok: false; fingerprint: string; expected: string }
+
+export interface KnownHost {
+  /** `host:port` identifier used as the store key. */
+  hostId: string
+  fingerprint: string
+}
 
 let cache: Record<string, string> | null = null
 
@@ -37,6 +44,14 @@ function persist(): void {
   writeFileSync(p, JSON.stringify(cache ?? {}, null, 2), { mode: 0o600 })
 }
 
+async function persistAsync(): Promise<void> {
+  const p = storePath()
+  await fsp.mkdir(dirname(p), { recursive: true })
+  await fsp.writeFile(p, JSON.stringify(cache ?? {}, null, 2), {
+    mode: 0o600
+  })
+}
+
 export function fingerprintOf(key: Buffer): string {
   return 'SHA256:' + createHash('sha256').update(key).digest('base64').replace(/=+$/, '')
 }
@@ -55,4 +70,28 @@ export function verifyHostKey(hostId: string, key: Buffer): HostKeyVerdict {
     return { ok: false, fingerprint, expected }
   }
   return { ok: true, firstUse: false, fingerprint }
+}
+
+/**
+ * List every trusted host. Async to keep the file IO off the main thread
+ * when called from the UI (the SSH handshake still uses the sync path).
+ * Sorted by hostId for stable display.
+ */
+export async function list(): Promise<KnownHost[]> {
+  const store = load()
+  return Object.keys(store)
+    .sort()
+    .map((hostId) => ({ hostId, fingerprint: store[hostId] }))
+}
+
+/**
+ * Forget a trusted host. The next connect to that host will re-trigger the
+ * TOFU `hostkey-new` SSHStatus event so the operator can re-accept the key.
+ * No-op if the host isn't trusted.
+ */
+export async function remove(hostId: string): Promise<void> {
+  const store = load()
+  if (!(hostId in store)) return
+  delete store[hostId]
+  await persistAsync()
 }

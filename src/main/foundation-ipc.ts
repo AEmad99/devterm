@@ -6,22 +6,29 @@
 //   - bridge-activity:{list,clear,event:<sessionId>}
 //       list/clear are invoke; event is a per-session push the renderer
 //       subscribes to via `bridgeActivity.on()`.
-//   - settings-io:{export,import}
-//       Both pop a native file dialog. The actual read/write is in
-//       `./settings-io.ts`.
+//   - settings-io:{export,import,sync}
+//       Export/import pop a native file dialog. The renderer's localStorage
+//       is the canonical live store; `sync` lets it push its full snapshot
+//       to `userData/settings.json` so the export bundle is up to date. On
+//       import, `settingsImported` fires with the merged-with-defaults
+//       snapshot for the renderer to apply.
 //   - approval-rules (action-style single channel)
 //       Payload: { op: 'list'|'add'|'remove'|'match', ... }. We dispatch on
 //       `op` so adding a new verb later doesn't multiply channel constants.
 //   - port-forward:{list,add,remove}
-//       `list` is real (in-memory map for now). `add`/`remove` throw
-//       NotImplementedError until Cluster B wires them to the ssh2 client.
+//       All real for local `-L` forwards (delegated to
+//       `SSHManager.forwardManager`). Dynamic `-D` SOCKS throws inside the
+//       manager.
 
-import { BrowserWindow, ipcMain } from 'electron'
+import { BrowserWindow, dialog, ipcMain } from 'electron'
 import { IPC } from '@shared/types'
 import type { SSHManager } from './ssh/manager'
 import * as bridgeActivity from './bridge-activity'
 import * as approvalRules from './approval-rules'
+import * as knownHosts from './ssh/knownHosts'
 import * as settingsIo from './settings-io'
+import * as quickConnect from './quick-connect'
+import { setPersistEnabled } from './search'
 
 function pushBridgeActivity(
   getWindow: () => BrowserWindow | null,
@@ -52,6 +59,30 @@ export function registerFoundationIpc(
     bridgeActivity.clear(sessionId)
   })
 
+  ipcMain.handle(
+    IPC.bridgeActivityExport,
+    async (_e, sessionId: string, targetPath?: string) => {
+      if (typeof sessionId !== 'string') return null
+      let path = targetPath
+      if (!path) {
+        const win = getWindow()
+        const opts = {
+          title: 'Export bridge activity log',
+          defaultPath: `devterm-bridge-${sessionId.slice(0, 8)}-${new Date()
+            .toISOString()
+            .slice(0, 10)}.jsonl`,
+          filters: [{ name: 'JSON Lines', extensions: ['jsonl'] }]
+        }
+        const result = win
+          ? await dialog.showSaveDialog(win, opts)
+          : await dialog.showSaveDialog(opts)
+        if (result.canceled || !result.filePath) return null
+        path = result.filePath
+      }
+      return bridgeActivity.exportSession(sessionId, path)
+    }
+  )
+
   // The data layer doesn't know about BrowserWindow — expose a tiny bus so
   // other modules (the agent bridge, the policy enforcer) can record events
   // without importing Electron. They call `recordAndPush` and we both update
@@ -73,9 +104,24 @@ export function registerFoundationIpc(
     const result = await settingsIo.importFromPath(getWindow)
     if (result.ok) {
       const win = getWindow()
-      if (win && !win.isDestroyed()) win.webContents.send(IPC.settingsImported)
+      if (win && !win.isDestroyed()) win.webContents.send(IPC.settingsImported, result.settings ?? null)
     }
     return result
+  })
+
+  /**
+   * Renderer → main: push the live `AppSettings` snapshot so
+   * `userData/settings.json` stays in sync with the renderer's localStorage
+   * store. Tolerant of any (possibly partial) snapshot.
+   */
+  ipcMain.on(IPC.settingsSync, (_e, snapshot: import('@shared/types').SettingsSnapshot) => {
+    if (!snapshot || typeof snapshot !== 'object') return
+    // Forward the persist-search toggle to the search module so a setting
+    // flip takes effect without a restart.
+    setPersistEnabled(snapshot.searchPersist === true)
+    void settingsIo.writeSnapshot(snapshot).catch((err) => {
+      console.warn('settings:sync write failed:', err)
+    })
   })
 
   // -------------------------------------------------------------------------
@@ -108,6 +154,28 @@ export function registerFoundationIpc(
     }
   )
 
+  // -------------------------------------------------------------------------
+  // known-hosts (TOFU store)
+  // -------------------------------------------------------------------------
+  ipcMain.handle(IPC.knownHostsList, async () => knownHosts.list())
+  ipcMain.handle(IPC.knownHostsRemove, async (_e, hostId: string) => {
+    if (typeof hostId !== 'string') return
+    await knownHosts.remove(hostId)
+  })
+
+  // -------------------------------------------------------------------------
+  // quick-connect (recent host:port:user triples)
+  // -------------------------------------------------------------------------
+  ipcMain.handle(IPC.quickConnectList, async () => quickConnect.list())
+  ipcMain.handle(
+    IPC.quickConnectRecord,
+    async (_e, host: string, port: number, username: string) => {
+      if (typeof host !== 'string' || typeof port !== 'number' || typeof username !== 'string') {
+        return
+      }
+      await quickConnect.record(host, port, username)
+    }
+  )
   // -------------------------------------------------------------------------
   // port-forward
   // -------------------------------------------------------------------------

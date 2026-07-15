@@ -1,8 +1,9 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import ModalShell from '../common/ModalShell'
 import { IconGrid } from '../common/Icons'
 import { GRID_MAX_COLS, GRID_MAX_ROWS, GRID_MIN_DIM, validateGridSpec } from '../../lib/grid'
 import { createTerminalGrid, type CreateGridResult } from '../../lib/createGrid'
+import type { SavedConnection } from '@shared/types'
 
 interface Preset {
   label: string
@@ -34,9 +35,30 @@ export default function CreateGridModal({
   const [broadcastOpen, setBroadcastOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Remote-only state.
+  const [connections, setConnections] = useState<SavedConnection[]>([])
+  const [connectionId, setConnectionId] = useState<string>('')
+
+  // Load saved connections lazily when the modal opens, so the picker is
+  // ready by the time the user picks "Remote (SSH)".
+  useEffect(() => {
+    if (!open) return
+    window.devterm.connections
+      .list()
+      .then((list) => {
+        setConnections(list)
+        if (list.length > 0 && !connectionId) setConnectionId(list[0].id)
+      })
+      .catch(() => undefined)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open])
 
   const validation = useMemo(() => validateGridSpec({ rows, cols }), [rows, cols])
   const total = rows * cols
+  const canCreate =
+    !validation &&
+    !busy &&
+    (kind === 'local' || (kind === 'remote' && connectionId && connections.length > 0))
 
   const applyPreset = (p: Preset) => {
     setRows(p.rows)
@@ -46,7 +68,11 @@ export default function CreateGridModal({
   const clampDim = (n: number) => Math.min(GRID_MAX_ROWS, Math.max(GRID_MIN_DIM, n))
 
   const handleCreate = () => {
-    if (validation || kind !== 'local') return
+    if (validation) return
+    if (kind === 'remote' && !connectionId) {
+      setError('Pick a saved SSH connection first')
+      return
+    }
     setBusy(true)
     setError(null)
     try {
@@ -54,6 +80,7 @@ export default function CreateGridModal({
         rows,
         cols,
         kind,
+        connectionId: kind === 'remote' ? connectionId : undefined,
         broadcast:
           broadcast.trim() && broadcastOpen
             ? { command: broadcast.trim(), execute: broadcastExecute }
@@ -81,11 +108,7 @@ export default function CreateGridModal({
           <button className="ghost" onClick={onClose} disabled={busy}>
             Cancel
           </button>
-          <button
-            className="primary"
-            onClick={handleCreate}
-            disabled={!!validation || busy || kind !== 'local'}
-          >
+          <button className="primary" onClick={handleCreate} disabled={!canCreate}>
             {busy ? 'Creating…' : `Create grid (${total})`}
           </button>
         </>
@@ -148,24 +171,43 @@ export default function CreateGridModal({
           </span>
           <span>Local shells</span>
         </label>
-        <label className={`grid-kind-option disabled ${kind === 'remote' ? 'active' : ''}`}>
+        <label className={`grid-kind-option ${kind === 'remote' ? 'active' : ''}`}>
           <input
             type="radio"
             name="grid-kind"
             value="remote"
             checked={kind === 'remote'}
             onChange={() => setKind('remote')}
-            disabled
+            disabled={connections.length === 0}
           />
           <span className="grid-kind-ico">
             <IconGrid size={20} />
           </span>
           <span>
             Remote (SSH)
-            <small>Coming soon</small>
+            {connections.length === 0 && <small>no saved connections</small>}
           </span>
         </label>
       </div>
+
+      {kind === 'remote' && connections.length > 0 && (
+        <label className="grid-conn-picker">
+          <span>Connection</span>
+          <select
+            className="text-input"
+            value={connectionId}
+            onChange={(e) => setConnectionId(e.target.value)}
+          >
+            {connections.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name} ({c.username}@{c.host}
+                {c.port && c.port !== 22 ? `:${c.port}` : ''})
+              </option>
+            ))}
+          </select>
+          <small>Each grid cell opens its own SSH session to this host.</small>
+        </label>
+      )}
 
       <div className="grid-broadcast">
         <button
@@ -199,9 +241,10 @@ export default function CreateGridModal({
 
       {validation && <div className="grid-error">{validation}</div>}
       {error && <div className="grid-error">{error}</div>}
-      {!validation && (
+      {!validation && !error && (
         <div className="grid-hint">
-          Opens {total} local terminal{total === 1 ? '' : 's'} in a new group.
+          Opens {total} {kind === 'local' ? 'local' : 'remote SSH'} terminal
+          {total === 1 ? '' : 's'} in a new group.
           {broadcast.trim() &&
             broadcastOpen &&
             ' The command will be broadcast after the grid is ready.'}

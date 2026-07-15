@@ -1,10 +1,13 @@
 // Foundation (cluster gate) — settings export/import.
 //
 // Pure serialization layer. Reads/writes the existing per-feature JSON stores
-// in `userData/`. Does NOT touch the live renderer settings store (which is
-// localStorage-backed and renderer-only); it only round-trips the on-disk
-// copies. Importing requires an explicit `mode: 'merge' | 'replace'` so a
-// mistaken overwrite can't silently nuke the user's saved connections.
+// in `userData/`. Settings live in the renderer's localStorage store, which
+// pushes its full snapshot here on every change via the `settings:sync` IPC
+// so the on-disk file stays canonical. The export bundle reads the real
+// file (not a hardcoded default) and the import flow re-applies the same
+// snapshot to the renderer via the `settings:imported` event. Importing
+// requires an explicit `mode: 'merge' | 'replace'` so a mistaken overwrite
+// can't silently nuke the user's saved connections.
 //
 // On export, secret fields (`password`, `passphrase`, `privateKeyPath`) are
 // STRIPPED from every connection — including the nested `jump` bastion hop.
@@ -15,11 +18,17 @@ import { app, dialog, BrowserWindow } from 'electron'
 import { promises as fs } from 'fs'
 import { join } from 'path'
 import type {
+  AgentKind,
   ApprovalRule,
+  AttentionSettingsSnapshot,
+  DefaultShellPref,
   SavedConnection,
   SettingsExportBundle,
   SettingsSnapshot,
+  STTSettings,
   Snippet,
+  TerminalBg,
+  TerminalPrefs,
   Workspace
 } from '@shared/types'
 import * as approvalRules from './approval-rules'
@@ -46,10 +55,25 @@ async function readJson<T>(file: string, fallback: T): Promise<T> {
 }
 
 async function readSettingsSnapshot(): Promise<SettingsSnapshot> {
-  // The main process doesn't have a canonical settings.json yet — settings
-  // live in renderer localStorage. For export, fall back to the same defaults
-  // the renderer uses so the bundle is still self-describing.
-  const defaults: SettingsSnapshot = {
+  // Settings are kept in sync with the renderer's localStorage by the
+  // `settings:sync` IPC; read whatever's on disk (full or legacy 4-field
+  // shape) and merge over the same defaults the renderer uses so the bundle
+  // is always self-describing.
+  const defaults = defaultSettingsSnapshot()
+  const raw = await readJson<Partial<SettingsSnapshot> & Record<string, unknown>>(
+    settingsFile(),
+    {}
+  )
+  return mergeSnapshotWithDefaults(raw, defaults)
+}
+
+/**
+ * The defaults the renderer uses in `store/settings.ts`. Duplicated here so
+ * the export bundle is self-describing even when the renderer hasn't pushed
+ * its snapshot yet (e.g. a fresh install on first run).
+ */
+export function defaultSettingsSnapshot(): SettingsSnapshot {
+  return {
     themeId: 'tokyo-night',
     terminalBg: { color: '#16181d', image: null, dim: 0.35 },
     prefs: {
@@ -70,20 +94,63 @@ async function readSettingsSnapshot(): Promise<SettingsSnapshot> {
       baseDelayMs: 1000,
       maxDelayMs: 30000,
       factor: 2
-    }
+    },
+    attention: { enabled: true, sound: true, volume: 0.5, system: true, idle: true },
+    showStatusBar: true,
+    agentActivityCollapsed: false,
+    inactivePaneDimming: true,
+    sftpSidePane: false,
+    activityIndicators: true,
+    zenMode: false,
+    agentKind: 'claude' as AgentKind,
+    transfersPanelOpen: false,
+    defaultShell: { kind: 'auto' } as DefaultShellPref,
+    gitPanelOpen: false,
+    keybindings: {},
+    stt: {
+      enabled: true,
+      modelId: 'base',
+      language: 'auto',
+      appendSpace: true,
+      showFloatingStatus: true
+    } as STTSettings,
+    searchPersist: false
   }
-  const raw = await readJson<Partial<SettingsSnapshot> & Record<string, unknown>>(
-    settingsFile(),
-    {}
-  )
-  // Shallow merge over defaults so older/missing files still produce a valid
-  // snapshot. We trust the file's shape to be a partial SettingsSnapshot.
-  return {
-    themeId: typeof raw.themeId === 'string' ? raw.themeId : defaults.themeId,
-    terminalBg: { ...defaults.terminalBg, ...(raw.terminalBg ?? {}) },
-    prefs: { ...defaults.prefs, ...(raw.prefs ?? {}) },
-    autoReconnect: { ...defaults.autoReconnect, ...(raw.autoReconnect ?? {}) }
+}
+
+/**
+ * Shallow-merge a (possibly partial) snapshot with defaults. Every field is
+ * individually type-checked so a hand-edited or older `settings.json`
+ * (which had only themeId/terminalBg/prefs/autoReconnect) yields a valid
+ * full snapshot.
+ */
+export function mergeSnapshotWithDefaults(
+  raw: Partial<SettingsSnapshot> & Record<string, unknown>,
+  defaults: SettingsSnapshot
+): SettingsSnapshot {
+  const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object'
+  const out: SettingsSnapshot = { ...defaults }
+  if (typeof raw.themeId === 'string') out.themeId = raw.themeId
+  if (isObj(raw.terminalBg)) out.terminalBg = { ...defaults.terminalBg, ...raw.terminalBg } as TerminalBg
+  if (isObj(raw.prefs)) out.prefs = { ...defaults.prefs, ...raw.prefs } as TerminalPrefs
+  if (isObj(raw.autoReconnect)) out.autoReconnect = { ...defaults.autoReconnect, ...raw.autoReconnect }
+  if (isObj(raw.attention)) {
+    out.attention = { ...(defaults.attention ?? {}), ...raw.attention } as AttentionSettingsSnapshot
   }
+  if (typeof raw.showStatusBar === 'boolean') out.showStatusBar = raw.showStatusBar
+  if (typeof raw.agentActivityCollapsed === 'boolean') out.agentActivityCollapsed = raw.agentActivityCollapsed
+  if (typeof raw.inactivePaneDimming === 'boolean') out.inactivePaneDimming = raw.inactivePaneDimming
+  if (typeof raw.sftpSidePane === 'boolean') out.sftpSidePane = raw.sftpSidePane
+  if (typeof raw.activityIndicators === 'boolean') out.activityIndicators = raw.activityIndicators
+  if (typeof raw.zenMode === 'boolean') out.zenMode = raw.zenMode
+  if (typeof raw.agentKind === 'string') out.agentKind = raw.agentKind as AgentKind
+  if (typeof raw.transfersPanelOpen === 'boolean') out.transfersPanelOpen = raw.transfersPanelOpen
+  if (isObj(raw.defaultShell)) out.defaultShell = raw.defaultShell as DefaultShellPref
+  if (typeof raw.gitPanelOpen === 'boolean') out.gitPanelOpen = raw.gitPanelOpen
+  if (isObj(raw.keybindings)) out.keybindings = raw.keybindings as SettingsSnapshot['keybindings']
+  if (isObj(raw.stt)) out.stt = { ...(defaults.stt ?? {}), ...raw.stt } as STTSettings
+  if (typeof raw.searchPersist === 'boolean') out.searchPersist = raw.searchPersist
+  return out
 }
 
 async function readSnippets(): Promise<Snippet[]> {
@@ -146,6 +213,16 @@ async function writeSettingsSnapshot(s: SettingsSnapshot): Promise<void> {
   await writeJsonAtomic(settingsFile(), { version: 1, ...s })
 }
 
+/**
+ * Write the live renderer settings snapshot to `userData/settings.json`.
+ * Called from the `settings:sync` IPC on every renderer `persist()` so the
+ * on-disk file is the canonical source for export/import. Tolerant of any
+ * (possibly partial) snapshot — we just write whatever the renderer sends.
+ */
+export async function writeSnapshot(s: SettingsSnapshot): Promise<void> {
+  await writeSettingsSnapshot(s)
+}
+
 async function writeSnippets(list: Snippet[]): Promise<void> {
   await writeJsonAtomic(snippetsFile(), { version: 1, snippets: list })
 }
@@ -195,6 +272,8 @@ export interface ImportCounts {
 export interface ImportResult {
   ok: boolean
   counts?: ImportCounts
+  /** The settings snapshot that was applied, so the renderer can re-load its store. */
+  settings?: SettingsSnapshot
   error?: string
 }
 
@@ -206,8 +285,12 @@ export async function importAll(
     return { ok: false, error: 'Unsupported bundle version' }
   }
   try {
+    // Always merge missing fields with the renderer's defaults so an older
+    // bundle (with only themeId/terminalBg/prefs/autoReconnect) still
+    // produces a complete snapshot for the renderer to apply.
+    const settings = mergeSnapshotWithDefaults(bundle.settings as Record<string, unknown>, defaultSettingsSnapshot())
     if (opts.mode === 'replace') {
-      await writeSettingsSnapshot(bundle.settings)
+      await writeSettingsSnapshot(settings)
       await writeSnippets(bundle.snippets)
       await writeWorkspaces(bundle.workspaces)
       await writeApprovalRules(bundle.approvalRules)
@@ -216,7 +299,7 @@ export async function importAll(
       // Settings: bundle wins (it's a single object). Snippets/workspaces/
       // approval rules: dedupe by id; bundle entries override existing ones
       // with the same id, and missing ones are appended.
-      await writeSettingsSnapshot(bundle.settings)
+      await writeSettingsSnapshot(settings)
       const [curSnippets, curWorkspaces, curRules] = await Promise.all([
         readSnippets(),
         readWorkspaces(),
@@ -236,7 +319,8 @@ export async function importAll(
         snippets: bundle.snippets.length,
         workspaces: bundle.workspaces.length,
         approvalRules: bundle.approvalRules.length
-      }
+      },
+      settings
     }
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) }

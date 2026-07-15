@@ -11,8 +11,6 @@ import {
   type HostContext,
   type DirListing,
   type FileContent,
-  type TransferStartOpts,
-  type TransferProgress,
   type AgentOpenOpts,
   type AgentOpenResult,
   type AgentBridgeStatus,
@@ -123,12 +121,11 @@ const api: DevTermApi = {
     seed: (sessionId: string, lines: string[]) =>
       ipcRenderer.invoke(IPC.searchSeed, sessionId, lines)
   },
-  transfer: {
-    start: (opts: TransferStartOpts): Promise<string> =>
-      ipcRenderer.invoke(IPC.transferStart, opts),
-    cancel: (id: string) => ipcRenderer.send(IPC.transferCancel, id),
-    onProgress: (id, cb) => subscribe<TransferProgress>(`${IPC.transferProgress}:${id}`, cb)
-  },
+  /**
+   * The legacy `transfer` namespace (non-persistent TransferManager) is
+   * retired. The persistent `transfers` namespace below is the only
+   * transfer entry point.
+   */
   agent: {
     open: (opts: AgentOpenOpts): Promise<AgentOpenResult> =>
       ipcRenderer.invoke(IPC.agentOpen, opts),
@@ -201,7 +198,11 @@ const api: DevTermApi = {
     ): Promise<BridgeActivityEntry[]> =>
       ipcRenderer.invoke(IPC.bridgeActivityList, sessionId, opts),
     clear: (sessionId: string): Promise<void> =>
-      ipcRenderer.invoke(IPC.bridgeActivityClear, sessionId)
+      ipcRenderer.invoke(IPC.bridgeActivityClear, sessionId),
+    export: (sessionId: string, targetPath?: string): Promise<number | null> =>
+      ipcRenderer.invoke(IPC.bridgeActivityExport, sessionId, targetPath) as Promise<
+        number | null
+      >
   },
   settingsIo: {
     export: (): Promise<string | null> =>
@@ -211,7 +212,18 @@ const api: DevTermApi = {
       error?: string
       counts?: { settings: boolean; snippets: number; workspaces: number; approvalRules: number }
     }> => ipcRenderer.invoke(IPC.settingsIoImport),
-    onImported: (cb: () => void): (() => void) => subscribe(IPC.settingsImported, cb)
+    /**
+     * Push the live renderer settings snapshot to the main process so the
+     * on-disk `userData/settings.json` stays in sync with localStorage.
+     * Fire-and-forget; the main process logs and continues on write errors.
+     */
+    sync: (snapshot: import('@shared/types').SettingsSnapshot): void => {
+      ipcRenderer.send(IPC.settingsSync, snapshot)
+    },
+    onImported: (
+      cb: (snapshot: import('@shared/types').SettingsSnapshot | null) => void
+    ): (() => void) =>
+      subscribe<import('@shared/types').SettingsSnapshot | null>(IPC.settingsImported, cb)
   },
   approvalRules: {
     list: (sessionId?: string): Promise<ApprovalRule[]> =>
@@ -223,13 +235,26 @@ const api: DevTermApi = {
     match: (sessionId: string, command: string): Promise<ApprovalRule | null> =>
       ipcRenderer.invoke(IPC.approvalRules, { op: 'match', sessionId, command })
   },
+  knownHosts: {
+    list: (): Promise<{ hostId: string; fingerprint: string }[]> =>
+      ipcRenderer.invoke(IPC.knownHostsList),
+    remove: (hostId: string): Promise<void> =>
+      ipcRenderer.invoke(IPC.knownHostsRemove, hostId)
+  },
+  quickConnect: {
+    list: (): Promise<import('@shared/types').QuickConnectEntry[]> =>
+      ipcRenderer.invoke(IPC.quickConnectList) as Promise<
+        import('@shared/types').QuickConnectEntry[]
+      >,
+    record: (host: string, port: number, username: string): Promise<void> =>
+      ipcRenderer.invoke(IPC.quickConnectRecord, host, port, username)
+  },
   portForward: {
     list: (sessionId?: string): Promise<PortForward[]> =>
       ipcRenderer.invoke(IPC.portForwardList, sessionId),
-    // FOUNDATION: Cluster B will implement
+    // Real for local `-L` forwards; dynamic `-D` SOCKS throws in the manager.
     add: (req: Omit<PortForward, 'id' | 'createdAt' | 'bytes'>): Promise<PortForward> =>
       ipcRenderer.invoke(IPC.portForwardAdd, req) as Promise<PortForward>,
-    // FOUNDATION: Cluster B will implement
     remove: (id: string): Promise<void> => ipcRenderer.invoke(IPC.portForwardRemove, id)
   },
 

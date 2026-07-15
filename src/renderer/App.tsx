@@ -24,7 +24,11 @@ import { useLayout, DEFAULT_GROUP, groupActiveSession, allLeaves } from './store
 import { useSettings } from './store/settings'
 import { matchHotkey, resolveHotkeys, comboLabel, HOTKEYS } from './lib/hotkeys'
 import { focusTerminal, clearTerminal } from './lib/terms'
-import { capturableSessions, captureWorkspace } from './lib/workspace'
+import {
+  capturableSessions,
+  captureWorkspace,
+  launchWorkspaceIntoGroup
+} from './lib/workspace'
 import { dictation } from './lib/stt/dictation'
 import { useDictation } from './store/dictation'
 import DictationStatus from './components/dictation/DictationStatus'
@@ -97,7 +101,23 @@ export default function App() {
 
   useEffect(() => {
     window.devterm.localContext().then(setLocal)
-    if (sessionCount === 0) addLocal()
+    // Boot-time auto-launch: open every workspace with `autoLaunch: true`
+    // in its own group. If none are set, fall back to the default behaviour
+    // of opening a single local terminal so the workspace isn't empty.
+    void (async () => {
+      const wsList = await window.devterm.workspaces.list()
+      const toAutoLaunch = wsList.filter((w) => w.autoLaunch)
+      if (toAutoLaunch.length > 0) {
+        const conns = await window.devterm.connections.list()
+        for (const ws of toAutoLaunch) {
+          // `recordLaunch: false` — auto-launching on app boot doesn't count
+          // as an operator-initiated launch.
+          await launchWorkspaceIntoGroup(ws, conns, { recordLaunch: false })
+        }
+        return
+      }
+      if (sessionCount === 0) addLocal()
+    })()
     window.devterm.ssh
       .setReconnectPolicy(useSettings.getState().autoReconnect)
       .catch(() => undefined)

@@ -1,6 +1,7 @@
-import type { Workspace, WorkspaceItem, WorkspaceLayoutNode } from '@shared/types'
+import type { Workspace, WorkspaceItem, WorkspaceLayoutNode, SavedConnection } from '@shared/types'
 import type { Session } from '../store/sessions'
 import { useLayout, DEFAULT_GROUP, type LayoutNode, type LayoutSnapshot } from '../store/layout'
+import { useSessions } from '../store/sessions'
 
 /**
  * Pure helpers for turning live terminals into a saved workspace and back.
@@ -120,4 +121,58 @@ export function captureWorkspace(
   const root = useLayout.getState().groups.find((g) => g.id === groupId)?.root ?? null
   const layout = snapshotNode(root, sidToItem)
   return { items, layout }
+}
+
+/**
+ * Open every terminal in a workspace into a fresh group, then restore the
+ * saved split layout (if any). Used by WorkspacesManager's Launch button
+ * and by App's startup auto-launch. Returns the new group id and the map
+ * of workspace-item id → live session id for callers that need it.
+ *
+ * `recordLaunch` (default false) bumps the server-side launchCount +
+ * lastLaunchedAt; callers that want to count this as a "real" launch
+ * (e.g. the Launch button, not the auto-launch on app boot) opt in.
+ */
+export async function launchWorkspaceIntoGroup(
+  ws: Workspace,
+  conns: SavedConnection[],
+  opts: { recordLaunch?: boolean } = {}
+): Promise<{ groupId: string; sessionMap: Map<string, string> }> {
+  const { addLocal, connectSsh } = useSessions.getState()
+  const groupId = `ws-${ws.id}-${Date.now()}`
+  const layout = useLayout.getState()
+  layout.ensureGroup(groupId, ws.name)
+  layout.flagGroupLaunched(groupId, ws.id)
+
+  const sessionMap = new Map<string, string>()
+  await Promise.all(
+    ws.items.map(async (it) => {
+      if (it.kind === 'local') {
+        sessionMap.set(it.id, addLocal({ cwd: it.cwd, groupId }))
+        return
+      }
+      const c = conns.find((x) => x.id === it.connectionId)
+      if (!c) return
+      const { id: _id, name: _n, ...profile } = c
+      const sid = await connectSsh(profile, {
+        connectionId: it.connectionId,
+        startCwd: it.cwd,
+        groupId
+      })
+      if (sid) sessionMap.set(it.id, sid)
+    })
+  )
+
+  const snap = ws.layout ? toLiveSnapshot(ws.layout, sessionMap) : null
+  // Defer the layout restore so App's layout-sync effect has a chance to
+  // stack the new sessions into the group first.
+  await new Promise<void>((resolve) => setTimeout(resolve, 80))
+  const layout2 = useLayout.getState()
+  if (snap) layout2.restoreGroup(groupId, ws.name, snap)
+  else layout2.setActiveGroup(groupId)
+
+  if (opts.recordLaunch) {
+    void window.devterm.workspaces.recordLaunch(ws.id).catch(() => undefined)
+  }
+  return { groupId, sessionMap }
 }

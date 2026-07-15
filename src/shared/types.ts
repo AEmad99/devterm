@@ -177,6 +177,12 @@ export interface Workspace {
   lastLaunchedAt?: number
   /** Number of times this workspace has been launched (incremented on every launch). */
   launchCount?: number
+  /**
+   * Auto-launch this workspace on app startup (one shot per session, no
+   * throttling). When multiple workspaces have this set, all of them open
+   * in their own groups in the order returned by `workspaces.list()`.
+   */
+  autoLaunch?: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -493,10 +499,8 @@ export const IPC = {
   sftpUnwatch: 'sftp:unwatch',
   sftpWatchEvent: 'sftp:watch:event', // suffixed :<watchId>
 
-  // transfers
-  transferStart: 'transfer:start',
-  transferCancel: 'transfer:cancel',
-  transferProgress: 'transfer:progress', // suffixed :<transferId>
+  // transfers (legacy non-persistent TransferManager channels — retired; the
+  //   persistent queue now uses `transfers:enqueue*` / `transfers:event` below)
 
   // agent bridge (interactive `pi` wired to the in-process MCP bridge)
   agentOpen: 'agent:open',
@@ -552,17 +556,33 @@ export const IPC = {
   // foundation cluster: bridge activity log
   bridgeActivityList: 'bridge-activity:list',
   bridgeActivityClear: 'bridge-activity:clear',
+  bridgeActivityExport: 'bridge-activity:export',
   bridgeActivityEvent: 'bridge-activity:event', // suffixed :<sessionId>
 
   // foundation cluster: settings export/import
   settingsIoExport: 'settings-io:export',
   settingsIoImport: 'settings-io:import',
+  /**
+   * Renderer → main: push the live `AppSettings` snapshot so `userData/settings.json`
+   * stays in sync with the renderer's `localStorage` store. The export bundle
+   * then reads the real file (not hardcoded defaults) and the import flow
+   * re-applies the same snapshot to the renderer via `settings:imported`.
+   */
+  settingsSync: 'settings:sync',
   settingsImported: 'settings:imported',
 
   // foundation cluster: approval rules (action-style single channel)
   approvalRules: 'approval-rules',
 
-  // foundation cluster: port forwards (stubs; Cluster B will implement)
+  // foundation cluster: known hosts (TOFU store) — list + remove
+  knownHostsList: 'known-hosts:list',
+  knownHostsRemove: 'known-hosts:remove',
+
+  // foundation cluster: QuickConnect recent hosts (autocomplete seed)
+  quickConnectList: 'quick-connect:list',
+  quickConnectRecord: 'quick-connect:record',
+
+  // foundation cluster: port forwards (local -L implemented; dynamic -D stubbed)
   portForwardList: 'port-forward:list',
   portForwardAdd: 'port-forward:add',
   portForwardRemove: 'port-forward:remove',
@@ -705,13 +725,14 @@ export interface DevTermApi {
     /** Subscribe to fresh listings pushed when the watched directory changes. */
     onWatchEvent(watchId: string, cb: (listing: DirListing) => void): () => void
   }
-  /** Streamed upload/download with progress + cancel. */
-  transfer: {
-    start(opts: TransferStartOpts): Promise<string>
-    cancel(id: string): void
-    onProgress(id: string, cb: (p: TransferProgress) => void): () => void
-  }
-  /** Agent bridge: spawn interactive `pi` wired to the in-process MCP bridge. */
+  /**
+   * Agent bridge: spawn interactive `pi` wired to the in-process MCP bridge.
+   * (The legacy `transfer` namespace — the non-persistent TransferManager
+   * used by the old file-browser transfers — is retired; the persistent
+   * `transfers` namespace below replaces it. The IPC channel constants
+   * for the legacy channel names are kept as no-op strings so any
+   * out-of-tree tool that referenced them still resolves.)
+   */
   agent: {
     open(opts: AgentOpenOpts): Promise<AgentOpenResult>
     close(sessionId: string): void
@@ -818,10 +839,21 @@ export interface DevTermApi {
       opts?: { sinceMs?: number; limit?: number }
     ): Promise<BridgeActivityEntry[]>
     clear(sessionId: string): Promise<void>
+    /**
+     * Export every entry for a session (in-memory ring + on-disk tail,
+     * merged and ts-sorted) to a JSONL file at `targetPath`. Returns the
+     * number of lines written. Pops a native save dialog if `targetPath`
+     * is omitted.
+     */
+    export(sessionId: string, targetPath?: string): Promise<number | null>
   }
   /**
    * Settings export/import. Pops a native save/open dialog; the bundle is
    * versioned (see `SettingsExportBundle`) and secrets are stripped on export.
+   * `sync` pushes the live renderer snapshot to the main process so the
+   * on-disk `userData/settings.json` stays in sync; `onImported` fires after
+   * a successful import with the (merged-with-defaults) snapshot the
+   * renderer should apply to its local store.
    */
   settingsIo: {
     export(): Promise<string | null>
@@ -830,7 +862,8 @@ export interface DevTermApi {
       error?: string
       counts?: { settings: boolean; snippets: number; workspaces: number; approvalRules: number }
     }>
-    onImported(cb: () => void): () => void
+    sync(snapshot: SettingsSnapshot): void
+    onImported(cb: (snapshot: SettingsSnapshot | null) => void): () => void
   }
   /**
    * Approval rules for the agent guardrail. Scoped per-session or global
@@ -843,8 +876,29 @@ export interface DevTermApi {
     match(sessionId: string, command: string): Promise<ApprovalRule | null>
   }
   /**
-   * SSH port forwarding. `list` is real; `add` and `remove` are stubbed until
-   * Cluster B wires them through to the existing ssh2 client.
+   * SSH known-hosts (TOFU) store. `list` returns every trusted host with its
+   * sha256 fingerprint; `remove` forgets one — the next connect re-triggers
+   * the `hostkey-new` status so the operator can re-accept the key.
+   */
+  knownHosts: {
+    list(): Promise<{ hostId: string; fingerprint: string }[]>
+    remove(hostId: string): Promise<void>
+  }
+  /**
+   * QuickConnect: most-recently-used `host:port:user` triples for the
+   * connection form's host autocomplete. No secrets — just the target.
+   * Capped at 20 entries, deduped by `host|port|user`.
+   */
+  quickConnect: {
+    list(): Promise<QuickConnectEntry[]>
+    record(host: string, port: number, username: string): Promise<void>
+  }
+  /**
+   * SSH port forwarding. `list`/`add`/`remove` are all real for local `-L`
+   * forwards (`PortForwardManager` opens a `net.Server` on `127.0.0.1` and
+   * pipes through the session's ssh2 `forwardOut`). Dynamic `-D` SOCKS
+   * forwards throw "not implemented yet" inside the manager; the UI hides
+   * the dynamic option accordingly.
    */
   portForward: {
     list(sessionId?: string): Promise<PortForward[]>
@@ -1214,12 +1268,49 @@ export interface AutoReconnectPrefs {
   factor: number
 }
 
-/** A snapshot of the user's settings, suitable for export/import. */
+/** A snapshot of the user's settings, suitable for export/import.
+ *
+ * Mirrors the full renderer `AppSettings` shape. Fields are optional so a
+ * bundle written by an older DevTerm (with only the core 4 fields) still
+ * validates; the reader fills missing fields from the same defaults the
+ * renderer uses. The renderer's settings store is the canonical live copy
+ * (in `localStorage`); this snapshot is the on-disk round-trip used by
+ * `settings-io` for export/import and by the `settings:sync` IPC for keeping
+ * `userData/settings.json` up to date.
+ */
 export interface SettingsSnapshot {
-  themeId: string
-  terminalBg: TerminalBg
-  prefs: TerminalPrefs
-  autoReconnect: AutoReconnectPrefs
+  themeId?: string
+  terminalBg?: TerminalBg
+  prefs?: TerminalPrefs
+  autoReconnect?: AutoReconnectPrefs
+  attention?: AttentionSettingsSnapshot
+  showStatusBar?: boolean
+  agentActivityCollapsed?: boolean
+  inactivePaneDimming?: boolean
+  sftpSidePane?: boolean
+  activityIndicators?: boolean
+  zenMode?: boolean
+  agentKind?: AgentKind
+  transfersPanelOpen?: boolean
+  defaultShell?: DefaultShellPref
+  gitPanelOpen?: boolean
+  /** Per-id keybinding overrides. */
+  keybindings?: Record<
+    string,
+    { mod?: boolean; shift?: boolean; alt?: boolean; key: string }
+  >
+  stt?: STTSettings
+  /** Optional persistent global-search tail (off by default). */
+  searchPersist?: boolean
+}
+
+/** Attention settings (mirrors the renderer `AttentionSettings`). */
+export interface AttentionSettingsSnapshot {
+  enabled?: boolean
+  sound?: boolean
+  volume?: number
+  system?: boolean
+  idle?: boolean
 }
 
 /** A persistent approval rule for the agent guardrail. */

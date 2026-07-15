@@ -1,18 +1,13 @@
-// Read-only git awareness for the file tree. Backed by `git status --porcelain=1
-// --branch` so we can stream one snapshot per directory. Local lookups spawn the
-// `git` binary on the host; remote lookups run on the session's exec channel
-// (never a second ssh connection). The module is strictly read-only — no
-// staging, commits, or any other mutation, by design.
-//
-// The renderer-facing shape is small on purpose: a branch string, ahead/behind
-// counters, and a `path → status` map. The `git` IPC layer (ipc/git.ts) maps
-// that to the shared `GitStatus` type and handles caching + live polling.
-//
-// This module also hosts the read-side Warp-style helpers used by the new git
-// panel (branches, remotes, log, stash, tags, fileAt, blame, show, fullDiff,
-// contributors) and the write-side mutations (checkout, branch create/delete/
-// rename, fetch/pull/push, stash apply/drop/pop, commit, stage/unstage/
-// discard, tag create/delete, remote add/remove, merge). They all reuse the
+// Git awareness + Warp-style panel operations. Backed by `git status
+// --porcelain=1 --branch` for the file-tree snapshot, plus a full read-side
+// (branches, remotes, log, stash, tags, fileAt, blame, show, fullDiff,
+// contributors) and a full write-side (checkout, branch create/delete/rename,
+// fetch/pull/push, stash apply/drop/pop, commit, stage/unstage/discard, tag
+// create/delete, remote add/remove, merge). Local lookups spawn the `git`
+// binary on the host; remote lookups run on the session's exec channel
+// (never a second SSH connection). The `git` IPC layer (ipc/git.ts) maps the
+// results to the shared types and handles caching + live polling. All writes
+// invalidate the 5s status cache so the next read re-runs git.
 // same local-spawn / remote-exec plumbing so the panel works the same way
 // locally and over SSH.
 
@@ -536,11 +531,12 @@ function parseRemotes(stdout: string): GitRemote[] {
 // ---------------------------------------------------------------------------
 
 const LOG_FORMAT =
-  '%H%x00%h%x00%an%x00%ae%x00%cn%x00%ce%x00%aI%x00%cI%x00%P%x00%D%x00%s%x00%b'
+  '%H%x01%h%x01%an%x01%ae%x01%cn%x01%ce%x01%aI%x01%cI%x01%P%x01%D%x01%s%x01%b'
 //  ^sha  ^short ^an   ^ae   ^cn   ^ce   ^aI  ^cI  ^parents ^decoration ^subject ^body
-// Records are NUL-terminated by `-z`; internal fields are split on `\x00`.
-// Body lines (after the first newline in a record block) are preserved
-// verbatim until the next NUL.
+// Records are NUL-terminated by `-z`; internal fields are split on `\x01`
+// (SOH) so they never collide with the NUL record separator. Body lines
+// (after the first newline in a record block) are preserved verbatim until
+// the next NUL.
 
 const LOG_FIELDS = [
   'sha',
@@ -577,7 +573,7 @@ function parseLog(stdout: string): GitLogEntry[] {
             .slice(newlineIdx + 1)
             .replace(/^\n/, '')
             .replace(/\n+$/, '')
-    const metaParts = metaLine.split('\x00')
+    const metaParts = metaLine.split('\x01')
     // The trailing \x00 after %b produces an empty final element. Drop it.
     const trimmed =
       metaParts[metaParts.length - 1] === '' ? metaParts.slice(0, -1) : metaParts
@@ -860,7 +856,7 @@ function parseBlame(stdout: string): GitBlameLine[] {
 export async function gitShowLocal(cwd: string, sha: string): Promise<GitShowResult | null> {
   const r = await runLocalGitCmd(cwd, [
     'show',
-    '--format=%H%x00%h%x00%s%x00%b%x00%an%x00%ae%x00%aI%x00',
+    '--format=%H%x01%h%x01%s%x01%an%x01%ae%x01%aI%x01%b%x02',
     '--numstat',
     '--patch',
     sha
@@ -876,7 +872,7 @@ export async function gitShowRemote(
 ): Promise<GitShowResult | null> {
   const r = await gitRemote(exec, cwd, [
     'show',
-    '--format=%H%x00%h%x00%s%x00%b%x00%an%x00%ae%x00%aI%x00',
+    '--format=%H%x01%h%x01%s%x01%an%x01%ae%x01%aI%x01%b%x02',
     '--numstat',
     '--patch',
     sha
@@ -886,51 +882,53 @@ export async function gitShowRemote(
 }
 
 function parseShow(stdout: string): GitShowResult | null {
-  // numstat block ends with the patch block; split on the first blank line
-  // that isn't part of the numstat table.
-  const lines = stdout.split(/\r?\n/)
-  let headerEnd = -1
-  for (let i = 0; i < lines.length; i++) {
-    if (lines[i] === '') {
-      headerEnd = i
+  // Format: %H\x01%h\x01%s\x01%an\x01%ae\x01%aI\x01%b\x02
+  // Fields are SOH-separated; \x02 (STX) terminates the body so multi-line
+  // bodies don't bleed into the numstat/patch section that follows.
+  const sohParts = stdout.split('\x01')
+  if (sohParts.length < 7) return null
+  const sha = sohParts[0]
+  const shortSha = sohParts[1]
+  const subject = sohParts[2]
+  const authorName = sohParts[3] || ''
+  const authorEmail = sohParts[4] || ''
+  const authorDate = sohParts[5] || ''
+  // The 7th element is: body\x02\n<numstat>\n\n<patch>
+  const bodyAndRest = sohParts[6] || ''
+  const stxIdx = bodyAndRest.indexOf('\x02')
+  const body = stxIdx === -1 ? bodyAndRest.trim() : bodyAndRest.slice(0, stxIdx).replace(/^\n+/, '').replace(/\n+$/, '')
+  const rest = stxIdx === -1 ? '' : bodyAndRest.slice(stxIdx + 1)
+
+  // Parse numstat rows from `rest`; patch is everything after the first blank.
+  const restLines = rest.split(/\r?\n/).slice(1) // skip the leading newline
+  const files: GitShowResult['files'] = []
+  let patchStart = 0
+  for (let i = 0; i < restLines.length; i++) {
+    const line = restLines[i]
+    if (line === '') {
+      patchStart = i + 1
       break
     }
+    const m = /^(\d+|-)\s+(\d+|-)\s+(.+)$/.exec(line)
+    if (m) {
+      const [, addStr, delStr, path] = m
+      files.push({
+        path,
+        status: 'M',
+        additions: addStr === '-' ? 0 : Number(addStr),
+        deletions: delStr === '-' ? 0 : Number(delStr)
+      })
+    }
   }
-  if (headerEnd < 0) return null
-  const headerParts = lines[0].split('\x00')
-  const sha = headerParts[0]
-  const shortSha = headerParts[1]
-  const subject = headerParts[2]
-  // body is everything between headerEnd and the first numstat row.
-  let body = ''
-  let j = headerEnd + 1
-  while (j < lines.length) {
-    if (/^\d+\s+\d+\s+/.test(lines[j])) break
-    body = body ? `${body}\n${lines[j]}` : lines[j]
-    j++
-  }
-  const files: GitShowResult['files'] = []
-  while (j < lines.length) {
-    const m = /^(\d+|-)\s+(\d+|-)\s+(.+)$/.exec(lines[j])
-    if (!m) break
-    const [, addStr, delStr, path] = m
-    files.push({
-      path,
-      status: 'M',
-      additions: addStr === '-' ? 0 : Number(addStr),
-      deletions: delStr === '-' ? 0 : Number(delStr)
-    })
-    j++
-  }
-  const patch = lines.slice(j).join('\n')
+  const patch = restLines.slice(patchStart).join('\n')
   return {
     sha,
     shortSha,
     subject,
     body,
-    authorName: headerParts[4] || '',
-    authorEmail: headerParts[5] || '',
-    authorDate: headerParts[6] || '',
+    authorName,
+    authorEmail,
+    authorDate,
     files,
     patch
   }

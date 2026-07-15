@@ -2,6 +2,7 @@ import { ipcMain, BrowserWindow } from 'electron'
 import { IPC, type SSHProfile, type SSHStatus } from '@shared/types'
 import { SSHManager, type ReconnectPolicy } from '../ssh/manager'
 import { makeCoalescer } from './coalesce'
+import { globalSearchIndex } from '../search/index'
 
 export function registerSshIpc(getWindow: () => BrowserWindow | null): SSHManager {
   const send = (channel: string, ...args: unknown[]) => {
@@ -9,13 +10,29 @@ export function registerSshIpc(getWindow: () => BrowserWindow | null): SSHManage
     if (win && !win.isDestroyed()) win.webContents.send(channel, ...args)
   }
 
-  const sendData = makeCoalescer((id, data) => send(`${IPC.sshData}:${id}`, data))
+  const sendData = makeCoalescer((id, data) => {
+    // Feed live SSH shell output into the global search index. A push can
+    // throw on a closed session (the index drops it); we never want a
+    // search-index glitch to break the live SSH data path. Mirrors the PTY
+    // path so remote output is searchable the same way local PTY output is.
+    try {
+      globalSearchIndex.pushLine(id, data)
+    } catch {
+      /* search index miss — keep streaming */
+    }
+    send(`${IPC.sshData}:${id}`, data)
+  })
   const manager = new SSHManager({
     onData: (id, data) => sendData.push(id, data),
     onExit: (id) => {
       // Flush buffered shell output before the close event so the last bytes
       // can't arrive after the "connection closed" banner.
       sendData.flush(id)
+      // Drop the session's lines from the global search index so a closed
+      // remote session doesn't keep surfacing stale hits in the search
+      // modal. The renderer's live xterm buffer is the only place the
+      // recent output remains visible.
+      globalSearchIndex.clearSession(id)
       send(`${IPC.sshExit}:${id}`)
     },
     onStatus: (id, status: SSHStatus) => send(`${IPC.sshStatus}:${id}`, status)

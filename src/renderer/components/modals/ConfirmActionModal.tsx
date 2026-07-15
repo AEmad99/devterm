@@ -1,8 +1,21 @@
 import { useEffect, useMemo, useState } from 'react'
-import type { ConfirmRequest } from '@shared/types'
+import type { AgentKind, ConfirmRequest } from '@shared/types'
 import { useSessions } from '../../store/sessions'
 
 const SNOOZE_MS = 5 * 60 * 1000
+
+const AGENT_DISPLAY: Record<AgentKind, string> = {
+  claude: 'Claude',
+  pi: 'Pi',
+  opencode: 'OpenCode',
+  kimi: 'Kimi',
+  grok: 'Grok',
+  codex: 'Codex'
+}
+
+function agentName(kind: AgentKind | undefined): string {
+  return kind ? AGENT_DISPLAY[kind] ?? 'The agent' : 'The agent'
+}
 
 /**
  * Human-in-the-loop approval queue for guarded agent actions (confirm mode
@@ -112,6 +125,7 @@ export default function ConfirmActionModal() {
 
   const session = sessions.find((x) => x.id === top.sessionId)
   const host = session?.context?.hostname || session?.title || top.sessionId
+  const name = agentName(session?.agentKind)
 
   return (
     <div className="modal-backdrop">
@@ -143,7 +157,7 @@ export default function ConfirmActionModal() {
           )}
         </div>
         <p>
-          Pi wants to run a guarded operation on{' '}
+          {name} wants to run a guarded operation on{' '}
           <span className="confirm-host" title={`session ${top.sessionId}`}>
             {host}
           </span>
@@ -178,22 +192,30 @@ export default function ConfirmActionModal() {
 
 /**
  * Build a stable command prefix for the "remember my choice" rule.
- *   1. For `run_command`, take the first token; extend it across the next
- *      token if both look like stable command names (no flags, no path
- *      separators). Cap at 80 chars.
+ *   1. For `run_command`, take the first 1–2 stable tokens (non-flag,
+ *      non-shell-metachar). Path-like tokens (`./deploy.sh`, `bin/migrate`,
+ *      `scripts/run`) are kept — losing the path was the bug this fix
+ *      addresses. Cap at 80 chars.
  *   2. For `write_file`, the file path itself — the bytes + content vary
  *      per call, so the path is the only meaningful prefix.
  *   3. Fall back to the raw detail trimmed.
+ *
+ * Exported for unit tests in `extractCommandPrefix.test.ts`.
  */
-function extractCommandPrefix(tool: string, detail: string): string | undefined {
+export function extractCommandPrefix(tool: string, detail: string): string | undefined {
   const trimmed = detail.trim()
   if (!trimmed) return undefined
   if (tool === 'run_command') {
     const parts = trimmed.split(/\s+/).filter(Boolean)
     if (parts.length === 0) return undefined
-    // Drop flag-looking parts (-x, --foo) so we don't pin to a one-off flag.
-    const stable = parts.filter((p) => !p.startsWith('-') && !p.includes('/'))
+    // Drop flag-looking parts (-x, --foo) and shell metacharacters so we
+    // don't pin to a one-off flag or a redirect. Path separators (./, /, .)
+    // are intentionally allowed so `./deploy.sh`, `bin/migrate`, and
+    // `scripts/run` all produce a meaningful prefix.
+    const stable = parts.filter((p) => !p.startsWith('-') && !/^[|;&<>(){}`$!]+$/.test(p))
     if (stable.length === 0) return parts[0]
+    // Cap at 2 tokens so we don't anchor to one-off arguments (e.g. a hash
+    // or a hostname). 80 chars protects against pathologically long tokens.
     return stable.slice(0, 2).join(' ').slice(0, 80)
   }
   if (tool === 'write_file') {

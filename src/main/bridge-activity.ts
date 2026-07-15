@@ -182,6 +182,23 @@ export function on(sessionId: string, cb: (entry: BridgeActivityEntry) => void):
   return () => s.emitter.off('entry', handler)
 }
 
+/**
+ * Write every entry for a session (in-memory ring + on-disk tail, merged
+ * and sorted by ts) to `targetPath` as JSONL. Returns the number of lines
+ * written. Atomic .tmp + rename.
+ */
+export async function exportSession(sessionId: string, targetPath: string): Promise<number> {
+  const entries = await listAsync(sessionId)
+  const tmp = targetPath + '.tmp'
+  const body =
+    entries.length > 0
+      ? entries.map((e) => JSON.stringify(e)).join('\n') + '\n'
+      : ''
+  await fs.writeFile(tmp, body, 'utf8')
+  await fs.rename(tmp, targetPath)
+  return entries.length
+}
+
 // Test/maintenance helper: drop in-memory state for a session and force a
 // reload of the tail on next read. Not used by IPC.
 export function _resetForTests(): void {

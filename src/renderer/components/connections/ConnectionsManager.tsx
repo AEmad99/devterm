@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import type { SavedConnection } from '@shared/types'
 import { useSessions } from '../../store/sessions'
 import ConnectionForm from './ConnectionForm'
+import KnownHostsModal from './KnownHostsModal'
 import ManagerList from '../common/ManagerList'
 import ManagerRow from '../common/ManagerRow'
 import Button from '../common/Button'
@@ -18,6 +19,7 @@ export default function ConnectionsManager({ onConnect }: { onConnect: () => voi
   const [saved, setSaved] = useState<SavedConnection[]>([])
   // null = form closed; { initial } = open (initial undefined → new connection).
   const [form, setForm] = useState<{ initial?: SavedConnection } | null>(null)
+  const [knownHostsOpen, setKnownHostsOpen] = useState(false)
 
   const refresh = () => window.devterm.connections.list().then(setSaved)
   useEffect(() => {
@@ -38,6 +40,7 @@ export default function ConnectionsManager({ onConnect }: { onConnect: () => voi
       <div className="manager-head">
         <h2>Saved connections</h2>
         <span className="spacer" />
+        <Button onClick={() => setKnownHostsOpen(true)}>Known hosts…</Button>
         <Button variant="primary" onClick={() => setForm({})}>
           <IconPlus size={15} />
           New connection
@@ -93,6 +96,7 @@ export default function ConnectionsManager({ onConnect }: { onConnect: () => voi
           }}
         />
       )}
+      {knownHostsOpen && <KnownHostsModal onClose={() => setKnownHostsOpen(false)} />}
     </div>
   )
 }
