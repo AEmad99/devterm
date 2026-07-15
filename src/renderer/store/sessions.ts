@@ -2,6 +2,8 @@ import { create } from 'zustand'
 import type { AgentBridgeState, AgentKind, HostContext, SSHProfile } from '@shared/types'
 import { useLayout } from './layout'
 
+const statusDisposers = new Map<string, () => void>()
+
 export interface Session {
   id: string
   kind: 'local' | 'remote' | 'browser'
@@ -79,6 +81,7 @@ export interface Session {
 interface SessionState {
   sessions: Session[]
   activeId: string | null
+  lastActiveId: string | null
   /**
    * Open a local shell; returns the new session id. `cwd` sets its starting
    * directory, `groupId` its terminal group (defaults to the active group).
@@ -137,6 +140,7 @@ interface SessionState {
 export const useSessions = create<SessionState>((set, get) => ({
   sessions: [],
   activeId: null,
+  lastActiveId: null,
 
   addLocal: (opts) => {
     // Number from the lowest free slot among open local terminals, so closing
@@ -194,7 +198,7 @@ export const useSessions = create<SessionState>((set, get) => ({
     try {
       const { sessionId, context } = await window.devterm.ssh.connect(profile)
       // Subscribe to non-fatal status events for the real session id.
-      window.devterm.ssh.onStatus(sessionId, (st) => {
+      const dispose = window.devterm.ssh.onStatus(sessionId, (st) => {
         if (st.type === 'hostkey-new')
           get().setStatus(sessionId, `new host key trusted (${st.fingerprint})`)
         else if (st.type === 'hostkey-mismatch')
@@ -211,20 +215,35 @@ export const useSessions = create<SessionState>((set, get) => ({
         else if (st.type === 'reconnect-failed')
           get().setStatus(sessionId, `reconnect failed after ${st.attempts} attempts: ${st.reason}`)
       })
-      set((s) => ({
-        sessions: s.sessions.map((x) =>
-          x.id === tempId
-            ? {
-                ...x,
-                id: sessionId,
-                title: `${profile.username}@${context.hostname || profile.host}`,
-                context,
-                status: `connected · ${context.os}`
-              }
-            : x
-        ),
-        activeId: sessionId
-      }))
+      statusDisposers.set(sessionId, dispose)
+      set((s) => {
+        const stillPending = s.sessions.some((x) => x.id === tempId)
+        const activeId = stillPending
+          ? s.activeId === tempId
+            ? sessionId
+            : s.activeId
+          : s.sessions.some((x) => x.id === s.activeId)
+            ? s.activeId
+            : s.sessions[0]?.id ?? null
+        if (!stillPending) {
+          dispose()
+          statusDisposers.delete(sessionId)
+        }
+        return {
+          sessions: s.sessions.map((x) =>
+            x.id === tempId
+              ? {
+                  ...x,
+                  id: sessionId,
+                  title: `${profile.username}@${context.hostname || profile.host}`,
+                  context,
+                  status: `connected · ${context.os}`
+                }
+              : x
+          ),
+          activeId
+        }
+      })
       return sessionId
     } catch (e) {
       set((s) => ({
@@ -267,6 +286,7 @@ export const useSessions = create<SessionState>((set, get) => ({
 
   setActive: (id) =>
     set((s) => {
+      if (!s.sessions.some((x) => x.id === id)) return s
       // Looking at a session satisfies its attention signal — clear the badge
       // as it becomes active (covers tab clicks and pane mousedown alike).
       const needsClear = s.sessions.some(
@@ -274,6 +294,7 @@ export const useSessions = create<SessionState>((set, get) => ({
       )
       return {
         activeId: id,
+        lastActiveId: s.activeId,
         sessions: needsClear
           ? s.sessions.map((x) =>
               x.id === id ? { ...x, needsAttention: false, hasUnreadOutput: false } : x
@@ -335,7 +356,9 @@ export const useSessions = create<SessionState>((set, get) => ({
         )
       }
     }),
-  markClosed: (id) =>
+  markClosed: (id) => {
+    statusDisposers.get(id)?.()
+    statusDisposers.delete(id)
     set((s) => ({
       sessions: s.sessions.map((x) =>
         x.id === id
@@ -349,7 +372,8 @@ export const useSessions = create<SessionState>((set, get) => ({
             }
           : x
       )
-    })),
+    }))
+  },
 
   setAgentBridgeState: (id, state) =>
     set((s) => {
@@ -410,16 +434,22 @@ export const useSessions = create<SessionState>((set, get) => ({
 
   close: (id) => {
     const s = get().sessions.find((x) => x.id === id)
-    if (s?.kind === 'remote' && !id.startsWith('pending-')) window.devterm.ssh.disconnect(id)
+    if (s?.kind === 'remote' && !id.startsWith('pending-')) {
+      statusDisposers.get(id)?.()
+      statusDisposers.delete(id)
+      window.devterm.ssh.disconnect(id)
+    }
     set((st) => {
       const remaining = st.sessions.filter((x) => x.id !== id)
       const activeId =
         st.activeId === id
-          ? remaining.length
-            ? remaining[remaining.length - 1].id
-            : null
+          ? remaining.some((x) => x.id === st.lastActiveId)
+            ? st.lastActiveId
+            : remaining.length
+              ? remaining[0].id
+              : null
           : st.activeId
-      return { sessions: remaining, activeId }
+      return { sessions: remaining, activeId, lastActiveId: st.lastActiveId === id ? null : st.lastActiveId }
     })
   }
 }))

@@ -3,6 +3,50 @@
 All notable changes to DevTerm are documented here. The most recent section is
 at the top. Dates are ISO `YYYY-MM-DD`.
 
+## 1.3.1 — 2026-07-15
+
+### Fixed
+
+- **STT/Dictation:** Worker crash no longer leaves a dead reference that traps the
+  download UI in "loading" forever. Stale `ready` messages from a previous model
+  load are discarded. The `transcribe` request now carries the correct `modelId`
+  so the worker loads the exact model the user selected.
+- **STT/Dictation:** Push-to-talk shortcut now properly cancels a pending mic
+  request if the key is released before the permission dialog resolves.
+- **STT/Dictation:** Audio capture no longer leaks the mic stream when
+  `AudioContext` or `audioWorklet.addModule()` throws.
+- **Browser Downloads:** `broadcast()` is now throttled to 150 ms, eliminating
+  IPC/render thrashing and the wobbly progress-bar flicker.
+- **Browser Downloads:** `browserZoomReset` no longer resets the main DevTerm
+  window zoom.
+- **Browser Downloads:** Completed downloads are evicted after 5 min; cancelled /
+  interrupted downloads are evicted immediately.
+- **Transfer Queue:** `done` events are now merged atomically into the renderer
+  store, eliminating the backward-then-forward progress jump.
+- **Transfer Queue:** Canceling an active item now transitions the store
+  immediately to `done/canceled` instead of waiting for the stream to error out.
+- **Transfer Queue:** Full-list re-renders are only sent on `done` events, not
+  on every 250 ms progress tick.
+- **Transfer Queue:** `clearFinished` now broadcasts to all windows.
+- **Transfer Queue:** `selectVisible` now actually filters to the last 24 hours.
+- **Transfer Queue:** Action buttons now use the computed `status` consistently.
+- **Settings:** Custom keybinding single-character keys are normalized to lowercase.
+- **Settings:** `applyImported` now validates all fields through the same
+  normalizers used at load time.
+- **Sessions:** `activeId` orphan race after closing a pending SSH tab is fixed.
+- **Sessions:** `setActive` rejects invalid session IDs.
+- **Sessions:** SSH `onStatus` listeners are now disposed on session close.
+- **Sessions:** `connectSsh` no longer steals focus if the user switched away.
+- **Layout:** `activeLeaf` is recomputed when a leaf is pruned, preventing empty panes.
+- **Layout:** Resize clamping now uses a loop so both sides stay above the minimum.
+- **Layout:** `computeLayout` handles malformed `sizes` arrays and zero-total cases.
+- **Layout:** `setActiveGroup`, `setActiveTab`, and `focusLeaf` now validate their inputs.
+- **Hotkeys:** `nextTab`/`prevTab` now cycles only within the current leaf's tabs.
+- **Hotkeys:** `Ctrl+Plus` (numpad +) now zooms in alongside `Ctrl+Shift+Plus`.
+- **Hotkeys:** `Tab` is no longer blocked from custom keybinding capture.
+- **App:** `Escape` no longer swallows custom keybindings before `matchHotkey` runs.
+- **App:** Added a guard so most shortcuts don't fire while typing in an editor.
+
 ## 1.1.1 — 2026-07-09
 
 ### Fixed

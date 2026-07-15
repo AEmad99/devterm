@@ -10,6 +10,7 @@ export type STTRequest =
   | {
       type: 'transcribe'
       id: number
+      modelId: STTModelId
       audio: Float32Array
       language: STTLanguage
     }

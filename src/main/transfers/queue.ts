@@ -104,6 +104,23 @@ export class TransferQueue {
     if (it.done || it.canceled) return
     if (this.active.has(id)) {
       this.cancelers.get(id)?.()
+      const now = Date.now()
+      await this.store.patch(id, {
+        done: true,
+        canceled: true,
+        error: 'canceled',
+        finishedAt: now
+      })
+      this.emitEvent(id, {
+        kind: 'done',
+        id,
+        transferred: 0,
+        total: 0,
+        canceled: true,
+        error: 'canceled',
+        finishedAt: now
+      })
+      this.notifyList()
       return
     }
     // Not yet running — just drop it from the pending pool and mark done.
@@ -182,6 +199,7 @@ export class TransferQueue {
       if (!item) continue
       if (item.done || item.canceled) continue
       this.active.add(id)
+      this.cancelers.set(id, () => { /* placeholder */ })
       void this.runOne(item).catch((err) => {
         // The run path catches its own errors; this is the safety net for
         // a synchronous throw before the first await.

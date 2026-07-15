@@ -141,13 +141,19 @@ export function computeLayout(root: LayoutNode | null): {
   }> = []
   const walk = (n: LayoutNode, r: Rect): void => {
     if (n.type === 'leaf') {
+      if (n.tabs.length === 0) return
       leaves.push({ leaf: n, rect: r })
       return
     }
-    const total = n.sizes.reduce((a, b) => a + b, 0) || 1
+    let sizes = n.sizes.length === n.children.length ? n.sizes : n.children.map(() => 1 / n.children.length)
+    let total = sizes.reduce((a, b) => a + b, 0)
+    if (total < 0.001) {
+      sizes = n.children.map(() => 1 / n.children.length)
+      total = sizes.reduce((a, b) => a + b, 0) || 1
+    }
     let off = n.dir === 'row' ? r.x : r.y
     n.children.forEach((c, i) => {
-      const frac = n.sizes[i] / total
+      const frac = sizes[i] / total
       const cr: Rect =
         n.dir === 'row'
           ? { x: off, y: r.y, w: r.w * frac, h: r.h }
@@ -409,17 +415,25 @@ export const useLayout = create<LayoutState>((set) => ({
     return id
   },
 
-  setActiveGroup: (id) => set({ activeGroupId: id, focusedId: null }),
+  setActiveGroup: (id) => set((s) => {
+    if (!s.groups.some((g) => g.id === id)) return s
+    return { activeGroupId: id, focusedId: null }
+  }),
 
   setActiveTab: (leafId, sid) =>
     set((s) =>
       patchActive(s, (g) => ({
-        root: g.root ? updateLeaf(g.root, leafId, (l) => ({ ...l, active: sid })) : g.root,
+        root: g.root ? updateLeaf(g.root, leafId, (l) => (l.tabs.includes(sid) ? { ...l, active: sid } : l)) : g.root,
         activeLeaf: leafId
       }))
     ),
 
-  focusLeaf: (leafId) => set((s) => patchActive(s, (g) => ({ root: g.root, activeLeaf: leafId }))),
+  focusLeaf: (leafId) => set((s) =>
+    patchActive(s, (g) => {
+      if (!g.root || !findLeaf(g.root, leafId)) return null
+      return { root: g.root, activeLeaf: leafId }
+    })
+  ),
 
   reorderTab: (sid, targetLeafId, index) =>
     set((s) =>
@@ -434,7 +448,7 @@ export const useLayout = create<LayoutState>((set) => ({
                 ...l,
                 tabs: l.tabs.filter((t) => t !== sid)
               }))
-        if (!root || !findLeaf(root, targetLeafId)) return { root, activeLeaf: g.activeLeaf }
+        if (!root || !findLeaf(root, targetLeafId)) return { root, activeLeaf: root ? firstLeaf(root).id : null }
         root = updateLeaf(root, targetLeafId, (l) => {
           const tabs = [...l.tabs]
           tabs.splice(Math.max(0, Math.min(index, tabs.length)), 0, sid)
@@ -459,7 +473,7 @@ export const useLayout = create<LayoutState>((set) => ({
                   ...l,
                   tabs: l.tabs.filter((t) => t !== sid)
                 }))
-          if (!root || !findLeaf(root, targetLeafId)) return { root, activeLeaf: g.activeLeaf }
+          if (!root || !findLeaf(root, targetLeafId)) return { root, activeLeaf: root ? firstLeaf(root).id : null }
           root = updateLeaf(root, targetLeafId, (l) => ({
             ...l,
             tabs: [...l.tabs, sid],
@@ -472,7 +486,7 @@ export const useLayout = create<LayoutState>((set) => ({
         if (src.id === targetLeafId && src.tabs.length === 1) return null
         const root0 = removeTab(g.root, sid)
         if (!root0 || !findLeaf(root0, targetLeafId))
-          return { root: root0, activeLeaf: g.activeLeaf }
+          return { root: root0, activeLeaf: root0 ? firstLeaf(root0).id : null }
         const nl = mkLeaf([sid])
         const dir: SplitDir = zone === 'left' || zone === 'right' ? 'row' : 'col'
         const before = zone === 'left' || zone === 'top'
@@ -519,13 +533,17 @@ export const useLayout = create<LayoutState>((set) => ({
           const sizes = [...sp.sizes]
           let a = sizes[index] + delta
           let b = sizes[index + 1] - delta
-          if (a < min) {
-            b -= min - a
-            a = min
-          }
-          if (b < min) {
-            a -= min - b
-            b = min
+          for (let pass = 0; pass < 2; pass++) {
+            if (a < min) {
+              const d = min - a
+              a = min
+              b -= d
+            }
+            if (b < min) {
+              const d = min - b
+              b = min
+              a -= d
+            }
           }
           sizes[index] = a
           sizes[index + 1] = b

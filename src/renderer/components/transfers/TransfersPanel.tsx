@@ -121,7 +121,7 @@ function TransferRow({
         />
       </div>
       <span className="transfers-status">{status === 'running' ? `${percent}%` : status}</span>
-      {!item.done ? (
+      {status === 'running' ? (
         <button className="transfers-row-action" onClick={onCancel}>
           Cancel
         </button>

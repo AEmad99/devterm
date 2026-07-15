@@ -59,6 +59,7 @@ export const HOTKEYS: Hotkey[] = [
   { id: 'clearTerminal', mod: true, shift: true, key: 'l', label: 'Clear terminal' },
   { id: 'zoomIn', mod: true, key: '=', label: 'Increase font size' },
   { id: 'zoomInAlt', mod: true, shift: true, key: '+', label: 'Increase font size', alias: true },
+  { id: 'zoomInAlt', mod: true, key: '+', label: 'Increase font size', alias: true },
   { id: 'zoomOut', mod: true, key: '-', label: 'Decrease font size' },
   { id: 'zoomReset', mod: true, key: '0', label: 'Reset font size' },
   { id: 'nextTerminal', mod: true, key: 'PageDown', label: 'Next terminal' },
@@ -123,7 +124,7 @@ export function matchHotkey(e: Keyish, hotkeys: Hotkey[] = HOTKEYS): HotkeyId | 
 export function captureCombo(
   e: KeyboardEvent
 ): { mod?: boolean; shift?: boolean; alt?: boolean; key: string } | null {
-  if (['Control', 'Shift', 'Alt', 'Meta', 'CapsLock', 'Tab'].includes(e.key)) return null
+  if (['Control', 'Shift', 'Alt', 'Meta', 'CapsLock'].includes(e.key)) return null
   const mod = e.ctrlKey || e.metaKey
   const shift = e.shiftKey
   const alt = e.altKey

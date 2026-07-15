@@ -286,7 +286,7 @@ function normalizeKeybindings(raw: unknown): AppSettings['keybindings'] {
       mod: c.mod === true,
       shift: c.shift === true,
       alt: c.alt === true,
-      key: c.key
+      key: c.key.length === 1 ? c.key.toLowerCase() : c.key
     }
   }
   return out
@@ -541,16 +541,24 @@ export const useSettings = create<SettingsState>((set, get) => ({
           ? s.activityIndicators
           : cur.activityIndicators,
       zenMode: typeof s.zenMode === 'boolean' ? s.zenMode : cur.zenMode,
-      agentKind: s.agentKind ?? cur.agentKind,
+      agentKind:
+        s.agentKind === 'claude' ||
+        s.agentKind === 'pi' ||
+        s.agentKind === 'opencode' ||
+        s.agentKind === 'kimi' ||
+        s.agentKind === 'grok' ||
+        s.agentKind === 'codex'
+          ? s.agentKind
+          : cur.agentKind,
       transfersPanelOpen:
         typeof s.transfersPanelOpen === 'boolean'
           ? s.transfersPanelOpen
           : cur.transfersPanelOpen,
-      defaultShell: s.defaultShell ?? cur.defaultShell,
+      defaultShell: normalizeDefaultShell(s.defaultShell),
       gitPanelOpen:
         typeof s.gitPanelOpen === 'boolean' ? s.gitPanelOpen : cur.gitPanelOpen,
-      keybindings: s.keybindings ?? cur.keybindings,
-      stt: s.stt ? { ...cur.stt, ...s.stt } : cur.stt,
+      keybindings: normalizeKeybindings(s.keybindings),
+      stt: normalizeStt(s.stt),
       searchPersist:
         typeof s.searchPersist === 'boolean' ? s.searchPersist : cur.searchPersist
     }

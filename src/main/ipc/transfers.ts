@@ -49,7 +49,9 @@ export function registerTransfersIpc(
   queue.subscribe({
     onItemEvent: (item, ev) => {
       send(`${IPC.transfersEvent}:${item.id}`, ev)
-      send(IPC.transfersStatus)
+      if (ev.kind === 'done') {
+        send(IPC.transfersStatus)
+      }
     },
     onListChanged: () => send(IPC.transfersStatus)
   })
@@ -74,7 +76,9 @@ export function registerTransfersIpc(
     return queue.retry(id)
   })
   ipcMain.handle(IPC.transfersClearFinished, async (): Promise<TransferListResult> => {
-    return store.clearFinished()
+    const result = await store.clearFinished()
+    send(IPC.transfersStatus)
+    return result
   })
 
   return {

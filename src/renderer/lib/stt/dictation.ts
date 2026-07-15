@@ -68,7 +68,7 @@ class DictationController {
     this.setState({ status: 'transcribing', progress: null })
     const worker = this.ensureWorker(stt.modelId)
     const id = ++this.reqId
-    const req: STTRequest = { type: 'transcribe', id, audio, language: stt.language }
+    const req: STTRequest = { type: 'transcribe', id, modelId: stt.modelId, audio, language: stt.language }
     // Transfer the audio buffer to avoid a copy; it's freshly allocated per
     // utterance by the resampler so detaching it is safe.
     worker.postMessage(req, [audio.buffer])
@@ -91,9 +91,12 @@ class DictationController {
       return this.worker
     }
 
+    this.worker?.terminate()
     const worker = new Worker(new URL('./stt.worker.ts', import.meta.url), { type: 'module' })
     worker.onmessage = (e: MessageEvent<STTResponse>) => this.onMessage(e.data)
     worker.onerror = (e) => {
+      this.worker = null
+      this.currentModel = null
       this.setState({ status: 'error', error: e.message || 'Speech worker crashed' })
     }
     this.worker = worker
@@ -106,12 +109,15 @@ class DictationController {
   private onMessage(msg: STTResponse): void {
     switch (msg.type) {
       case 'download':
-        // Only surface download progress while we're not actively recording.
-        if (useDictation.getState().status !== 'recording') {
-          this.setState({ status: 'loading', progress: msg.progress / 100 })
+        {
+          const s = useDictation.getState().status
+          if (s === 'loading' || s === 'idle' || s === 'error') {
+            this.setState({ status: 'loading', progress: msg.progress / 100 })
+          }
         }
         break
       case 'ready':
+        if (msg.modelId !== this.currentModel) break
         this.setState({
           backend: msg.backend,
           progress: null,

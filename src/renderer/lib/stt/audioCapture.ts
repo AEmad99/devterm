@@ -43,28 +43,34 @@ export class AudioCapture {
       }
     })
 
-    const ctx = new AudioContext()
-    this.ctx = ctx
-    this.inputRate = ctx.sampleRate
-    // The mic click is the gesture; resume in case the context started suspended.
-    if (ctx.state === 'suspended') await ctx.resume()
+    try {
+      const ctx = new AudioContext()
+      this.ctx = ctx
+      this.inputRate = ctx.sampleRate
+      // The mic click is the gesture; resume in case the context started suspended.
+      if (ctx.state === 'suspended') await ctx.resume()
 
-    const blob = new Blob([PCM_WORKLET_SOURCE], { type: 'application/javascript' })
-    this.workletUrl = URL.createObjectURL(blob)
-    await ctx.audioWorklet.addModule(this.workletUrl)
+      const blob = new Blob([PCM_WORKLET_SOURCE], { type: 'application/javascript' })
+      this.workletUrl = URL.createObjectURL(blob)
+      await ctx.audioWorklet.addModule(this.workletUrl)
 
-    this.source = ctx.createMediaStreamSource(this.stream)
-    this.node = new AudioWorkletNode(ctx, PCM_WORKLET_NAME)
-    this.node.port.onmessage = (e: MessageEvent<Float32Array>) => {
-      this.frames.push(e.data)
+      this.source = ctx.createMediaStreamSource(this.stream)
+      this.node = new AudioWorkletNode(ctx, PCM_WORKLET_NAME)
+      this.node.port.onmessage = (e: MessageEvent<Float32Array>) => {
+        this.frames.push(e.data)
+      }
+      this.source.connect(this.node)
+      // Connect to the destination so the graph is pulled; a zero-gain node keeps
+      // the mic from being echoed to the speakers.
+      const sink = ctx.createGain()
+      sink.gain.value = 0
+      this.node.connect(sink)
+      sink.connect(ctx.destination)
+    } catch (err) {
+      for (const track of this.stream?.getTracks() ?? []) track.stop()
+      this.stream = null
+      throw err
     }
-    this.source.connect(this.node)
-    // Connect to the destination so the graph is pulled; a zero-gain node keeps
-    // the mic from being echoed to the speakers.
-    const sink = ctx.createGain()
-    sink.gain.value = 0
-    this.node.connect(sink)
-    sink.connect(ctx.destination)
   }
 
   /**

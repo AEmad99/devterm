@@ -149,6 +149,22 @@ export default function App() {
     focusTerminal(next)
   }
 
+  const cycleLeafTab = (dir: 1 | -1) => {
+    const { groups, activeGroupId, setActiveTab } = useLayout.getState()
+    const g = groups.find((x) => x.id === activeGroupId)
+    if (!g || !g.root) return
+    const cur = groupActiveSession(g)
+    if (!cur) return
+    const leaves = allLeaves(g.root)
+    const leaf = leaves.find((l) => l.tabs.includes(cur))
+    if (!leaf || leaf.tabs.length < 2) return
+    const idx = leaf.tabs.indexOf(cur)
+    const next = leaf.tabs[(idx + dir + leaf.tabs.length) % leaf.tabs.length]
+    setActiveTab(leaf.id, next)
+    useSessions.getState().setActive(next)
+    focusTerminal(next)
+  }
+
   const zoomFont = (delta: number) => {
     const cur = useSettings.getState().prefs.fontSize
     useSettings.getState().setPrefs({ fontSize: clamp(cur + delta, 8, 32) })
@@ -178,6 +194,104 @@ export default function App() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      const keybindings = useSettings.getState().keybindings
+      const id = matchHotkey(e, resolveHotkeys(keybindings))
+      if (id) {
+        if ((id === 'nextTab' || id === 'prevTab') && !isTerminalHostFocused()) {
+          return
+        }
+        if (id === 'saveEditor') {
+          const ed = useEditors.getState()
+          const doc = ed.docs.find((d) => d.id === ed.activeId)
+          if (!ed.focused || !doc || doc.state !== 'ready') return
+          e.preventDefault()
+          void ed.save(doc.id)
+          return
+        }
+        // Don't hijack shortcuts when the user is typing in an input/editor.
+        const el = document.activeElement as HTMLElement | null
+        if (el && (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT' || el.closest?.('[contenteditable="true"]') != null)) {
+          return
+        }
+        e.preventDefault()
+        switch (id) {
+          case 'palette':
+          case 'paletteAlt':
+            setShowPalette((v) => !v)
+            break
+          case 'newTerminal':
+            setView('terminals')
+            setShowPicker(true)
+            break
+          case 'newGrid':
+            setView('terminals')
+            setShowGrid(true)
+            break
+          case 'closeTerminal': {
+            const activeId = useSessions.getState().activeId
+            if (activeId) closeSession(activeId)
+            break
+          }
+          case 'duplicateTerminal':
+            void duplicateActive()
+            break
+          case 'toggleSidebar':
+            setShowSidebar((v) => !v)
+            break
+          case 'clearTerminal': {
+            const activeId = useSessions.getState().activeId
+            if (activeId) clearTerminal(activeId)
+            break
+          }
+          case 'zoomIn':
+          case 'zoomInAlt':
+            zoomFont(1)
+            break
+          case 'zoomOut':
+            zoomFont(-1)
+            break
+          case 'zoomReset':
+            useSettings.getState().setPrefs({ fontSize: 14 })
+            break
+          case 'find':
+            // TODO: wire to xterm find addon when active terminal is focused
+            break
+          case 'settings':
+            setShowSettings((v) => !v)
+            break
+          case 'nextTerminal':
+            cycleTab(1)
+            break
+          case 'prevTerminal':
+            cycleTab(-1)
+            break
+          case 'nextTab':
+            if (isTerminalHostFocused()) cycleLeafTab(1)
+            break
+          case 'prevTab':
+            if (isTerminalHostFocused()) cycleLeafTab(-1)
+            break
+          case 'toggleFocus': {
+            const fid = useSessions.getState().activeId
+            useLayout.getState().toggleFocus(fid)
+            if (fid) focusTerminal(fid)
+            break
+          }
+          case 'toggleZenMode': {
+            const cur = useSettings.getState().zenMode
+            useSettings.getState().setZenMode(!cur)
+            break
+          }
+          case 'shortcuts':
+            setShowShortcuts((v) => !v)
+            break
+          case 'globalSearch':
+            setGlobalSearchOpen((v) => !v)
+            break
+          // 'dictate' is owned by the push-to-talk useEffect below.
+        }
+        return
+      }
       if (e.key === 'Escape') {
         if (useLayout.getState().focusedId) {
           e.preventDefault()
@@ -193,96 +307,6 @@ export default function App() {
           ed.blur()
           return
         }
-      }
-      const keybindings = useSettings.getState().keybindings
-      const id = matchHotkey(e, resolveHotkeys(keybindings))
-      if (!id) return
-      if ((id === 'nextTab' || id === 'prevTab') && !isTerminalHostFocused()) {
-        return
-      }
-      if (id === 'saveEditor') {
-        const ed = useEditors.getState()
-        const doc = ed.docs.find((d) => d.id === ed.activeId)
-        if (!ed.focused || !doc || doc.state !== 'ready') return
-        e.preventDefault()
-        void ed.save(doc.id)
-        return
-      }
-      e.preventDefault()
-      switch (id) {
-        case 'palette':
-        case 'paletteAlt':
-          setShowPalette((v) => !v)
-          break
-        case 'newTerminal':
-          setView('terminals')
-          setShowPicker(true)
-          break
-        case 'newGrid':
-          setView('terminals')
-          setShowGrid(true)
-          break
-        case 'closeTerminal': {
-          const activeId = useSessions.getState().activeId
-          if (activeId) closeSession(activeId)
-          break
-        }
-        case 'duplicateTerminal':
-          void duplicateActive()
-          break
-        case 'toggleSidebar':
-          setShowSidebar((v) => !v)
-          break
-        case 'clearTerminal': {
-          const activeId = useSessions.getState().activeId
-          if (activeId) clearTerminal(activeId)
-          break
-        }
-        case 'zoomIn':
-        case 'zoomInAlt':
-          zoomFont(1)
-          break
-        case 'zoomOut':
-          zoomFont(-1)
-          break
-        case 'zoomReset':
-          useSettings.getState().setPrefs({ fontSize: 14 })
-          break
-        case 'find':
-          break
-        case 'settings':
-          setShowSettings((v) => !v)
-          break
-        case 'nextTerminal':
-          cycleTab(1)
-          break
-        case 'prevTerminal':
-          cycleTab(-1)
-          break
-        case 'nextTab':
-          if (isTerminalHostFocused()) cycleTab(1)
-          break
-        case 'prevTab':
-          if (isTerminalHostFocused()) cycleTab(-1)
-          break
-        case 'toggleFocus': {
-          const fid = useSessions.getState().activeId
-          useLayout.getState().toggleFocus(fid)
-          if (fid) focusTerminal(fid)
-          break
-        }
-        case 'toggleZenMode': {
-          const cur = useSettings.getState().zenMode
-          useSettings.getState().setZenMode(!cur)
-          break
-        }
-        case 'shortcuts':
-          setShowShortcuts((v) => !v)
-          break
-        case 'globalSearch':
-          setGlobalSearchOpen((v) => !v)
-          break
-        // 'dictate' is owned by the push-to-talk useEffect below.
       }
     }
     window.addEventListener('keydown', onKey)
@@ -328,6 +352,8 @@ export default function App() {
       pttActiveKey.current = null
       if (useDictation.getState().status === 'recording') {
         void dictation.stop()
+      } else if (useDictation.getState().status === 'requesting-mic') {
+        void dictation.cancel()
       }
     }
 

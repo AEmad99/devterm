@@ -35,11 +35,8 @@ export function registerBrowserIpc(getWindow: () => BrowserWindow | null): {
   void zoom.load()
 
   // Each Electron DownloadItem owns a record we surface to the renderer.
-  // Map<id, { item, rec }> keyed by our synthetic id (Electron's DownloadItem
-  // is opaque; we use a WeakMap as a back-reference so the cancel path can
-  // find the live item).
+  // Map<id, { item, rec }> keyed by our synthetic id.
   const records = new Map<string, DownloadRecord>()
-  const byItem = new WeakMap<DownloadItem, DownloadRecord>()
   const send = (channel: string, ...args: unknown[]) => {
     const win = getWindow()
     if (win && !win.isDestroyed()) win.webContents.send(channel, ...args)
@@ -49,13 +46,20 @@ export function registerBrowserIpc(getWindow: () => BrowserWindow | null): {
       .map((r) => r.rec)
       .sort((a, b) => b.startedAt - a.startedAt)
   const broadcast = () => send(IPC.browserDownloadsEvent, listDownloads())
+  let broadcastTimer: ReturnType<typeof setTimeout> | null = null
+  const scheduleBroadcast = () => {
+    if (broadcastTimer) clearTimeout(broadcastTimer)
+    broadcastTimer = setTimeout(() => {
+      broadcastTimer = null
+      broadcast()
+    }, 150)
+  }
 
   function attach(): void {
     const sess = electronSession.fromPartition('persist:browser')
     // Avoid double-attaching if registerBrowserIpc is somehow called twice
     // (it isn't, but the test would be annoying to debug).
     if ((sess as unknown as { __devtermDlWired?: boolean }).__devtermDlWired) return
-    ;(sess as unknown as { __devtermDlWired?: boolean }).__devtermDlWired = true
 
     sess.on('will-download', (_event, item) => {
       const defaultDir = join(userData, 'Downloads')
@@ -76,23 +80,32 @@ export function registerBrowserIpc(getWindow: () => BrowserWindow | null): {
       }
       const record: DownloadRecord = { id, item, rec }
       records.set(id, record)
-      byItem.set(item, record)
       broadcast()
 
       item.on('updated', () => {
+        const newTotal = item.getTotalBytes()
         rec.received = item.getReceivedBytes()
-        rec.total = item.getTotalBytes()
+        if (newTotal > 0) rec.total = newTotal
         rec.state = 'progressing'
-        broadcast()
+        scheduleBroadcast()
       })
       item.on('done', (_e, state) => {
         rec.state = mapState(state)
         rec.received = item.getReceivedBytes()
-        if (state === 'completed') rec.total = item.getTotalBytes() || rec.total
+        const finalTotal = item.getTotalBytes()
+        if (finalTotal > 0) rec.total = finalTotal
+        else if (rec.received > 0) rec.total = rec.received
         rec.path = item.getSavePath() || rec.path
+        if (broadcastTimer) { clearTimeout(broadcastTimer); broadcastTimer = null }
         broadcast()
+        if (rec.state === 'cancelled' || rec.state === 'interrupted') {
+          records.delete(id)
+        } else {
+          setTimeout(() => { records.delete(id) }, 300_000)
+        }
       })
     })
+    ;(sess as unknown as { __devtermDlWired?: boolean }).__devtermDlWired = true
   }
 
   try {
@@ -130,6 +143,8 @@ export function registerBrowserIpc(getWindow: () => BrowserWindow | null): {
     await zoom.reset()
     webContents.getAllWebContents().forEach((wc) => {
       try {
+        const url = wc.getURL()
+        if (!url.startsWith('http://') && !url.startsWith('https://')) return
         wc.setZoomLevel(0)
       } catch {
         /* ignore */

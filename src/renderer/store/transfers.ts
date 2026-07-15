@@ -42,11 +42,25 @@ export const useTransfers = create<TransfersState>((set) => ({
         progress: { ...cur.progress, [id]: { transferred: ev.transferred, total: ev.total } }
       }))
     } else if (ev.kind === 'done') {
-      // The full snapshot will follow; clear the local overlay.
       set((cur) => {
         const { [id]: _, ...rest } = cur.progress
         void _
-        return { progress: rest }
+        return {
+          progress: rest,
+          items: cur.items.map((it) =>
+            it.id === id
+              ? {
+                  ...it,
+                  done: true,
+                  transferred: ev.transferred,
+                  total: ev.total,
+                  canceled: ev.canceled,
+                  error: ev.error,
+                  finishedAt: ev.finishedAt
+                }
+              : it
+          )
+        }
       })
     }
   },
@@ -61,5 +75,8 @@ export function selectItem(id: string) {
 /** Active + recent (last 24h) items, newest first. */
 export function selectVisible(s: TransfersState): TransferItemV2[] {
   // The store is already most-recent-first (we unshift on enqueue).
-  return s.items
+  const DAY = 24 * 60 * 60 * 1000
+  return s.items.filter(
+    (it) => !it.done || (it.finishedAt && Date.now() - it.finishedAt < DAY)
+  )
 }

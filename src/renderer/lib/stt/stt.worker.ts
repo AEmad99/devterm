@@ -130,7 +130,7 @@ self.onmessage = async (e: MessageEvent<STTRequest>): Promise<void> => {
     if (msg.type === 'transcribe') {
       post({ type: 'transcribing', id: msg.id })
       // ensureLoaded is a no-op if the requested model is already resident.
-      await ensureLoaded(loadedModel ?? 'base')
+      await ensureLoaded(msg.modelId)
       if (!transcriber) throw new Error('Model not loaded')
 
       const out = await transcriber(msg.audio, {
