@@ -3366,11 +3366,15 @@
   padding: 4px 6px 0;
   border-bottom: 1px solid var(--border);
   background: var(--panel-2);
+  /* Tabs are scrollable on overflow (very narrow panels) but the scrollbar
+     itself is hidden so it doesn't carve a 4px gutter under the strip —
+     matches the .pane-tabs pattern. Shift+wheel / trackpad horizontal pan
+     still work via the underlying overflow. */
   overflow-x: auto;
-  scrollbar-width: thin;
+  scrollbar-width: none;
 }
 .git-panel-tabs::-webkit-scrollbar {
-  height: 4px;
+  display: none;
 }
 
 .git-tab {
@@ -3387,6 +3391,7 @@
   align-items: center;
   gap: 4px;
   white-space: nowrap;
+  flex: 0 0 auto;
 }
 .git-tab:hover:not(.active) {
   color: var(--fg);
