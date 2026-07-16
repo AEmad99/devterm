@@ -1,10 +1,11 @@
 /**
  * GlobalSearchModal – floating search UI for live terminal output.
- * Triggered by Ctrl+Shift+F (or via hotkey system when wired).
+ * Triggered by Ctrl/Cmd+Alt+F (hotkey id `globalSearch`).
  */
 import { useState, useEffect } from 'react'
 import { SearchResult } from '@shared/types'
 import { useDebouncedCallback } from '../../lib/debounce'
+import { useSessions } from '../../store/sessions'
 
 interface Props {
   isOpen: boolean
@@ -16,26 +17,37 @@ export const GlobalSearchModal: React.FC<Props> = ({ isOpen, onClose, onJump }) 
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<SearchResult[]>([])
   const [loading, setLoading] = useState(false)
+  const [failed, setFailed] = useState(false)
+  // The main-side index is seeded with the session GUID as the title; resolve
+  // live session titles ("Local 1", "user@host") for display, falling back to
+  // whatever the index stored when the session is gone.
+  const sessions = useSessions((s) => s.sessions)
+  const rowTitle = (r: SearchResult): string =>
+    sessions.find((s) => s.id === r.sessionId)?.title ?? r.sessionTitle
 
   useEffect(() => {
     if (!isOpen) {
       setQuery('')
       setResults([])
+      setFailed(false)
     }
   }, [isOpen])
 
   const runSearch = async (q: string) => {
     if (!q.trim()) {
       setResults([])
+      setFailed(false)
       return
     }
     setLoading(true)
     try {
       const hits = await window.devterm.search.query(q)
       setResults(hits)
+      setFailed(false)
     } catch (e) {
       console.error('search failed', e)
       setResults([])
+      setFailed(true)
     } finally {
       setLoading(false)
     }
@@ -46,15 +58,9 @@ export const GlobalSearchModal: React.FC<Props> = ({ isOpen, onClose, onJump }) 
   if (!isOpen) return null
 
   return (
-    <div
-      className="fixed inset-0 z-[200] flex items-start justify-center pt-[12vh] bg-black/40"
-      onClick={onClose}
-    >
-      <div
-        className="w-[620px] rounded-xl border border-border bg-bg/95 backdrop-blur shadow-xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center gap-2 border-b border-border px-4 py-3">
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="palette gsearch" onClick={(e) => e.stopPropagation()}>
+        <div className="gsearch-head">
           <input
             autoFocus
             value={query}
@@ -63,20 +69,21 @@ export const GlobalSearchModal: React.FC<Props> = ({ isOpen, onClose, onJump }) 
               debouncedRun(e.target.value)
             }}
             placeholder="Search across all terminals..."
-            className="flex-1 bg-transparent text-lg outline-none placeholder:text-muted font-mono"
+            className="palette-input"
             onKeyDown={(e) => {
               if (e.key === 'Escape') onClose()
             }}
           />
-          <button onClick={onClose} className="text-muted text-sm px-2 hover:text-fg">
+          <button onClick={onClose} className="gsearch-esc" title="Close">
             ESC
           </button>
         </div>
 
-        <div className="max-h-[52vh] overflow-auto text-sm">
-          {loading && <div className="px-4 py-8 text-center text-muted">Searching...</div>}
-          {!loading && results.length === 0 && query.trim() !== '' && (
-            <div className="px-4 py-8 text-center text-muted">No matches found.</div>
+        <div className="gsearch-list">
+          {loading && <div className="gsearch-state">Searching…</div>}
+          {!loading && failed && <div className="gsearch-state">Search failed — try again.</div>}
+          {!loading && !failed && results.length === 0 && query.trim() !== '' && (
+            <div className="gsearch-state">No matches found.</div>
           )}
           {results.map((r, idx) => (
             <button
@@ -85,19 +92,19 @@ export const GlobalSearchModal: React.FC<Props> = ({ isOpen, onClose, onJump }) 
                 onJump(r.sessionId, r.lineNumber)
                 onClose()
               }}
-              className="w-full text-left px-4 py-2.5 font-mono border-b border-border/60 hover:bg-surface last:border-none"
+              className="gsearch-row"
             >
-              <div className="flex justify-between text-xs text-muted mb-0.5">
-                <span>{r.sessionTitle}</span>
+              <div className="gsearch-row-meta">
+                <span>{rowTitle(r)}</span>
                 <span>line {r.lineNumber}</span>
               </div>
-              <div className="truncate text-fg/90">{r.text}</div>
+              <div className="gsearch-row-text">{r.text}</div>
             </button>
           ))}
         </div>
 
-        <div className="text-[10px] px-4 py-2 text-muted border-t border-border flex justify-between">
-          <span>Global search • live PTY only (MVP)</span>
+        <div className="gsearch-foot">
+          <span>Global search · local + remote terminals</span>
           <span>{results.length} results</span>
         </div>
       </div>

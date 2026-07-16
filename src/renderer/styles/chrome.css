@@ -248,6 +248,13 @@
 .tab-close {
   opacity: 0.5;
   padding: 0 2px;
+  /* The pane-tab close is a real <button> now — strip the UA button chrome
+     so it still looks like the old bare span. */
+  background: transparent;
+  border: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
 }
 .tab-close:hover {
   opacity: 1;
@@ -522,6 +529,66 @@
   gap: 10px;
 }
 
+/* One-time first-run hint: floating card anchored bottom-center of the panes
+   area, just above the status bar. Non-modal — only the card itself takes
+   pointer events (it's a single absolutely-positioned element). */
+.welcome-hint {
+  position: absolute;
+  left: 50%;
+  bottom: 14px;
+  transform: translateX(-50%);
+  z-index: 7; /* above .term-layer (1) and focused slots (6) */
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-2);
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.welcome-hint-title {
+  color: var(--fg);
+  font-weight: 600;
+}
+/* kbd chips mirror .palette-foot kbd in panels.css. */
+.welcome-hint kbd {
+  font-family: ui-monospace, monospace;
+  background: var(--panel-2);
+  border-radius: 4px;
+  padding: 1px 5px;
+  color: var(--fg);
+}
+.welcome-hint-close {
+  background: transparent;
+  border: 0;
+  font: inherit;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 0 2px;
+}
+.welcome-hint-close:hover {
+  color: var(--fg);
+}
+@keyframes welcome-hint-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 8px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .welcome-hint {
+    animation: welcome-hint-in 220ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+}
+
 .status-cell {
   white-space: nowrap;
 }
@@ -540,6 +607,11 @@
 }
 .ctx-browser {
   background: color-mix(in srgb, var(--status-warn) 14%, var(--panel));
+}
+/* Shown while the host context probe is still in flight ("connecting…"). */
+.ctx-pending {
+  background: color-mix(in srgb, var(--tab-status-pending) 14%, var(--panel));
+  color: var(--tab-status-pending);
 }
 .status-msg {
   color: var(--status-warn);
@@ -794,7 +866,7 @@
   color: var(--accent);
 }
 .titlebar button.mic-btn.error {
-  color: color-mix(in srgb, var(--accent) 40%, #e06c75);
+  color: var(--danger);
 }
 .titlebar svg,
 .top-nav svg,
@@ -1104,7 +1176,9 @@ textarea:focus {
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
-  opacity: 0.35;
+  /* Resting state stays clearly readable: this button is the only visible way
+     out of zen mode if the user forgot the hotkey. */
+  opacity: 0.75;
   transition:
     opacity 0.12s ease,
     background 0.12s ease;
@@ -1136,7 +1210,7 @@ textarea:focus {
   border: 1px solid var(--border);
   color: var(--fg);
   font-size: 12px;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.28);
+  box-shadow: 0 6px 20px color-mix(in srgb, var(--shadow-color) 45%, transparent);
   backdrop-filter: blur(8px);
 }
 .dictation-dot {
@@ -1147,10 +1221,10 @@ textarea:focus {
   flex: 0 0 auto;
 }
 .dictation-status.status-error .dictation-dot {
-  background: color-mix(in srgb, var(--accent) 30%, #e06c75);
+  background: var(--danger);
 }
 .dictation-status.status-error {
-  color: color-mix(in srgb, var(--fg) 70%, #e06c75);
+  color: var(--danger);
 }
 .dictation-label {
   white-space: nowrap;

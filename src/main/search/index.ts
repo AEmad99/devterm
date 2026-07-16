@@ -8,9 +8,14 @@
  * (`./persist.ts`) so the index survives a restart. The tail is
  * rehydrated by callers via `rehydrateSession` (which then calls
  * `seedLines`).
+ *
+ * All ingest paths (`pushLine`, `seedLines`) run lines through `stripAnsi`
+ * (`./ansi.ts`) so stored text — and therefore search results — is plain
+ * text, free of the raw ANSI/VT sequences terminal output carries.
  */
 
 import * as persist from './persist'
+import { stripAnsi } from './ansi'
 
 export interface SearchResult {
   sessionId: string
@@ -47,15 +52,20 @@ export class SearchIndex {
       rec = { title: titleFallback ?? sessionId, lines: [] }
       this.index.set(sessionId, rec)
     }
+    // Raw PTY/SSH chunks carry ANSI/VT sequences; strip at ingest so results
+    // render as plain text. A chunk that is nothing but escape sequences
+    // (prompt-hook OSC 7/133 writes, cursor-only redraws) leaves no row.
+    const clean = stripAnsi(text)
+    if (!clean) return
     const lineNumber = rec.lines.length + 1
-    rec.lines.push({ text, lineNumber })
+    rec.lines.push({ text: clean, lineNumber })
     if (rec.lines.length > MAX_LINES_PER_SESSION) {
       rec.lines.shift()
       for (let i = 0; i < rec.lines.length; i++) rec.lines[i].lineNumber = i + 1
     }
     // Fire-and-forget: a persist failure must never break the live data path.
     try {
-      persist.push(sessionId, text)
+      persist.push(sessionId, clean)
     } catch {
       /* ignore */
     }
@@ -74,7 +84,7 @@ export class SearchIndex {
    */
   seedLines(sessionId: string, lines: string[], title: string) {
     const stored: StoredLine[] = lines.slice(-MAX_LINES_PER_SESSION).map((text, i) => ({
-      text,
+      text: stripAnsi(text),
       lineNumber: i + 1
     }))
     this.index.set(sessionId, { title, lines: stored })

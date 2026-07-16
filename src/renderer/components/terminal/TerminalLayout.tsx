@@ -458,6 +458,7 @@ function PaneChrome({
         )}
         <div
           className="pane-tabs"
+          role="tablist"
           ref={tabsRef}
           onScroll={syncNav}
           onDoubleClick={(e) => {
@@ -472,10 +473,22 @@ function PaneChrome({
             return (
               <div
                 key={sid}
+                role="tab"
+                tabIndex={0}
+                aria-selected={s.id === leaf.active}
                 className={`tab ${s.id === leaf.active ? 'active' : ''} ${s.closed ? 'closed' : ''}`}
                 draggable
                 title={label.tooltip}
                 onClick={() => onTabClick(sid)}
+                onKeyDown={(e) => {
+                  // Only the tab itself — keys from the inline rename input
+                  // (or the close button) must not re-activate it.
+                  if (e.target !== e.currentTarget) return
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault()
+                    onTabClick(sid)
+                  }
+                }}
                 onDragStart={(e) => {
                   e.dataTransfer.setData('text/plain', sid)
                   e.dataTransfer.effectAllowed = 'move'
@@ -525,15 +538,16 @@ function PaneChrome({
                     {label.context && <span className="tab-title-context"> — {label.context}</span>}
                   </span>
                 )}
-                <span
+                <button
                   className="tab-close"
+                  aria-label="Close tab"
                   onClick={(e) => {
                     e.stopPropagation()
                     onTabClose(sid)
                   }}
                 >
                   ×
-                </span>
+                </button>
               </div>
             )
           })}

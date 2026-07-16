@@ -10,6 +10,7 @@ import {
 } from 'react'
 import { useSessions, type Session } from '../../store/sessions'
 import { registerBrowserGuest } from '../../lib/browserTabs'
+import { formatBytes } from '../../lib/format'
 import type { BrowserDownloadItem } from '@shared/types'
 
 /** Default landing page and search engine. */
@@ -435,7 +436,7 @@ const BrowserToolbar = memo(function BrowserToolbar({
         title="Open DevTools for this tab (detached)"
         onClick={() => getHandle()?.openDevtools()}
       >
-        ⌘ DevTools
+        {window.devterm.platform === 'darwin' ? '⌘ DevTools' : 'DevTools'}
       </button>
       <button
         className="browser-btn"
@@ -813,13 +814,6 @@ function BrowserPane({ session }: { session: Session }) {
       )}
     </div>
   )
-}
-
-function formatBytes(n: number): string {
-  if (n < 1024) return `${n} B`
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
-  if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`
-  return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`
 }
 
 // Memoized like the terminal panes: a layout drag/resize tick must not re-render

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { GitCommandResult, GitStashEntry } from '@shared/types'
 import type { GitScope } from './GitPanel'
+import ConfirmDialog from '../common/ConfirmDialog'
 
 /**
  * The Stash tab — list of stash entries with Apply / Pop / Drop actions.
@@ -24,6 +25,8 @@ export default function GitStashPanel({
   const [items, setItems] = useState<GitStashEntry[] | null>(null)
   const [busy, setBusy] = useState(false)
   const [tick, setTick] = useState(0)
+  // Stash ref awaiting a drop confirmation.
+  const [confirmDrop, setConfirmDrop] = useState<string | null>(null)
 
   const reload = useCallback(() => {
     void window.devterm.git.stash({ sessionId: scope.sessionId, path: scope.path }).then(setItems)
@@ -32,6 +35,13 @@ export default function GitStashPanel({
   useEffect(() => {
     reload()
   }, [reload, tick])
+
+  const dropStash = async (ref: string) => {
+    setBusy(true)
+    await run(() => window.devterm.git.stashDrop({ ...scope, ref }))
+    setBusy(false)
+    setTick((t) => t + 1)
+  }
 
   if (items === null) return <div className="git-loading">loading…</div>
   if (items.length === 0) return <div className="git-empty">no stashes</div>
@@ -79,13 +89,7 @@ export default function GitStashPanel({
                 <button
                   className="git-mini danger"
                   disabled={busy}
-                  onClick={async () => {
-                    if (!window.confirm(`Drop ${s.ref}?`)) return
-                    setBusy(true)
-                    await run(() => window.devterm.git.stashDrop({ ...scope, ref: s.ref }))
-                    setBusy(false)
-                    setTick((t) => t + 1)
-                  }}
+                  onClick={() => setConfirmDrop(s.ref)}
                 >
                   Drop
                 </button>
@@ -94,6 +98,24 @@ export default function GitStashPanel({
           ))}
         </div>
       </div>
+
+      {confirmDrop && (
+        <ConfirmDialog
+          open
+          title="Drop stash?"
+          message={
+            <>
+              Drop <b>{confirmDrop}</b>? This cannot be undone.
+            </>
+          }
+          confirmLabel="Drop"
+          onConfirm={() => {
+            void dropStash(confirmDrop)
+            setConfirmDrop(null)
+          }}
+          onClose={() => setConfirmDrop(null)}
+        />
+      )}
     </div>
   )
 }

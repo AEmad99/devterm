@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { useSettings } from '../../store/settings'
 import { useSessions } from '../../store/sessions'
+import { useShallow } from 'zustand/react/shallow'
 import type { ApprovalRule, DefaultShellPref } from '@shared/types'
 import { THEMES, getTheme, applyTheme, type Theme } from '../../lib/themes'
 import { HOTKEYS, comboLabel, captureCombo, type HotkeyId } from '../../lib/hotkeys'
@@ -148,7 +149,11 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
     return () => window.removeEventListener('focus', onFocus)
   }, [])
 
-  const remoteSessions = useSessions((s) => s.sessions.filter((x) => x.kind === 'remote'))
+  // useShallow: .filter() returns a fresh array per snapshot read; without
+  // shallow equality the store subscription render-loops (React #185).
+  const remoteSessions = useSessions(
+    useShallow((s) => s.sessions.filter((x) => x.kind === 'remote'))
+  )
 
   const addRule = async () => {
     const prefix = rulePrefix.trim()
@@ -881,10 +886,9 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
         <section className="settings-section">
           <h3>Agent guardrails</h3>
           <div className="settings-sub-hint">
-            Approval rules that override the per-session policy mode. Longest
-            prefix wins; per-session rules beat same-length global rules.
-            Rules added via &ldquo;Remember my choice&rdquo; in a confirm
-            prompt land here.
+            Approval rules that override the per-session policy mode. Longest prefix wins;
+            per-session rules beat same-length global rules. Rules added via &ldquo;Remember my
+            choice&rdquo; in a confirm prompt land here.
           </div>
 
           <div className="rule-form">
@@ -910,9 +914,7 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                 <select
                   className="text-input"
                   value={ruleOutcome}
-                  onChange={(e) =>
-                    setRuleOutcome(e.target.value as ApprovalRule['outcome'])
-                  }
+                  onChange={(e) => setRuleOutcome(e.target.value as ApprovalRule['outcome'])}
                 >
                   <option value="allow">Allow (skip confirm)</option>
                   <option value="deny">Deny (always block)</option>
@@ -927,9 +929,7 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                 <select
                   className="text-input"
                   value={ruleScope}
-                  onChange={(e) =>
-                    setRuleScope(e.target.value as 'global' | 'session')
-                  }
+                  onChange={(e) => setRuleScope(e.target.value as 'global' | 'session')}
                 >
                   <option value="global">Global (all sessions)</option>
                   <option value="session">Per remote session</option>
@@ -994,9 +994,7 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                   </span>
                   <code className="rule-prefix">{r.commandPrefix}</code>
                   <span className="rule-scope">
-                    {r.sessionId
-                      ? `session: ${r.sessionId.slice(0, 8)}…`
-                      : 'global'}
+                    {r.sessionId ? `session: ${r.sessionId.slice(0, 8)}…` : 'global'}
                   </span>
                   <button
                     className="ghost small"

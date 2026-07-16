@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useId } from 'react'
 import type { ReactNode } from 'react'
 
 export interface ModalShellProps {
@@ -29,17 +29,26 @@ export default function ModalShell({
     return () => window.removeEventListener('keydown', onKey)
   }, [open, onClose])
 
+  const titleId = useId()
+
   if (!open) return null
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div
         className={['modal', `modal--${size}`, className].filter(Boolean).join(' ')}
+        role="dialog"
+        aria-modal="true"
+        {...(typeof title === 'string'
+          ? { 'aria-label': title }
+          : title !== undefined
+            ? { 'aria-labelledby': titleId }
+            : {})}
         onClick={(e) => e.stopPropagation()}
       >
         {title !== undefined && (
           <div className="modal-head">
-            <h3>{title}</h3>
+            <h3 id={titleId}>{title}</h3>
             <button type="button" className="modal-x" onClick={onClose} aria-label="Close">
               ×
             </button>

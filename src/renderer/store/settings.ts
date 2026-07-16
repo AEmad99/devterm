@@ -1,5 +1,11 @@
 import { create } from 'zustand'
-import type { AgentKind, DefaultShellPref, STTSettings, STTModelId, STTLanguage } from '@shared/types'
+import type {
+  AgentKind,
+  DefaultShellPref,
+  STTSettings,
+  STTModelId,
+  STTLanguage
+} from '@shared/types'
 import type { HotkeyId } from '../lib/hotkeys'
 
 /**
@@ -101,6 +107,12 @@ export interface AppSettings {
    * PTY) so a closed session's recent output is still searchable.
    */
   searchPersist: boolean
+  /**
+   * One-time onboarding hint (the floating "Getting started" card in the
+   * terminals view). Flipped to true when the user dismisses it; older saved
+   * payloads without the field default to false so the hint shows once.
+   */
+  welcomeHintSeen: boolean
 }
 
 /**
@@ -194,7 +206,8 @@ const DEFAULTS: AppSettings = {
     appendSpace: true,
     showFloatingStatus: true
   },
-  searchPersist: false
+  searchPersist: false,
+  welcomeHintSeen: false
 }
 
 const STORAGE_KEY = 'devterm.settings.v1'
@@ -248,9 +261,11 @@ function load(): AppSettings {
       keybindings: normalizeKeybindings(parsed?.keybindings),
       stt: normalizeStt(parsed?.stt),
       searchPersist:
-        typeof parsed?.searchPersist === 'boolean'
-          ? parsed.searchPersist
-          : DEFAULTS.searchPersist
+        typeof parsed?.searchPersist === 'boolean' ? parsed.searchPersist : DEFAULTS.searchPersist,
+      welcomeHintSeen:
+        typeof parsed?.welcomeHintSeen === 'boolean'
+          ? parsed.welcomeHintSeen
+          : DEFAULTS.welcomeHintSeen
     }
   } catch {
     return DEFAULTS
@@ -318,7 +333,9 @@ function normalizeStt(raw: unknown): STTSettings {
   ]
   return {
     enabled: typeof r.enabled === 'boolean' ? r.enabled : DEFAULTS.stt.enabled,
-    modelId: models.includes(r.modelId as STTModelId) ? (r.modelId as STTModelId) : DEFAULTS.stt.modelId,
+    modelId: models.includes(r.modelId as STTModelId)
+      ? (r.modelId as STTModelId)
+      : DEFAULTS.stt.modelId,
     language: languages.includes(r.language as STTLanguage)
       ? (r.language as STTLanguage)
       : DEFAULTS.stt.language,
@@ -354,6 +371,8 @@ interface SettingsState extends AppSettings {
   setStt: (patch: Partial<STTSettings>) => void
   /** Toggle the optional persistent search index tail (off by default). */
   setSearchPersist: (v: boolean) => void
+  /** Dismiss the one-time first-run welcome hint. */
+  setWelcomeHintSeen: (v: boolean) => void
   /**
    * Apply an imported settings snapshot (received from `settings:imported`)
    * to the live store and localStorage. Unknown/missing fields fall back to
@@ -385,7 +404,8 @@ function persist(state: AppSettings): void {
     gitPanelOpen: state.gitPanelOpen,
     keybindings: state.keybindings,
     stt: state.stt,
-    searchPersist: state.searchPersist
+    searchPersist: state.searchPersist,
+    welcomeHintSeen: state.welcomeHintSeen
   }
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(payload))
@@ -510,6 +530,11 @@ export const useSettings = create<SettingsState>((set, get) => ({
     persist(snapshot(get()))
   },
 
+  setWelcomeHintSeen: (v) => {
+    set({ welcomeHintSeen: v })
+    persist(snapshot(get()))
+  },
+
   applyImported: (s) => {
     if (!s || typeof s !== 'object') return
     // Merge over current state so a partial snapshot (older bundle) doesn't
@@ -524,8 +549,7 @@ export const useSettings = create<SettingsState>((set, get) => ({
         ? { ...cur.autoReconnect, ...s.autoReconnect }
         : cur.autoReconnect,
       attention: s.attention ? { ...cur.attention, ...s.attention } : cur.attention,
-      showStatusBar:
-        typeof s.showStatusBar === 'boolean' ? s.showStatusBar : cur.showStatusBar,
+      showStatusBar: typeof s.showStatusBar === 'boolean' ? s.showStatusBar : cur.showStatusBar,
       agentActivityCollapsed:
         typeof s.agentActivityCollapsed === 'boolean'
           ? s.agentActivityCollapsed
@@ -534,12 +558,9 @@ export const useSettings = create<SettingsState>((set, get) => ({
         typeof s.inactivePaneDimming === 'boolean'
           ? s.inactivePaneDimming
           : cur.inactivePaneDimming,
-      sftpSidePane:
-        typeof s.sftpSidePane === 'boolean' ? s.sftpSidePane : cur.sftpSidePane,
+      sftpSidePane: typeof s.sftpSidePane === 'boolean' ? s.sftpSidePane : cur.sftpSidePane,
       activityIndicators:
-        typeof s.activityIndicators === 'boolean'
-          ? s.activityIndicators
-          : cur.activityIndicators,
+        typeof s.activityIndicators === 'boolean' ? s.activityIndicators : cur.activityIndicators,
       zenMode: typeof s.zenMode === 'boolean' ? s.zenMode : cur.zenMode,
       agentKind:
         s.agentKind === 'claude' ||
@@ -551,16 +572,15 @@ export const useSettings = create<SettingsState>((set, get) => ({
           ? s.agentKind
           : cur.agentKind,
       transfersPanelOpen:
-        typeof s.transfersPanelOpen === 'boolean'
-          ? s.transfersPanelOpen
-          : cur.transfersPanelOpen,
+        typeof s.transfersPanelOpen === 'boolean' ? s.transfersPanelOpen : cur.transfersPanelOpen,
       defaultShell: normalizeDefaultShell(s.defaultShell),
-      gitPanelOpen:
-        typeof s.gitPanelOpen === 'boolean' ? s.gitPanelOpen : cur.gitPanelOpen,
+      gitPanelOpen: typeof s.gitPanelOpen === 'boolean' ? s.gitPanelOpen : cur.gitPanelOpen,
       keybindings: normalizeKeybindings(s.keybindings),
       stt: normalizeStt(s.stt),
-      searchPersist:
-        typeof s.searchPersist === 'boolean' ? s.searchPersist : cur.searchPersist
+      searchPersist: typeof s.searchPersist === 'boolean' ? s.searchPersist : cur.searchPersist,
+      // Local-only UI flag (not part of the export bundle): importing settings
+      // must not resurrect the dismissed welcome hint.
+      welcomeHintSeen: cur.welcomeHintSeen
     }
     set(next)
     persist(next)
@@ -588,7 +608,8 @@ export const useSettings = create<SettingsState>((set, get) => ({
       defaultShell: DEFAULTS.defaultShell,
       keybindings: DEFAULTS.keybindings,
       stt: DEFAULTS.stt,
-      searchPersist: DEFAULTS.searchPersist
+      searchPersist: DEFAULTS.searchPersist,
+      welcomeHintSeen: DEFAULTS.welcomeHintSeen
     })
     persist(DEFAULTS)
     void window.devterm.ssh.setReconnectPolicy?.(DEFAULTS.autoReconnect).catch(() => undefined)
@@ -628,6 +649,7 @@ function snapshot(s: SettingsState): AppSettings {
     gitPanelOpen: s.gitPanelOpen,
     keybindings: s.keybindings,
     stt: s.stt,
-    searchPersist: s.searchPersist
+    searchPersist: s.searchPersist,
+    welcomeHintSeen: s.welcomeHintSeen
   }
 }

@@ -5,6 +5,7 @@ import { useEditors } from '../../store/editors'
 import { localFsApi, remoteFsApi, type FsApi } from '../../lib/fsapi'
 import FileTree, { type FileTreeHandle, type Selection } from './FileTree'
 import FileMutationDialog, { type FileMutationKind } from './FileMutationDialog'
+import { useEscapeKey } from '../../lib/useEscapeKey'
 import {
   IconLocal,
   IconRemote,
@@ -214,6 +215,9 @@ export default function FileExplorer() {
   const [dialog, setDialog] = useState<null | { kind: FileMutationKind }>(null)
   const [busy, setBusy] = useState(false)
   const [diffResult, setDiffResult] = useState<null | { file: string; patch: string }>(null)
+  // The diff modal renders outside ModalShell — give it the same Esc-to-close.
+  const closeDiff = useCallback(() => setDiffResult(null), [])
+  useEscapeKey(closeDiff, diffResult !== null)
 
   // Fuzzy match: open with `/` from the tree, type a substring, Enter focuses
   // the match. Case-insensitive "every query char appears in order in the

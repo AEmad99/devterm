@@ -3,6 +3,87 @@
 All notable changes to DevTerm are documented here. The most recent section is
 at the top. Dates are ISO `YYYY-MM-DD`.
 
+## 1.3.2 — 2026-07-16
+
+### Fixed
+
+- **Command Palette — History:** PSReadLine multi-line commands no longer
+  fragment into concatenated junk rows (e.g. `cd D:\projects\my-termD:\projects\my-term`).
+  The history reader now reassembles PSReadLine's trailing-backtick continuations
+  into one record per command, and dedupe is keyed on a normalised form so
+  casing / quoting / trailing-path-separator variants collapse to a single row.
+- **Global Search:** Result rows no longer render the terminal's raw ANSI/VT
+  sequences (`[93m`, `[23;20H`, `]7;file://…`, OSC 7 / OSC 133 prompt hooks).
+  The search index now strips escape sequences and C0 controls at ingest, so
+  stored lines and the rows the modal shows are plain text.
+- **Transfer Queue (boot crash):** `TransfersPanel` no longer crash-loops the
+  app on launch with React error #185. `selectVisible` returns a fresh array
+  each snapshot read; wrapping the subscription in `useShallow` keeps referential
+  equality on the unchanged result.
+- **Settings → Remote sessions (boot crash):** Same React #185 fix for the
+  `useSessions((s) => s.sessions.filter(...))` subscription in `SettingsModal`.
+- **Agent Activity export:** Replaced a DOM `data-attribute` hack (which leaked
+  between agent panes) with proper React state; success and failure both show
+  an inline auto-dismissing message, and the time row now renders a localised
+  formatted time instead of the raw ISO string.
+- **Browser Pane — DevTools button:** The `⌘ DevTools` label only shows on
+  macOS now; Windows / Linux render `DevTools` so the misleading glyph is gone.
+- **File Pane:** A `loading…` placeholder renders before the first listing
+  arrives instead of a blank area for files at depth > 0.
+
+### Added
+
+- **One-time welcome hint:** A non-modal "Getting started" card anchored
+  bottom-center of the panes area surfaces the user's actual (possibly
+  overridden) keybindings for the command palette, new terminal, and settings
+  on first run. Dismissed via the × button; the choice is persisted and not
+  resurrected by a settings import.
+- **`ConfirmDialog` component:** New reusable danger / primary confirm dialog
+  in `components/common`. Replaces `window.confirm()` in the Git branches,
+  changes, stash, and tags panels so destructive actions get the house
+  modal styling, autofocus, and Esc-to-close.
+- **`useEscapeKey` hook:** Tiny window-level Esc-to-close helper for modals
+  that render outside `ModalShell` (file diffs, command palette, new-tab
+  picker, save-workspace, shortcuts, agent-approval). One helper, one
+  behaviour, no more per-component key handlers.
+- **`formatBytes` helper:** Centralised byte-count formatter; was duplicated in
+  `BrowserPane` and `PortForwardPanel`.
+- **Transfers panel error reason:** Failed transfers now show the error text
+  inline (truncated with tooltip) instead of only an `error` status pill.
+
+### Accessibility
+
+- **Pane tabs:** Added `role="tablist"` / `role="tab"`, `aria-selected`, and
+  keyboard activation (Enter / Space) on the tab itself. The close button is
+  now a real `<button>` with `aria-label="Close tab"`.
+- **Modals:** `ModalShell`, `CommandPalette`, `GlobalSearchModal`,
+  `ConfirmActionModal`, `ShortcutsModal`, and `NewTerminalModal` now expose
+  `role="dialog"` + `aria-modal`; titles are linked via `aria-labelledby`.
+- **Command palette:** History rows surface the full command in a `title`
+  tooltip so mouse users can read commands that overflow the row.
+- **Confirm-action modal:** Focuses the safe default (`Deny`) on every new
+  request; Left/Right arrow keys cycle the focused button; uses the standard
+  `danger` / `ghost` classes instead of the old bespoke `danger-btn`.
+
+### Changed
+
+- **Reduced motion:** The reconnect banner pulse, browser-progress pulse, and
+  terminal bell-flash now respect `prefers-reduced-motion: reduce` (the bell
+  flash is disabled outright, the others animate only when motion is OK).
+- **Theme tokens:** `--font-mono` / `--font-ui` are now CSS variables,
+  referenced from the global-search modal and other mono-data surfaces.
+- **Approval rules, transfer queue, git panel, shell picker, terminal chrome:**
+  Hardcoded greys / reds were replaced with theme tokens (`--danger`,
+  `--ok`, `--status-warn`, `--shadow-2` flat forms) so dark themes like
+  gruvbox and ayu no longer wash out.
+- **Hotkey label:** `palette` description shortened to "Command palette"
+  (the "(run a snippet)" suffix was misleading — it runs whatever the
+  chosen category dispatches, not snippets specifically).
+- **`AGENTS.md`:** Slimmed from a 426-line manual to a 97-line feature index
+  (architecture, terminals & layout, files, browser, agent bridge, persistence,
+  commands, packaging, critical rules). Full per-feature behaviour lives in
+  the code where it can stay current.
+
 ## 1.3.1 — 2026-07-15
 
 ### Fixed

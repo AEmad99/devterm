@@ -1,5 +1,6 @@
 import { useTransfers, selectVisible } from '../../store/transfers'
 import { useSettings } from '../../store/settings'
+import { useShallow } from 'zustand/react/shallow'
 import type { TransferItemV2 } from '@shared/types'
 
 /**
@@ -12,7 +13,10 @@ import type { TransferItemV2 } from '@shared/types'
 export default function TransfersPanel() {
   const open = useSettings((s) => s.transfersPanelOpen)
   const setOpen = useSettings((s) => s.setTransfersPanelOpen)
-  const items = useTransfers(selectVisible)
+  // useShallow: selectVisible returns a fresh filtered array on every snapshot
+  // read; without shallow equality useSyncExternalStore sees a "changed" store
+  // on every render and loops (React #185 — crashed the whole app on boot).
+  const items = useTransfers(useShallow(selectVisible))
   const progress = useTransfers((s) => s.progress)
   const setItems = useTransfers((s) => s.setItems)
 
@@ -120,7 +124,14 @@ function TransferRow({
           style={{ width: `${percent}%` }}
         />
       </div>
-      <span className="transfers-status">{status === 'running' ? `${percent}%` : status}</span>
+      <span className="transfers-status" title={status === 'error' ? item.error : undefined}>
+        {status === 'running' ? `${percent}%` : status}
+      </span>
+      {status === 'error' && item.error && (
+        <span className="transfers-err" title={item.error}>
+          {item.error}
+        </span>
+      )}
       {status === 'running' ? (
         <button className="transfers-row-action" onClick={onCancel}>
           Cancel

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { AgentKind, ConfirmRequest } from '@shared/types'
 import { useSessions } from '../../store/sessions'
 
@@ -14,7 +14,7 @@ const AGENT_DISPLAY: Record<AgentKind, string> = {
 }
 
 function agentName(kind: AgentKind | undefined): string {
-  return kind ? AGENT_DISPLAY[kind] ?? 'The agent' : 'The agent'
+  return kind ? (AGENT_DISPLAY[kind] ?? 'The agent') : 'The agent'
 }
 
 /**
@@ -60,6 +60,29 @@ export default function ConfirmActionModal() {
   const safeIndex = visible.length === 0 ? 0 : Math.min(pointer, visible.length - 1)
   const top = visible[safeIndex] ?? null
   const snoozedCount = queue.length - visible.length
+
+  const modalRef = useRef<HTMLDivElement>(null)
+  const denyRef = useRef<HTMLButtonElement>(null)
+
+  // Keyboard operation: focus the safe default ("Deny") whenever a new request
+  // surfaces; Left/Right then move focus between the buttons and Enter/Space
+  // activate the focused one (native button behavior). Esc and overlay-click
+  // stay disabled on purpose — approval must be an explicit choice.
+  useEffect(() => {
+    denyRef.current?.focus()
+  }, [top?.reqId])
+
+  const onModalKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
+    const buttons = Array.from(
+      modalRef.current?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)') ?? []
+    )
+    if (buttons.length === 0) return
+    e.preventDefault()
+    const idx = buttons.indexOf(document.activeElement as HTMLButtonElement)
+    const delta = e.key === 'ArrowRight' ? 1 : -1
+    buttons[(idx + delta + buttons.length) % buttons.length]?.focus()
+  }
 
   // When every pending request is snoozed, show a small floating indicator so
   // the operator doesn't lose track of blocked agent actions.
@@ -129,9 +152,16 @@ export default function ConfirmActionModal() {
 
   return (
     <div className="modal-backdrop">
-      <div className="modal confirm-modal">
+      <div
+        ref={modalRef}
+        className="modal confirm-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="confirm-action-title"
+        onKeyDown={onModalKeyDown}
+      >
         <div className="confirm-head">
-          <h3>⚠ Approve agent action?</h3>
+          <h3 id="confirm-action-title">⚠ Approve agent action?</h3>
           {total > 1 && (
             <div className="confirm-queue-meta">
               <button
@@ -178,10 +208,10 @@ export default function ConfirmActionModal() {
             Snooze 5 min
           </button>
           <span className="spacer" />
-          <button className="ghost" onClick={() => reply(false)}>
+          <button ref={denyRef} className="ghost" onClick={() => reply(false)}>
             Deny
           </button>
-          <button className="danger-btn" onClick={() => reply(true)}>
+          <button className="danger" onClick={() => reply(true)}>
             Approve &amp; run
           </button>
         </div>

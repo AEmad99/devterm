@@ -22,13 +22,9 @@ import { useSessions } from './store/sessions'
 import { useEditors } from './store/editors'
 import { useLayout, DEFAULT_GROUP, groupActiveSession, allLeaves } from './store/layout'
 import { useSettings } from './store/settings'
-import { matchHotkey, resolveHotkeys, comboLabel, HOTKEYS } from './lib/hotkeys'
+import { matchHotkey, resolveHotkeys, comboLabel, HOTKEYS, type HotkeyId } from './lib/hotkeys'
 import { focusTerminal, clearTerminal } from './lib/terms'
-import {
-  capturableSessions,
-  captureWorkspace,
-  launchWorkspaceIntoGroup
-} from './lib/workspace'
+import { capturableSessions, captureWorkspace, launchWorkspaceIntoGroup } from './lib/workspace'
 import { dictation } from './lib/stt/dictation'
 import { useDictation } from './store/dictation'
 import DictationStatus from './components/dictation/DictationStatus'
@@ -65,6 +61,9 @@ export default function App() {
   const zenMode = useSettings((s) => s.zenMode)
   const gitPanelOpen = useSettings((s) => s.gitPanelOpen)
   const setGitPanelOpen = useSettings((s) => s.setGitPanelOpen)
+  const welcomeHintSeen = useSettings((s) => s.welcomeHintSeen)
+  const setWelcomeHintSeen = useSettings((s) => s.setWelcomeHintSeen)
+  const keybindings = useSettings((s) => s.keybindings)
 
   const bottomPanelMode: BottomPanelMode = transfersPanelOpen
     ? 'transfers'
@@ -209,8 +208,19 @@ export default function App() {
           return
         }
         // Don't hijack shortcuts when the user is typing in an input/editor.
+        // Exception: xterm's helper textarea is not user text input — a
+        // terminal holds focus ~100% of the time, and TerminalView's custom
+        // key handler already keeps matched hotkeys from reaching the shell
+        // as control bytes, so global hotkeys must still fire from it.
         const el = document.activeElement as HTMLElement | null
-        if (el && (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT' || el.closest?.('[contenteditable="true"]') != null)) {
+        const inXterm = el?.classList.contains('xterm-helper-textarea') ?? false
+        if (
+          !inXterm &&
+          el &&
+          (el.tagName === 'TEXTAREA' ||
+            el.tagName === 'INPUT' ||
+            el.closest?.('[contenteditable="true"]') != null)
+        ) {
           return
         }
         e.preventDefault()
@@ -322,7 +332,10 @@ export default function App() {
   const pttActiveKey = useRef<string | null>(null)
 
   useEffect(() => {
-    const matchesDictate = (e: KeyboardEvent, h: ReturnType<typeof resolveHotkeys>[number] | undefined) => {
+    const matchesDictate = (
+      e: KeyboardEvent,
+      h: ReturnType<typeof resolveHotkeys>[number] | undefined
+    ) => {
       if (!h) return false
       const mod = e.ctrlKey || e.metaKey
       const key = e.key.length === 1 ? e.key.toLowerCase() : e.key
@@ -445,6 +458,20 @@ export default function App() {
     HOTKEYS.find((h) => h.id === 'dictate')
   const dictateHotkeyLabel = dictateHotkey ? comboLabel(dictateHotkey, !!isMac) : undefined
 
+  // First-run hint: show the user's actual (possibly overridden) combos.
+  const welcomeHintKeys = useMemo(() => {
+    const hs = resolveHotkeys(keybindings)
+    const combo = (id: HotkeyId) => {
+      const h = hs.find((x) => x.id === id)
+      return h ? comboLabel(h, !!isMac) : ''
+    }
+    return {
+      palette: combo('palette'),
+      newTerminal: combo('newTerminal'),
+      settings: combo('settings')
+    }
+  }, [keybindings, isMac])
+
   return (
     <div className="app" data-zen={zenMode ? 'on' : undefined}>
       {!zenMode && (
@@ -538,6 +565,27 @@ export default function App() {
             {view === 'snippets' && (
               <div className="view-pane">
                 <SnippetsManager onRun={() => setView('terminals')} />
+              </div>
+            )}
+            {/* One-time first-run hint. Anchored bottom-center of the panes
+                area (absolute within .panes-area), non-modal — only the card
+                itself intercepts pointer events. */}
+            {!welcomeHintSeen && view === 'terminals' && !zenMode && sessionCount > 0 && (
+              <div className="welcome-hint">
+                <span className="welcome-hint-title">Getting started</span>
+                <span className="welcome-hint-keys">
+                  <kbd>{welcomeHintKeys.palette}</kbd> palette ·{' '}
+                  <kbd>{welcomeHintKeys.newTerminal}</kbd> new terminal ·{' '}
+                  <kbd>{welcomeHintKeys.settings}</kbd> settings
+                </span>
+                <button
+                  className="welcome-hint-close"
+                  aria-label="Dismiss"
+                  title="Dismiss"
+                  onClick={() => setWelcomeHintSeen(true)}
+                >
+                  ×
+                </button>
               </div>
             )}
           </div>

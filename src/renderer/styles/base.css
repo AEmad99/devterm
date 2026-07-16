@@ -56,6 +56,10 @@
   --radius-sm: 6px;
   --radius: 9px;
   --radius-lg: 14px;
+  /* Type stacks — referenced as var(--font-mono)/var(--font-ui) by panels that
+     need mono data (git SHAs, diff blocks) or explicit UI text. */
+  --font-mono: ui-monospace, 'Cascadia Code', Menlo, Consolas, monospace;
+  --font-ui: 'Segoe UI', system-ui, -apple-system, sans-serif;
   /* Shadows are tinted with the theme background (not flat black) so elevation
      reads as part of the palette instead of a grey wash. */
   --shadow-color: color-mix(in srgb, var(--bg) 42%, #000);

@@ -2,6 +2,8 @@ import { useCallback, useMemo, useState } from 'react'
 import type { GitCommandResult, GitFileStatus, GitStatus } from '@shared/types'
 import type { GitScope } from './GitPanel'
 import { IconStage, IconUnstage, IconRevert, IconCommit } from './GitIcons'
+import ConfirmDialog from '../common/ConfirmDialog'
+import { useEscapeKey } from '../../lib/useEscapeKey'
 
 /**
  * The Changes tab — staged + unstaged + untracked files with stage/unstage/
@@ -36,6 +38,14 @@ export default function GitChangesPanel({
 }) {
   const [diff, setDiff] = useState<null | { path: string; staged: boolean; text: string }>(null)
   const [loadingDiff, setLoadingDiff] = useState<string | null>(null)
+  // File awaiting a "discard working-tree changes" confirmation.
+  const [discardPath, setDiscardPath] = useState<string | null>(null)
+
+  // The diff viewer manages its own markup (not ModalShell) — close on Esc.
+  useEscapeKey(
+    useCallback(() => setDiff(null), []),
+    diff !== null
+  )
 
   // Split the status map into staged vs working-tree rows.
   const rows = useMemo(() => splitRows(status), [status])
@@ -64,11 +74,13 @@ export default function GitChangesPanel({
   )
 
   const stageAll = useCallback(
-    () => run(() => window.devterm.git.stage({ ...scope, files: rows.unstaged.map((r) => r.path) })),
+    () =>
+      run(() => window.devterm.git.stage({ ...scope, files: rows.unstaged.map((r) => r.path) })),
     [run, scope, rows.unstaged]
   )
   const unstageAll = useCallback(
-    () => run(() => window.devterm.git.unstage({ ...scope, files: rows.staged.map((r) => r.path) })),
+    () =>
+      run(() => window.devterm.git.unstage({ ...scope, files: rows.staged.map((r) => r.path) })),
     [run, scope, rows.staged]
   )
 
@@ -97,9 +109,7 @@ export default function GitChangesPanel({
               actionIcon={<IconStage size={12} />}
               loading={loadingDiff === r.path}
               onAction={() => run(() => window.devterm.git.stage({ ...scope, files: [r.path] }))}
-              onDiscard={() =>
-                run(() => window.devterm.git.discard({ ...scope, files: [r.path] }))
-              }
+              onDiscard={() => setDiscardPath(r.path)}
               onShowDiff={() => openDiff(r.path, false)}
             />
           ))}
@@ -166,6 +176,24 @@ export default function GitChangesPanel({
             </div>
           </div>
         </div>
+      )}
+
+      {discardPath && (
+        <ConfirmDialog
+          open
+          title="Discard changes?"
+          message={
+            <>
+              Discard working-tree changes to <b>{discardPath}</b>? This cannot be undone.
+            </>
+          }
+          confirmLabel="Discard"
+          onConfirm={() => {
+            void run(() => window.devterm.git.discard({ ...scope, files: [discardPath] }))
+            setDiscardPath(null)
+          }}
+          onClose={() => setDiscardPath(null)}
+        />
       )}
     </div>
   )

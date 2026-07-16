@@ -48,7 +48,7 @@ export interface Hotkey {
 }
 
 export const HOTKEYS: Hotkey[] = [
-  { id: 'palette', mod: true, key: 'k', label: 'Command palette (run a snippet)' },
+  { id: 'palette', mod: true, key: 'k', label: 'Command palette' },
   { id: 'paletteAlt', mod: true, shift: true, key: 'p', label: 'Command palette', alias: true },
   { id: 'newTerminal', mod: true, shift: true, key: 't', label: 'New terminal' },
   { id: 'newGrid', mod: true, shift: true, key: 'g', label: 'New terminal grid' },

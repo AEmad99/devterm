@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import type { SavedConnection } from '@shared/types'
 import type { Session } from '../../store/sessions'
 import { IconLocal, IconRemote } from '../common/Icons'
+import { useEscapeKey } from '../../lib/useEscapeKey'
 
 /**
  * Names and saves the active group's terminals as a workspace. Opened from the
@@ -20,6 +21,8 @@ export default function SaveWorkspaceModal({
 }) {
   const [name, setName] = useState('')
   const [conns, setConns] = useState<SavedConnection[]>([])
+  // Window-level Esc: close from anywhere in the modal, not just the input.
+  useEscapeKey(onClose)
 
   useEffect(() => {
     window.devterm.connections.list().then(setConns)
@@ -51,7 +54,6 @@ export default function SaveWorkspaceModal({
             onChange={(e) => setName(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter') save()
-              if (e.key === 'Escape') onClose()
             }}
           />
         </div>

@@ -1,6 +1,8 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import type { FileEntry, GitFileStatus, GitStatus } from '@shared/types'
 import type { FsApi } from '../../lib/fsapi'
+import { useEscapeKey } from '../../lib/useEscapeKey'
+import { formatBytes } from '../../lib/format'
 import { IconChevron } from '../common/Icons'
 import { FileTypeIcon } from '../common/FileTypeIcon'
 
@@ -124,6 +126,9 @@ function FileTreeImpl(
   // self-contained for the diff action (the parent only provides the diff
   // resolver and the git status map).
   const [diffModal, setDiffModal] = useState<{ entry: FileEntry; text: string } | null>(null)
+  // The diff modal renders outside ModalShell — give it the same Esc-to-close.
+  const closeDiff = useCallback(() => setDiffModal(null), [])
+  useEscapeKey(closeDiff, diffModal !== null)
   // Mirrors of the latest state, so `toggle` can decide whether to lazy-load
   // without reading stale closures or nesting setState calls.
   const openRef = useRef(open)
@@ -283,7 +288,7 @@ function FileTreeImpl(
             status ? `git-${status.toLowerCase()}` : ''
           }`}
           style={{ paddingLeft: pad }}
-          title={`${e.mode}${e.isDir ? '' : '  ' + e.size + ' B'}`}
+          title={`${e.mode}${e.isDir ? '' : '  ' + formatBytes(e.size)}`}
           onClick={onRowClick}
           onDoubleClick={() => (e.isDir ? onActivateDir(e) : onActivateFile(e))}
           onContextMenu={onContextMenu}

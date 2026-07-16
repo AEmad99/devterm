@@ -298,6 +298,7 @@ export default function FilePane({
           onDropPath(dropped, name, isDir)
         }}
       >
+        {!listing && !err && <div className="fp-empty">loading…</div>}
         {listing && (
           <FileTree
             ref={treeRef}

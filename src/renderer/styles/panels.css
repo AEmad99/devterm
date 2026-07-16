@@ -65,7 +65,11 @@
 }
 .browser-progress.on {
   opacity: 1;
-  animation: browser-progress-pulse 1s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .browser-progress.on {
+    animation: browser-progress-pulse 1s ease-in-out infinite;
+  }
 }
 @keyframes browser-progress-pulse {
   0%,
@@ -263,7 +267,10 @@
   gap: 8px;
   margin-top: 10px;
 }
-.modal button {
+/* Bare buttons inside modals get the primary look; :where() keeps this at
+   zero-class specificity so component classes (.theme-swatch, icon buttons,
+   tab strips) always win over the default. */
+:where(.modal) button {
   background: var(--accent);
   color: var(--accent-fg);
   border: none;
@@ -759,7 +766,7 @@
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 10px;
-  box-shadow: 0 16px 48px var(--shadow-pop);
+  box-shadow: var(--shadow-pop);
   overflow: hidden;
 }
 
@@ -915,6 +922,80 @@
   font-size: 12px;
   color: var(--muted);
 }
+
+/* Global search modal (Ctrl/Cmd+Alt+F) — reuses the .palette shell. */
+.gsearch-head {
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid var(--border);
+}
+.gsearch-head .palette-input {
+  border-bottom: none;
+  font-family: var(--font-mono);
+}
+.gsearch-esc {
+  flex: 0 0 auto;
+  margin-right: 12px;
+  padding: 2px 8px;
+  font-size: 11px;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  cursor: pointer;
+}
+.gsearch-esc:hover {
+  color: var(--fg);
+}
+.gsearch-list {
+  max-height: 52vh;
+  overflow: auto;
+  font-size: 13px;
+}
+.gsearch-state {
+  padding: 24px 16px;
+  text-align: center;
+  color: var(--muted);
+}
+.gsearch-row {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 8px 16px;
+  font-family: var(--font-mono);
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  color: var(--fg);
+  cursor: pointer;
+}
+.gsearch-row:last-child {
+  border-bottom: none;
+}
+.gsearch-row:hover {
+  background: var(--hover);
+}
+.gsearch-row-meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 2px;
+}
+.gsearch-row-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.gsearch-foot {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 16px;
+  border-top: 1px solid var(--border);
+  font-size: 10px;
+  color: var(--muted);
+}
+
 .palette-params {
   padding: 16px;
 }
@@ -1081,7 +1162,10 @@
 }
 .editor-toolbar button.primary {
   background: var(--accent-quiet);
-  color: var(--accent-fg);
+  /* Text sits on the 16%-accent --accent-quiet wash, not on solid accent, so
+     it must use --accent itself: --accent-fg is computed for solid fills and
+     is dark-on-dark on themes with a dark accent-fg (gruvbox, ayu). */
+  color: var(--accent);
   border: 1px solid var(--accent);
   border-radius: 6px;
   padding: 4px 12px;
@@ -1152,7 +1236,7 @@
   border-color: var(--accent);
   filter: none;
   transform: translateY(-1px);
-  box-shadow: 0 6px 18px var(--shadow-2);
+  box-shadow: var(--shadow-2);
 }
 .modal .nt-choice:active {
   transform: translateY(-1px);
@@ -1882,16 +1966,16 @@
   background: var(--bg-soft, transparent);
 }
 .rule-outcome-allow {
-  color: var(--green, #6cc06c);
-  border-color: var(--green, #6cc06c);
+  color: var(--ok);
+  border-color: var(--ok);
 }
 .rule-outcome-deny {
-  color: var(--red, #e06c75);
-  border-color: var(--red, #e06c75);
+  color: var(--danger);
+  border-color: var(--danger);
 }
 .rule-outcome-ask {
-  color: var(--yellow, #d7ba7d);
-  border-color: var(--yellow, #d7ba7d);
+  color: var(--status-warn);
+  border-color: var(--status-warn);
 }
 .rule-prefix {
   font-family: var(--mono, ui-monospace, monospace);
@@ -2677,6 +2761,16 @@
   color: var(--muted);
   text-transform: capitalize;
 }
+/* Failure reason shown next to the "error" status — truncated, full text in
+   the title tooltip. */
+.transfers-err {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--status-error);
+}
 .transfers-spacer {
   width: 64px;
 }
@@ -2866,7 +2960,7 @@
   display: flex;
   flex-direction: column;
   z-index: 5;
-  box-shadow: -4px 0 12px var(--shadow-2);
+  box-shadow: var(--shadow-2);
 }
 .browser-dl-head {
   display: flex;
@@ -3227,7 +3321,7 @@
 .git-panel-path {
   display: block;
   margin-top: 6px;
-  color: var(--muted-2);
+  color: var(--muted);
   font-family: var(--font-mono);
   font-size: 11px;
   word-break: break-all;

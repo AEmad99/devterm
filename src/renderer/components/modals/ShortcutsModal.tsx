@@ -1,4 +1,5 @@
 import { comboLabel, resolveHotkeys } from '../../lib/hotkeys'
+import { useEscapeKey } from '../../lib/useEscapeKey'
 import { useSettings } from '../../store/settings'
 
 /**
@@ -17,11 +18,18 @@ export default function ShortcutsModal({ onClose }: { onClose: () => void }) {
   const isMac = window.devterm.platform === 'darwin'
   const keybindings = useSettings((s) => s.keybindings)
   const rows = resolveHotkeys(keybindings).filter((h) => !h.alias)
+  useEscapeKey(onClose)
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <h3>Keyboard shortcuts</h3>
+      <div
+        className="modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="shortcuts-title"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h3 id="shortcuts-title">Keyboard shortcuts</h3>
         <div className="shortcuts-list">
           {rows.map((h) => (
             <div key={h.id} className="shortcut-row">

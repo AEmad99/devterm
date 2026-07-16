@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import type { GitCommandResult, GitTag } from '@shared/types'
 import type { GitScope } from './GitPanel'
 import { IconPlus, IconTrash } from '../common/Icons'
+import ConfirmDialog from '../common/ConfirmDialog'
 
 /**
  * The Tags tab — list of local tags with their target OID and (for annotated
@@ -24,10 +25,19 @@ export default function GitTagsPanel({
   const [tags, setTags] = useState<GitTag[] | null>(null)
   const [tick, setTick] = useState(0)
   const [busy, setBusy] = useState(false)
+  // Tag name awaiting a delete confirmation.
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
 
   useEffect(() => {
     void window.devterm.git.tags({ sessionId: scope.sessionId, path: scope.path }).then(setTags)
   }, [scope.path, scope.sessionId, tick])
+
+  const deleteTag = async (name: string) => {
+    setBusy(true)
+    await run(() => window.devterm.git.tagDelete({ ...scope, names: [name] }))
+    setBusy(false)
+    setTick((x) => x + 1)
+  }
 
   if (tags === null) return <div className="git-loading">loading…</div>
   if (tags.length === 0)
@@ -64,13 +74,7 @@ export default function GitTagsPanel({
             <button
               className="git-icon-btn small danger"
               disabled={busy}
-              onClick={async () => {
-                if (!window.confirm(`Delete tag "${t.name}"?`)) return
-                setBusy(true)
-                await run(() => window.devterm.git.tagDelete({ ...scope, names: [t.name] }))
-                setBusy(false)
-                setTick((x) => x + 1)
-              }}
+              onClick={() => setConfirmDelete(t.name)}
               title="Delete tag"
               aria-label="Delete"
             >
@@ -79,6 +83,23 @@ export default function GitTagsPanel({
           </div>
         ))}
       </div>
+
+      {confirmDelete && (
+        <ConfirmDialog
+          open
+          title="Delete tag?"
+          message={
+            <>
+              Delete tag <b>{confirmDelete}</b>? This cannot be undone.
+            </>
+          }
+          onConfirm={() => {
+            void deleteTag(confirmDelete)
+            setConfirmDelete(null)
+          }}
+          onClose={() => setConfirmDelete(null)}
+        />
+      )}
     </div>
   )
 }

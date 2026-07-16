@@ -2,8 +2,18 @@ import { app, ipcMain } from 'electron'
 import { promises as fs } from 'fs'
 import { homedir } from 'os'
 import { join } from 'path'
-import { IPC, type CommandStat, type HistoryQuery, type HistoryResult } from '@shared/types'
+import { IPC, type HistoryQuery, type HistoryResult } from '@shared/types'
 import type { SSHManager } from '../ssh/manager'
+import {
+  clean,
+  historyKey,
+  looksSensitive,
+  mergeHistory,
+  parsePsReadLine,
+  splitLines,
+  stripZsh,
+  type StoredEntry
+} from './history-parse'
 
 // Command history powering the palette's recent/most-used lists. Two sources are
 // merged at query time: commands the user RAN through DevTerm (recorded here into
@@ -11,33 +21,10 @@ import type { SSHManager } from '../ssh/manager'
 // a secret store — but commands can contain credentials, so `looksSensitive`
 // keeps obvious password/token lines out of both the store and the results.
 
-interface StoredEntry {
-  command: string
-  count: number
-  /** Epoch ms of the most recent in-app run (drives "recent" ordering). */
-  last: number
-  /** Kept separate so local commands don't pollute a remote's list and vice versa. */
-  scope: 'local' | 'remote'
-}
-
 const storeFile = (): string => join(app.getPath('userData'), 'history.json')
 
 const MAX_STORE = 2000 // distinct in-app entries retained (most-recent kept)
 const MAX_LINES = 5000 // tail of each shell-history file we scan
-const MAX_OUT = 300 // cap on each returned list
-
-// High-precision patterns for lines that likely embed a secret. Conservative on
-// purpose: a false negative just shows a command; a false positive only hides one.
-const SENSITIVE: RegExp[] = [
-  /\b(pass(?:word|wd)?|secret|token|api[_-]?key|access[_-]?key|client[_-]?secret|bearer)\b/i,
-  /\bAKIA[0-9A-Z]{16}\b/,
-  /\bgh[pousr]_[A-Za-z0-9]{20,}\b/,
-  /\bgithub_pat_[A-Za-z0-9_]{20,}\b/,
-  /-----BEGIN [A-Z ]*PRIVATE KEY-----/
-]
-const looksSensitive = (cmd: string): boolean => SENSITIVE.some((re) => re.test(cmd))
-
-const clean = (line: string): string => line.replace(/\r$/, '').trim()
 
 async function readStore(): Promise<StoredEntry[]> {
   try {
@@ -55,19 +42,13 @@ async function writeStore(entries: StoredEntry[]): Promise<void> {
   await fs.rename(tmp, storeFile()) // atomic replace so a crash mid-write can't corrupt the store
 }
 
-/** Read a text file's lines (best-effort); empty if missing/unreadable. */
-async function readLines(path: string): Promise<string[]> {
+/** Read a text file (best-effort); empty if missing/unreadable. */
+async function readText(path: string): Promise<string> {
   try {
-    return (await fs.readFile(path, 'utf8')).split(/\r?\n/)
+    return await fs.readFile(path, 'utf8')
   } catch {
-    return []
+    return ''
   }
-}
-
-/** zsh entries look like `: 1700000000:0;the command` — strip the timestamp prefix. */
-const stripZsh = (line: string): string => {
-  const m = /^:\s*\d+:\d+;(.*)$/.exec(line)
-  return m ? m[1] : line
 }
 
 /** The local machine's shell history, oldest→newest. PowerShell (PSReadLine) on
@@ -77,70 +58,36 @@ async function localHistory(): Promise<string[]> {
   if (process.platform === 'win32' && process.env.APPDATA) {
     // PSReadLine stores history per host, and PowerShell 7 (pwsh, which DevTerm
     // prefers) uses a different folder than Windows PowerShell 5.1. Read both —
-    // PS7 first since it's the more likely active shell.
+    // PS7 first since it's the more likely active shell. The format is NOT one
+    // command per line: multi-line commands use a trailing-backtick continuation,
+    // which parsePsReadLine reassembles.
     const ps = (...seg: string[]) =>
       join(process.env.APPDATA!, ...seg, 'PSReadLine', 'ConsoleHost_history.txt')
-    out.push(...(await readLines(ps('Microsoft', 'PowerShell'))))
-    out.push(...(await readLines(ps('Microsoft', 'Windows', 'PowerShell'))))
+    out.push(...parsePsReadLine(await readText(ps('Microsoft', 'PowerShell'))))
+    out.push(...parsePsReadLine(await readText(ps('Microsoft', 'Windows', 'PowerShell'))))
   }
   const home = homedir()
-  out.push(...(await readLines(join(home, '.bash_history'))))
-  out.push(...(await readLines(join(home, '.zsh_history'))).map(stripZsh))
+  out.push(...splitLines(await readText(join(home, '.bash_history'))))
+  out.push(...splitLines(await readText(join(home, '.zsh_history'))).map(stripZsh))
   return out.slice(-MAX_LINES)
 }
 
 /** A remote session's shell history, read over its EXISTING SSH client (no second
  * connection). `tail` bounds the read; zsh timestamp prefixes are stripped. */
 async function remoteHistory(ssh: SSHManager, sessionId: string): Promise<string[]> {
+  // The `echo` between the two tails matters: if ~/.bash_history's final line
+  // has no trailing newline, tail emits it unterminated and the first zsh line
+  // would glue onto it, fusing two commands into one bogus entry. The blank
+  // line the echo adds is filtered out downstream.
   const cmd =
-    `tail -n ${MAX_LINES} ~/.bash_history 2>/dev/null; ` +
+    `tail -n ${MAX_LINES} ~/.bash_history 2>/dev/null; echo; ` +
     `tail -n ${MAX_LINES} ~/.zsh_history 2>/dev/null`
   try {
     const { stdout } = await ssh.exec(sessionId, cmd, 8000)
-    return stdout.split(/\r?\n/).map(stripZsh)
+    return splitLines(stdout).map(stripZsh)
   } catch {
     return [] // unknown session / channel failure → just no external history
   }
-}
-
-/** Merge external (chronological) history + in-app entries into ranked lists. */
-function build(externalChrono: string[], inApp: StoredEntry[]): HistoryResult {
-  const counts = new Map<string, number>()
-  const bump = (cmd: string, n: number) => counts.set(cmd, (counts.get(cmd) ?? 0) + n)
-
-  const ext: string[] = []
-  for (const raw of externalChrono) {
-    const c = clean(raw)
-    if (!c || looksSensitive(c)) continue
-    ext.push(c)
-    bump(c, 1)
-  }
-  for (const e of inApp) {
-    if (!e.command || looksSensitive(e.command)) continue
-    bump(e.command, e.count)
-  }
-
-  // Recent: in-app runs first (they carry real timestamps and are "what you just
-  // did here"), then external newest-first; dedupe keeping the first occurrence.
-  const recent: string[] = []
-  const seen = new Set<string>()
-  const ordered = [
-    ...[...inApp].sort((a, b) => b.last - a.last).map((e) => e.command),
-    ...ext.slice().reverse()
-  ]
-  for (const c of ordered) {
-    if (!c || seen.has(c) || looksSensitive(c)) continue
-    seen.add(c)
-    recent.push(c)
-    if (recent.length >= MAX_OUT) break
-  }
-
-  const frequent: CommandStat[] = [...counts.entries()]
-    .map(([command, count]) => ({ command, count }))
-    .sort((a, b) => b.count - a.count || a.command.localeCompare(b.command))
-    .slice(0, MAX_OUT)
-
-  return { recent, frequent }
 }
 
 export function registerHistoryIpc(ssh: SSHManager): void {
@@ -148,9 +95,19 @@ export function registerHistoryIpc(ssh: SSHManager): void {
     const cmd = clean(command)
     if (!cmd || cmd.length > 2000 || looksSensitive(cmd)) return
     const entries = await readStore()
-    const idx = entries.findIndex((x) => x.command === cmd && x.scope === scope)
+    // Match by historyKey so re-running a variant (`CD X\` after `cd 'X'`)
+    // bumps the existing entry instead of forking a near-duplicate; the stored
+    // display text follows the most recent variant.
+    const idx = entries.findIndex(
+      (x) => x.scope === scope && historyKey(x.command) === historyKey(cmd)
+    )
     if (idx >= 0)
-      entries[idx] = { ...entries[idx], count: entries[idx].count + 1, last: Date.now() }
+      entries[idx] = {
+        ...entries[idx],
+        command: cmd,
+        count: entries[idx].count + 1,
+        last: Date.now()
+      }
     else entries.push({ command: cmd, count: 1, last: Date.now(), scope })
     entries.sort((a, b) => b.last - a.last) // keep the most-recently-used within the cap
     await writeStore(entries.slice(0, MAX_STORE))
@@ -164,6 +121,6 @@ export function registerHistoryIpc(ssh: SSHManager): void {
         : q.scope === 'local'
           ? await localHistory()
           : []
-    return build(external, inApp)
+    return mergeHistory(external, inApp)
   })
 }

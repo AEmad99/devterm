@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { PortForward, PortForwardKind } from '@shared/types'
+import { formatBytes } from '../../lib/format'
 
 interface Props {
   sessionId: string
@@ -68,12 +69,7 @@ export default function PortForwardPanel({ sessionId }: Props) {
     }
   }
 
-  const formatBytes = (n?: number) => {
-    if (n == null) return '—'
-    if (n < 1024) return `${n} B`
-    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
-    return `${(n / 1024 / 1024).toFixed(1)} MB`
-  }
+  const formatBytesOpt = (n?: number) => (n == null ? '—' : formatBytes(n))
 
   return (
     <div className="port-forward-panel">
@@ -123,7 +119,7 @@ export default function PortForwardPanel({ sessionId }: Props) {
                 </span>
               )}
               <span className="pf-bytes" title="Bytes proxied">
-                {formatBytes(f.bytes)}
+                {formatBytesOpt(f.bytes)}
               </span>
               <button className="ghost small" onClick={() => void remove(f.id)}>
                 Remove

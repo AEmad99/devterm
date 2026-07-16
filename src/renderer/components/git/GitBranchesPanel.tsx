@@ -3,6 +3,7 @@ import type { GitBranch, GitBranches, GitCommandResult } from '@shared/types'
 import type { GitScope } from './GitPanel'
 import { IconPlus, IconTrash } from '../common/Icons'
 import { IconBranch, IconPull, IconPush } from './GitIcons'
+import ConfirmDialog from '../common/ConfirmDialog'
 
 /**
  * The Branches tab — local + remote refs with the current branch flagged,
@@ -31,6 +32,8 @@ export default function GitBranchesPanel({
   const [tick, setTick] = useState(0)
   const [busy, setBusy] = useState(false)
   const [selected, setSelected] = useState<string | null>(null)
+  // Branch names awaiting a delete confirmation.
+  const [confirmDelete, setConfirmDelete] = useState<string[] | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -49,7 +52,8 @@ export default function GitBranchesPanel({
     [data]
   )
   const remotes = useMemo(
-    () => (data?.branches ?? []).filter((b) => b.remote).sort((a, b) => a.name.localeCompare(b.name)),
+    () =>
+      (data?.branches ?? []).filter((b) => b.remote).sort((a, b) => a.name.localeCompare(b.name)),
     [data]
   )
 
@@ -65,8 +69,6 @@ export default function GitBranchesPanel({
 
   const deleteBranches = useCallback(
     async (names: string[]) => {
-      const confirmed = window.confirm(`Delete ${names.length === 1 ? `branch "${names[0]}"` : `${names.length} branches`}?`)
-      if (!confirmed) return
       setBusy(true)
       await run(() => window.devterm.git.deleteBranch({ ...scope, names }))
       setBusy(false)
@@ -98,9 +100,7 @@ export default function GitBranchesPanel({
   const push = useCallback(
     async (branch: string) => {
       setBusy(true)
-      await run(() =>
-        window.devterm.git.push({ ...scope, branch, setUpstream: true })
-      )
+      await run(() => window.devterm.git.push({ ...scope, branch, setUpstream: true }))
       setBusy(false)
       refresh()
     },
@@ -141,7 +141,7 @@ export default function GitBranchesPanel({
               selected={selected === b.name}
               onSelect={() => setSelected(b.name)}
               onCheckout={() => checkout(b.name)}
-              onDelete={() => deleteBranches([b.name])}
+              onDelete={() => setConfirmDelete([b.name])}
               onPush={() => push(b.name)}
               onPull={() => pull(b.name)}
             />
@@ -164,11 +164,36 @@ export default function GitBranchesPanel({
               onCheckout={() => checkout(b.name)}
               onMerge={() => mergeIntoCurrent(b.name)}
               onFetchRemote={() => fetch(b.name.split('/')[0])}
-              onDelete={() => deleteBranches([b.name])}
+              onDelete={() => setConfirmDelete([b.name])}
             />
           ))}
         </div>
       </div>
+
+      {confirmDelete && (
+        <ConfirmDialog
+          open
+          title={confirmDelete.length === 1 ? 'Delete branch?' : 'Delete branches?'}
+          message={
+            <>
+              Delete{' '}
+              {confirmDelete.length === 1 ? (
+                <>
+                  branch <b>{confirmDelete[0]}</b>
+                </>
+              ) : (
+                <b>{confirmDelete.length} branches</b>
+              )}
+              ? This cannot be undone.
+            </>
+          }
+          onConfirm={() => {
+            void deleteBranches(confirmDelete)
+            setConfirmDelete(null)
+          }}
+          onClose={() => setConfirmDelete(null)}
+        />
+      )}
     </div>
   )
 }

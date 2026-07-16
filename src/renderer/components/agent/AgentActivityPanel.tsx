@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { BridgeActivityEntry } from '@shared/types'
 import { useBridgeActivity, formatDuration, formatTime } from '../../lib/bridge-activity'
 
@@ -57,6 +57,16 @@ export default function AgentActivityPanel({
   const { entries, loading, clear } = useBridgeActivity(sessionId)
   const [filter, setFilter] = useState<Filter>('all')
   const [expandedId, setExpandedId] = useState<string | null>(null)
+  // Inline export feedback — local state, not a DOM data-attribute, so multiple
+  // agent panes never flash each other's panel.
+  const [exportMsg, setExportMsg] = useState<{ ok: boolean; text: string } | null>(null)
+  const exportMsgTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    return () => {
+      if (exportMsgTimer.current) clearTimeout(exportMsgTimer.current)
+    }
+  }, [])
 
   const visible = useMemo(() => {
     if (filter === 'all') return entries
@@ -65,21 +75,19 @@ export default function AgentActivityPanel({
     return entries.filter(isError)
   }, [entries, filter])
 
+  const showExportMsg = (ok: boolean, text: string) => {
+    if (exportMsgTimer.current) clearTimeout(exportMsgTimer.current)
+    setExportMsg({ ok, text })
+    exportMsgTimer.current = setTimeout(() => setExportMsg(null), 3000)
+  }
+
   const doExport = async (sid: string) => {
     try {
       const written = await window.devterm.bridgeActivity.export(sid)
       if (written == null) return // user canceled
-      // Subtle confirmation via the title attribute on the next render
-      // would be noisy; use a brief inline message instead.
-      const actions = document.querySelector('.agent-activity-actions')
-      if (!actions) return
-      const prev = actions.getAttribute('data-last-export') ?? ''
-      actions.setAttribute('data-last-export', `Exported ${written} entries`)
-      setTimeout(() => {
-        actions.setAttribute('data-last-export', prev)
-      }, 2000)
+      showExportMsg(true, `Exported ${written} entries`)
     } catch (e) {
-      console.warn('export failed', e)
+      showExportMsg(false, `Export failed: ${(e as Error).message}`)
     }
   }
 
@@ -107,6 +115,14 @@ export default function AgentActivityPanel({
           ))}
         </div>
         <div className="agent-activity-actions">
+          {exportMsg && (
+            <span
+              className={`agent-activity-export-msg ${exportMsg.ok ? 'ok' : 'err'}`}
+              role="status"
+            >
+              {exportMsg.text}
+            </span>
+          )}
           <button
             className="ghost small"
             onClick={() => void doExport(sessionId)}
@@ -183,7 +199,7 @@ export default function AgentActivityPanel({
                       )}
                       <div className="agent-activity-detail-row">
                         <span className="k">time</span>
-                        <span className="v">{new Date(e.ts).toISOString()}</span>
+                        <span className="v">{formatTime(e.ts)}</span>
                       </div>
                       {e.durationMs != null && (
                         <div className="agent-activity-detail-row">

@@ -203,7 +203,7 @@
   max-height: 200px;
   overflow: auto;
 }
-.confirm-modal .danger-btn {
+.confirm-modal .danger {
   background: var(--danger);
   color: var(--accent-fg);
   border: none;
@@ -395,7 +395,7 @@
   color: var(--fg);
   border: 1px solid var(--border);
   border-radius: 6px;
-  box-shadow: 0 6px 20px var(--shadow-2);
+  box-shadow: var(--shadow-2);
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -500,7 +500,7 @@
   border: 1px solid color-mix(in srgb, var(--accent) 60%, var(--border));
   border-radius: 10px;
   box-shadow:
-    0 18px 60px rgba(0, 0, 0, 0.55),
+    0 18px 60px color-mix(in srgb, var(--shadow-color) 70%, transparent),
     0 0 0 1px var(--accent-soft);
 }
 .term-slot.focused > .terminal-wrap,
@@ -615,7 +615,7 @@
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 8px;
-  box-shadow: 0 10px 30px var(--shadow-2);
+  box-shadow: var(--shadow-2);
   overflow: hidden;
   font-size: 12px;
 }
@@ -655,10 +655,15 @@
 }
 @keyframes dt-bell {
   0% {
-    box-shadow: inset 0 0 0 9999px rgba(120, 150, 255, 0.18);
+    box-shadow: inset 0 0 0 9999px color-mix(in srgb, var(--accent) 18%, transparent);
   }
   100% {
-    box-shadow: inset 0 0 0 9999px rgba(120, 150, 255, 0);
+    box-shadow: inset 0 0 0 9999px transparent;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .terminal-host.bell-flash {
+    animation: none;
   }
 }
 .term-search {
@@ -673,7 +678,7 @@
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 4px 6px;
-  box-shadow: 0 6px 18px var(--shadow-2);
+  box-shadow: var(--shadow-2);
 }
 .term-search-input {
   background: var(--input-bg);
@@ -760,7 +765,11 @@
   border-bottom: 1px solid color-mix(in oklab, var(--accent) 40%, var(--border));
   font-size: 12px;
   color: var(--fg);
-  animation: reconnect-pulse 2.4s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .reconnect-banner {
+    animation: reconnect-pulse 2.4s ease-in-out infinite;
+  }
 }
 .reconnect-banner.is-failed {
   background: color-mix(in oklab, var(--danger) 18%, var(--panel));

@@ -4,6 +4,7 @@
  * a web browser pane — replacing the old fixed "+ Local" / "+ SSH" titlebar buttons.
  */
 import { IconLocal, IconRemote, IconBrowser, IconGrid } from '../common/Icons'
+import { useEscapeKey } from '../../lib/useEscapeKey'
 
 export default function NewTerminalModal({
   onLocal,
@@ -18,10 +19,18 @@ export default function NewTerminalModal({
   onGrid: () => void
   onClose: () => void
 }) {
+  useEscapeKey(onClose)
+
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal new-term-modal" onClick={(e) => e.stopPropagation()}>
-        <h3>New tab</h3>
+      <div
+        className="modal new-term-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="new-term-title"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h3 id="new-term-title">New tab</h3>
         <div className="nt-choices">
           <button className="nt-choice" onClick={onLocal}>
             <span className="nt-ico">

@@ -21,6 +21,7 @@ import {
   snippetCommandSet
 } from '../../lib/history-frecency'
 import { scoreTerms } from '../../lib/fuzzy'
+import { useEscapeKey } from '../../lib/useEscapeKey'
 import { useSessions } from '../../store/sessions'
 import { useLayout } from '../../store/layout'
 import { toLiveSnapshot } from '../../lib/workspace'
@@ -123,6 +124,10 @@ export default function CommandPalette({
       }
     }
   }, [])
+
+  // Window-level Esc-to-close: the input's own key handling only fires while
+  // the input is focused (e.g. clicking "+ save as snippet" moves focus away).
+  useEscapeKey(onClose)
 
   const connName = useCallback(
     (id?: string) => (id && connections.find((c) => c.id === id)?.name) || '(deleted connection)',
@@ -416,9 +421,6 @@ export default function CommandPalette({
     } else if (e.key === 'Enter') {
       e.preventDefault()
       activate(flatItems[sel], !e.shiftKey)
-    } else if (e.key === 'Escape') {
-      e.preventDefault()
-      onClose()
     } else if (e.key === 'Tab') {
       e.preventDefault()
       nextCategory(e.shiftKey ? -1 : 1)
@@ -518,6 +520,7 @@ export default function CommandPalette({
       <div
         key={`${item.kind}-${key}`}
         className={`palette-row ${selected ? 'sel' : ''}`}
+        title={isHistory ? item.command : undefined}
         onMouseEnter={() => setSel(idx)}
         onClick={() => activate(item, true)}
       >
@@ -559,7 +562,13 @@ export default function CommandPalette({
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="palette" onClick={(e) => e.stopPropagation()}>
+      <div
+        className="palette"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Command palette"
+        onClick={(e) => e.stopPropagation()}
+      >
         {!chosen ? (
           <>
             <div className="palette-tabs">
@@ -646,6 +655,9 @@ export default function CommandPalette({
                         submitParams(!e.shiftKey)
                       } else if (e.key === 'Escape') {
                         e.preventDefault()
+                        // Keep Esc meaning "back to the list" in the params
+                        // form — don't let it reach the window-level close.
+                        e.stopPropagation()
                         setChosen(null)
                       }
                     }}
