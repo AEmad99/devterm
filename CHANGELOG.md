@@ -3,6 +3,46 @@
 All notable changes to DevTerm are documented here. The most recent section is
 at the top. Dates are ISO `YYYY-MM-DD`.
 
+## 1.3.3 — 2026-07-20
+
+### Added
+
+- **Bundled DevTerm Agent (default):** The primary coding agent is now the
+  multi-provider runtime packaged with the app (`@earendil-works/pi-coding-agent`
+  + a dedicated Node binary). External CLIs (`pi`, `claude`, `opencode`, `kimi`,
+  `grok`, `codex`) remain selectable fallbacks. Default `agentKind` is `devterm`.
+- **Provider / model routing:** Settings → DevTerm Agent exposes provider and
+  model preference, ordered rate-limit fallbacks (`provider/model` pairs), and a
+  resume-sessions toggle. Model credentials stay in the agent's own auth store or
+  environment — they never cross DevTerm IPC.
+- **Authenticated-provider status:** `agent:capabilities` reports runtime version,
+  offline model catalog, and whether each provider has configured auth (presence
+  only; no secret values).
+- **Automatic rate-limit recovery:** On HTTP 408 / 429 / 5xx from the active
+  provider, the MCP extension switches the next request to the next authenticated
+  fallback model.
+- **Resumable agent sessions:** Optional transcripts under
+  `userData/agent-sessions/`, keyed by remote session id, reopen after reconnect
+  when resume is enabled.
+- **Pinned instruction skills:** Users can allowlist instruction-only skill files
+  with a SHA-256 pin re-checked at every launch. Executable third-party extensions
+  remain disabled.
+- **Performance panel:** On-demand local process CPU/memory snapshot via
+  `performance:snapshot` (Settings → Performance). Nothing is sampled in the
+  background or uploaded.
+- **Remote detached sessions setting:** When enabled (default), POSIX remotes
+  with tmux reattach a stable `devterm-<sessionId>` tmux session across SSH
+  reconnects.
+
+### Changed
+
+- **Packaging:** `electron-builder.yml` unpacks the bundled Node binary, the
+  agent package, and its runtime dependency closure so the agent can run from
+  the installed app outside `app.asar`.
+- **AGENTS.md:** Expanded project map for other coding agents — architecture
+  table, agent launch matrix, MCP tool list, persistence, packaging unpack rules,
+  and 1.3.x release context. Version stamp set to 1.3.3.
+
 ## 1.3.2 — 2026-07-16
 
 ### Fixed
