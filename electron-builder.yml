@@ -7,13 +7,54 @@ files:
   - out/**/*
   - package.json
   # Trim debug symbols and prebuilds for other platforms from the Windows build.
-  - "!**/*.pdb"
-  - "!**/node_modules/node-pty/prebuilds/linux-*/**"
+  - '!**/*.pdb'
+  - '!**/node_modules/node-pty/prebuilds/linux-*/**'
 asarUnpack:
-  - "**/node_modules/node-pty/**"
+  - '**/node_modules/node-pty/**'
+  # Dedicated runtime for the built-in DevTerm Agent. Executables cannot run
+  # from inside app.asar, so keep the platform-specific Node binary on disk.
+  - '**/node_modules/node/bin/**'
+  # The dedicated Node process cannot resolve JS or native dependencies from
+  # Electron's virtual app.asar filesystem. Keep the bundled agent's complete
+  # runtime dependency closure beside the executable.
+  - '**/node_modules/@earendil-works/**'
+  - '**/node_modules/@silvia-odwyer/**'
+  - '**/node_modules/ansi-styles/**'
+  - '**/node_modules/balanced-match/**'
+  - '**/node_modules/brace-expansion/**'
+  - '**/node_modules/chalk/**'
+  - '**/node_modules/color-convert/**'
+  - '**/node_modules/color-name/**'
+  - '**/node_modules/cross-spawn/**'
+  - '**/node_modules/diff/**'
+  - '**/node_modules/fs.realpath/**'
+  - '**/node_modules/glob/**'
+  - '**/node_modules/has-flag/**'
+  - '**/node_modules/highlight.js/**'
+  - '**/node_modules/hosted-git-info/**'
+  - '**/node_modules/ignore/**'
+  - '**/node_modules/inflight/**'
+  - '**/node_modules/inherits/**'
+  - '**/node_modules/isexe/**'
+  - '**/node_modules/jiti/**'
+  - '**/node_modules/lru-cache/**'
+  - '**/node_modules/minimatch/**'
+  - '**/node_modules/once/**'
+  - '**/node_modules/path-key/**'
+  - '**/node_modules/proper-lockfile/**'
+  - '**/node_modules/semver/**'
+  - '**/node_modules/shebang-command/**'
+  - '**/node_modules/shebang-regex/**'
+  - '**/node_modules/supports-color/**'
+  - '**/node_modules/typebox/**'
+  - '**/node_modules/undici/**'
+  - '**/node_modules/which/**'
+  - '**/node_modules/wrappy/**'
+  - '**/node_modules/yallist/**'
+  - '**/node_modules/yaml/**'
   # onnxruntime-web's wasm for local speech-to-text. Large WASM binaries can fail
   # to instantiate from inside the asar archive over file://, so keep them on disk.
-  - "**/ort/*.wasm"
+  - '**/ort/*.wasm'
 win:
   icon: resources/icon.ico
   target:

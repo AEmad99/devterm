@@ -492,7 +492,9 @@ function TerminalView({ session }: { session: Session }) {
         })
       )
       window.devterm.ssh
-        .openShell(sid, term.cols, term.rows)
+        .openShell(sid, term.cols, term.rows, {
+          detached: useSettings.getState().remoteDetachedSessions
+        })
         .then(() => {
           // Best-effort: restore the working directory when launched from a
           // saved workspace. Works for POSIX shells and PowerShell alike.

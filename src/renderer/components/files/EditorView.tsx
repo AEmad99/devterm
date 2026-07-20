@@ -1,12 +1,11 @@
 import { useEffect, useLayoutEffect, useRef } from 'react'
-import { EditorState, type Extension } from '@codemirror/state'
+import { EditorState, StateEffect, type Extension } from '@codemirror/state'
 import { EditorView as CMView, keymap } from '@codemirror/view'
 import { indentWithTab } from '@codemirror/commands'
 import { basicSetup } from 'codemirror'
 import { oneDark } from '@codemirror/theme-one-dark'
 import { useEditors, type EditorDoc } from '../../store/editors'
 import { useSessions } from '../../store/sessions'
-import { languageFor } from '../../lib/cm-languages'
 import { sendTerminalInput } from '../../lib/terms'
 import { isMarkdownName } from '../../lib/markdown-preview'
 import { IconLocal, IconRemote, IconTerminals } from '../common/Icons'
@@ -221,6 +220,7 @@ function CodeMirror({ doc }: { doc: EditorDoc }) {
 
   useEffect(() => {
     if (!host.current) return
+    let disposed = false
     const extensions: Extension[] = [
       basicSetup,
       oneDark,
@@ -235,7 +235,6 @@ function CodeMirror({ doc }: { doc: EditorDoc }) {
           }
         }
       ]),
-      languageFor(doc.name),
       CMView.updateListener.of((u) => {
         if (u.docChanged) cb.current.setContent(cb.current.id, u.state.doc.toString())
       })
@@ -247,7 +246,23 @@ function CodeMirror({ doc }: { doc: EditorDoc }) {
     viewRef.current = view
     viewRegistry.set(doc.id, view)
     view.focus()
+    // Language parsers are the largest part of the renderer. Load the local
+    // grammar pack only after an editor exists so terminal-first startup never
+    // downloads/parses dozens of CodeMirror languages. The editor remains
+    // usable as plain text during the short local chunk load.
+    void import('../../lib/cm-languages')
+      .then(({ languageFor }) => {
+        if (disposed) return
+        const language = languageFor(doc.name)
+        if (language.length > 0) {
+          view.dispatch({ effects: StateEffect.appendConfig.of(language) })
+        }
+      })
+      .catch(() => {
+        /* plain-text editing remains fully functional */
+      })
     return () => {
+      disposed = true
       viewRegistry.delete(doc.id)
       view.destroy()
       viewRef.current = null

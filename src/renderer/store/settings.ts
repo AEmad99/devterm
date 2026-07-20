@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type {
   AgentKind,
+  AgentPreferences,
   DefaultShellPref,
   STTSettings,
   STTModelId,
@@ -66,12 +67,14 @@ export interface AppSettings {
   /** Hide the top toolbar, group bar, sidebar, and status bar for a zen layout. */
   zenMode: boolean
   /**
-   * Which coding agent (`claude`, `pi`, or `opencode`) to launch in remote
-   * sessions. Mirrors the per-session agent picker; the picker writes the
-   * last-used choice here so it persists across launches and restarts.
-   * First-ever default is `claude`.
+   * Which coding agent to launch in remote sessions. The embedded, provider-
+   * agnostic DevTerm Agent is the default; external CLIs remain fallbacks.
    */
   agentKind: AgentKind
+  /** Provider/model routing and resumable-session preferences for DevTerm Agent. */
+  agentPreferences: AgentPreferences
+  /** Reattach remote POSIX shells through tmux when available. */
+  remoteDetachedSessions: boolean
   /**
    * Whether the transfers panel is open in the bottom dock. Cluster D adds
    * this. App toolbar's segmented "Activity | Transfers | Off" toggle is the
@@ -194,7 +197,15 @@ const DEFAULTS: AppSettings = {
   sftpSidePane: false,
   activityIndicators: true,
   zenMode: false,
-  agentKind: 'claude',
+  agentKind: 'devterm',
+  agentPreferences: {
+    provider: '',
+    model: '',
+    fallbackModels: [],
+    resumeSessions: true,
+    trustedSkills: []
+  },
+  remoteDetachedSessions: true,
   transfersPanelOpen: false,
   defaultShell: { kind: 'auto' },
   gitPanelOpen: false,
@@ -211,6 +222,18 @@ const DEFAULTS: AppSettings = {
 }
 
 const STORAGE_KEY = 'devterm.settings.v1'
+
+function isAgentKind(value: unknown): value is AgentKind {
+  return (
+    value === 'devterm' ||
+    value === 'claude' ||
+    value === 'pi' ||
+    value === 'opencode' ||
+    value === 'kimi' ||
+    value === 'grok' ||
+    value === 'codex'
+  )
+}
 
 function load(): AppSettings {
   try {
@@ -242,15 +265,12 @@ function load(): AppSettings {
           ? parsed.activityIndicators
           : DEFAULTS.activityIndicators,
       zenMode: typeof parsed?.zenMode === 'boolean' ? parsed.zenMode : DEFAULTS.zenMode,
-      agentKind:
-        parsed?.agentKind === 'claude' ||
-        parsed?.agentKind === 'pi' ||
-        parsed?.agentKind === 'opencode' ||
-        parsed?.agentKind === 'kimi' ||
-        parsed?.agentKind === 'grok' ||
-        parsed?.agentKind === 'codex'
-          ? parsed.agentKind
-          : DEFAULTS.agentKind,
+      agentKind: isAgentKind(parsed?.agentKind) ? parsed.agentKind : DEFAULTS.agentKind,
+      agentPreferences: normalizeAgentPreferences(parsed?.agentPreferences),
+      remoteDetachedSessions:
+        typeof parsed?.remoteDetachedSessions === 'boolean'
+          ? parsed.remoteDetachedSessions
+          : DEFAULTS.remoteDetachedSessions,
       transfersPanelOpen:
         typeof parsed?.transfersPanelOpen === 'boolean'
           ? parsed.transfersPanelOpen
@@ -347,6 +367,43 @@ function normalizeStt(raw: unknown): STTSettings {
   }
 }
 
+function normalizeAgentPreferences(raw: unknown): AgentPreferences {
+  if (!raw || typeof raw !== 'object') return DEFAULTS.agentPreferences
+  const value = raw as Partial<AgentPreferences>
+  return {
+    provider: typeof value.provider === 'string' ? value.provider.slice(0, 120) : '',
+    model: typeof value.model === 'string' ? value.model.slice(0, 240) : '',
+    fallbackModels: Array.isArray(value.fallbackModels)
+      ? value.fallbackModels
+          .filter((item): item is string => typeof item === 'string' && item.includes('/'))
+          .map((item) => item.slice(0, 240))
+          .slice(0, 12)
+      : [],
+    resumeSessions:
+      typeof value.resumeSessions === 'boolean'
+        ? value.resumeSessions
+        : DEFAULTS.agentPreferences.resumeSessions,
+    trustedSkills: Array.isArray(value.trustedSkills)
+      ? value.trustedSkills
+          .filter(
+            (skill) =>
+              skill &&
+              typeof skill.name === 'string' &&
+              typeof skill.path === 'string' &&
+              typeof skill.sha256 === 'string' &&
+              /^[a-f0-9]{64}$/i.test(skill.sha256)
+          )
+          .map((skill) => ({
+            name: skill.name.slice(0, 120),
+            path: skill.path,
+            sha256: skill.sha256.toLowerCase(),
+            enabled: skill.enabled !== false
+          }))
+          .slice(0, 24)
+      : []
+  }
+}
+
 interface SettingsState extends AppSettings {
   setThemeId: (id: string) => void
   setTerminalBg: (patch: Partial<TerminalBg>) => void
@@ -360,6 +417,8 @@ interface SettingsState extends AppSettings {
   setActivityIndicators: (v: boolean) => void
   setZenMode: (v: boolean) => void
   setAgentKind: (v: AgentKind) => void
+  setAgentPreferences: (patch: Partial<AgentPreferences>) => void
+  setRemoteDetachedSessions: (v: boolean) => void
   setTransfersPanelOpen: (v: boolean) => void
   setDefaultShell: (pref: DefaultShellPref) => void
   setGitPanelOpen: (v: boolean) => void
@@ -399,6 +458,8 @@ function persist(state: AppSettings): void {
     activityIndicators: state.activityIndicators,
     zenMode: state.zenMode,
     agentKind: state.agentKind,
+    agentPreferences: state.agentPreferences,
+    remoteDetachedSessions: state.remoteDetachedSessions,
     transfersPanelOpen: state.transfersPanelOpen,
     defaultShell: state.defaultShell,
     gitPanelOpen: state.gitPanelOpen,
@@ -491,6 +552,17 @@ export const useSettings = create<SettingsState>((set, get) => ({
     persist(snapshot(get()))
   },
 
+  setAgentPreferences: (patch) => {
+    const agentPreferences = normalizeAgentPreferences({ ...get().agentPreferences, ...patch })
+    set({ agentPreferences })
+    persist(snapshot(get()))
+  },
+
+  setRemoteDetachedSessions: (v) => {
+    set({ remoteDetachedSessions: v })
+    persist(snapshot(get()))
+  },
+
   setTransfersPanelOpen: (v) => {
     set({ transfersPanelOpen: v })
     persist(snapshot(get()))
@@ -562,15 +634,14 @@ export const useSettings = create<SettingsState>((set, get) => ({
       activityIndicators:
         typeof s.activityIndicators === 'boolean' ? s.activityIndicators : cur.activityIndicators,
       zenMode: typeof s.zenMode === 'boolean' ? s.zenMode : cur.zenMode,
-      agentKind:
-        s.agentKind === 'claude' ||
-        s.agentKind === 'pi' ||
-        s.agentKind === 'opencode' ||
-        s.agentKind === 'kimi' ||
-        s.agentKind === 'grok' ||
-        s.agentKind === 'codex'
-          ? s.agentKind
-          : cur.agentKind,
+      agentKind: isAgentKind(s.agentKind) ? s.agentKind : cur.agentKind,
+      agentPreferences: s.agentPreferences
+        ? normalizeAgentPreferences({ ...cur.agentPreferences, ...s.agentPreferences })
+        : cur.agentPreferences,
+      remoteDetachedSessions:
+        typeof s.remoteDetachedSessions === 'boolean'
+          ? s.remoteDetachedSessions
+          : cur.remoteDetachedSessions,
       transfersPanelOpen:
         typeof s.transfersPanelOpen === 'boolean' ? s.transfersPanelOpen : cur.transfersPanelOpen,
       defaultShell: normalizeDefaultShell(s.defaultShell),
@@ -604,6 +675,8 @@ export const useSettings = create<SettingsState>((set, get) => ({
       activityIndicators: DEFAULTS.activityIndicators,
       zenMode: DEFAULTS.zenMode,
       agentKind: DEFAULTS.agentKind,
+      agentPreferences: DEFAULTS.agentPreferences,
+      remoteDetachedSessions: DEFAULTS.remoteDetachedSessions,
       transfersPanelOpen: DEFAULTS.transfersPanelOpen,
       defaultShell: DEFAULTS.defaultShell,
       keybindings: DEFAULTS.keybindings,
@@ -644,6 +717,8 @@ function snapshot(s: SettingsState): AppSettings {
     activityIndicators: s.activityIndicators,
     zenMode: s.zenMode,
     agentKind: s.agentKind,
+    agentPreferences: s.agentPreferences,
+    remoteDetachedSessions: s.remoteDetachedSessions,
     transfersPanelOpen: s.transfersPanelOpen,
     defaultShell: s.defaultShell,
     gitPanelOpen: s.gitPanelOpen,

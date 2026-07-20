@@ -191,9 +191,13 @@ export class PtyManager {
     }
   }
 
-  create(opts: PtyCreateOptions & { args?: string[]; env?: Record<string, string> }): PtyCreated {
+  create(
+    opts: PtyCreateOptions & { args?: string[]; env?: Record<string, string> },
+    requestedId?: string
+  ): PtyCreated {
     const shell = resolveShell(opts.shellPref, opts.shell)
-    const id = randomUUID()
+    const id = requestedId ?? randomUUID()
+    if (this.ptys.has(id)) throw new Error(`PTY id is already active: ${id}`)
     // Explicit args (e.g. launching `pi`) bypass the default prompt-injection.
     const args = opts.args ?? shellArgs(shell)
     // Inherit the OS environment but strip Electron/node-specific variables so

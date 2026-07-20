@@ -80,6 +80,7 @@ function bridgeStateLabel(state?: AgentBridgeState): string | undefined {
 
 function agentLabel(kind?: AgentKind): string {
   if (!kind) return 'Agent'
+  if (kind === 'devterm') return 'DevTerm'
   return kind === 'opencode' ? 'OpenCode' : kind.charAt(0).toUpperCase() + kind.slice(1)
 }
 

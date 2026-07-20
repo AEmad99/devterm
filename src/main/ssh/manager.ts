@@ -1,6 +1,12 @@
 import { randomUUID } from 'crypto'
 import type { Client, ClientChannel, SFTPWrapper } from 'ssh2'
-import type { HostContext, SSHConnectResult, SSHProfile, SSHStatus } from '@shared/types'
+import type {
+  HostContext,
+  SSHConnectResult,
+  SSHOpenShellOptions,
+  SSHProfile,
+  SSHStatus
+} from '@shared/types'
 import { establish } from './connection'
 import { detectRemoteContext } from './osDetect'
 import { PortForwardManager } from './port-forward'
@@ -10,6 +16,8 @@ interface Session {
   client: Client
   jump?: Client
   shell?: ClientChannel
+  /** Last requested terminal channel, retained across transport reconnects. */
+  shellRequest?: ShellRequest
   /**
    * Streaming UTF-8 decoder for the shell channel. ssh2 emits data in
    * arbitrary byte boundaries, and a multi-byte UTF-8 codepoint split across
@@ -56,6 +64,14 @@ interface ReconnectState {
   lastError?: string
   /** True if the user explicitly asked for a retry after permanent failure. */
   userInitiated?: boolean
+  /** Human-shell configuration to restore after the SSH transport returns. */
+  shellRequest?: ShellRequest
+}
+
+interface ShellRequest {
+  cols: number
+  rows: number
+  detached: boolean
 }
 
 export interface ReconnectPolicy {
@@ -229,7 +245,7 @@ export class SSHManager {
         // User-initiated retry: timer was already cleared by `reconnect()`.
         void this.runReconnect(id, reaped.reconnect)
       } else if (this.policy.enabled) {
-        this.scheduleReconnect(id, reaped.profile)
+        this.scheduleReconnect(id, reaped.profile, reaped.shellRequest)
       }
     })
 
@@ -263,7 +279,7 @@ export class SSHManager {
       void this.runReconnect(sessionId, s.reconnect)
       return
     }
-    this.scheduleReconnect(sessionId, prof, /*userInitiated*/ true)
+    this.scheduleReconnect(sessionId, prof, s?.shellRequest, /*userInitiated*/ true)
   }
 
   /**
@@ -273,7 +289,12 @@ export class SSHManager {
    * new uuid; we then update our internal `Session.id` to match, so callers
    * that have already obtained the new id can still look it up.
    */
-  private scheduleReconnect(sessionId: string, profile: SSHProfile, userInitiated = false): void {
+  private scheduleReconnect(
+    sessionId: string,
+    profile: SSHProfile,
+    shellRequest?: ShellRequest,
+    userInitiated = false
+  ): void {
     const policy = { ...this.policy }
     if (!policy.enabled && !userInitiated) return
     const maxAttempts = Math.max(1, policy.maxAttempts)
@@ -284,7 +305,8 @@ export class SSHManager {
       attempt: 0,
       maxAttempts,
       policy,
-      userInitiated
+      userInitiated,
+      shellRequest
     }
     // Persist the state on a sentinel "pre-session" entry so `cancelReconnect`
     // can find it by id even before the first attempt has been made.
@@ -293,7 +315,8 @@ export class SSHManager {
       client: undefined as unknown as Client, // placeholder; replaced on success
       context: { kind: 'remote', os: 'unknown', detail: '', hostname: '' },
       profile,
-      reconnect: state
+      reconnect: state,
+      shellRequest
     })
     clearTimeout(state.timer)
     state.timer = setTimeout(() => void this.runReconnect(sessionId, state), initialDelay)
@@ -347,7 +370,7 @@ export class SSHManager {
         if (cur.reconnect) {
           void this.runReconnect(sessionId, cur.reconnect)
         } else if (this.policy.enabled) {
-          this.scheduleReconnect(sessionId, cur.profile)
+          this.scheduleReconnect(sessionId, cur.profile, cur.shellRequest)
         }
       })
       this.sessions.set(sessionId, {
@@ -356,8 +379,21 @@ export class SSHManager {
         jump,
         context,
         profile,
-        reconnect: state
+        reconnect: state,
+        shellRequest: state.shellRequest
       })
+      if (state.shellRequest) {
+        try {
+          await this.openShell(sessionId, state.shellRequest.cols, state.shellRequest.rows, {
+            detached: state.shellRequest.detached
+          })
+        } catch (err) {
+          this.handlers.onData(
+            sessionId,
+            `\r\n\x1b[31m[SSH reconnected, but the shell could not be restored: ${(err as Error).message}]\x1b[0m\r\n`
+          )
+        }
+      }
       this.fireStatus(sessionId, { type: 'reconnected', attempt: state.attempt })
     } catch (err) {
       const reason = (err as Error).message || String(err)
@@ -400,9 +436,19 @@ export class SSHManager {
     return this.sessions.get(sessionId)?.client
   }
 
-  openShell(sessionId: string, cols: number, rows: number): Promise<void> {
+  openShell(
+    sessionId: string,
+    cols: number,
+    rows: number,
+    options: SSHOpenShellOptions = {}
+  ): Promise<void> {
     const s = this.sessions.get(sessionId)
     if (!s) return Promise.reject(new Error('unknown session'))
+    s.shellRequest = {
+      cols: Math.max(1, cols),
+      rows: Math.max(1, rows),
+      detached: options.detached === true
+    }
     if (s.shell) return Promise.resolve()
     return new Promise((resolve, reject) => {
       s.client.shell({ term: 'xterm-256color', cols, rows }, (err, channel) => {
@@ -431,6 +477,14 @@ export class SSHManager {
         channel.stderr.on('data', (d: Buffer) => {
           this.handlers.onData(sessionId, dec.decode(d, { stream: true }))
         })
+
+        if (s.shellRequest?.detached && (s.context.os === 'linux' || s.context.os === 'mac')) {
+          const tmuxName = `devterm-${sessionId.replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 48)}`
+          channel.write(
+            `if command -v tmux >/dev/null 2>&1; then exec tmux new-session -A -s '${tmuxName}'; ` +
+              `else printf '\\r\\n[DevTerm: tmux is not installed; using a normal shell]\\r\\n'; fi\n`
+          )
+        }
 
         // Best-effort OSC 7 cwd reporting for POSIX remotes so the file explorer
         // can follow `cd`. The hook must be wired per-shell: bash re-runs
@@ -579,7 +633,14 @@ export class SSHManager {
   }
 
   resize(sessionId: string, cols: number, rows: number): void {
-    if (cols > 0 && rows > 0) this.sessions.get(sessionId)?.shell?.setWindow(rows, cols, 0, 0)
+    if (cols > 0 && rows > 0) {
+      const session = this.sessions.get(sessionId)
+      if (session?.shellRequest) {
+        session.shellRequest.cols = cols
+        session.shellRequest.rows = rows
+      }
+      session?.shell?.setWindow(rows, cols, 0, 0)
+    }
   }
 
   disconnect(sessionId: string): void {

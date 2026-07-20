@@ -25,6 +25,14 @@ import { join } from 'node:path'
 
 const BRIDGE_URL = process.env.DEVTERM_BRIDGE_URL
 const BRIDGE_TOKEN = process.env.DEVTERM_BRIDGE_TOKEN
+const MODEL_FALLBACKS = (() => {
+  try {
+    const parsed = JSON.parse(process.env.DEVTERM_MODEL_FALLBACKS || '[]')
+    return Array.isArray(parsed) ? parsed.filter((v) => typeof v === 'string' && v.includes('/')) : []
+  } catch {
+    return []
+  }
+})()
 
 if (!BRIDGE_URL || !BRIDGE_TOKEN) {
   throw new Error('DevTerm MCP bridge env vars not set (DEVTERM_BRIDGE_URL / DEVTERM_BRIDGE_TOKEN)')
@@ -172,12 +180,43 @@ function registerMcpTools(pi, tools, sessionIdRef) {
   })
 }
 
+function registerModelFailover(pi) {
+  let nextFallback = 0
+  let switching = false
+  pi.on('after_provider_response', async (event, ctx) => {
+    if (switching || !(event.status === 408 || event.status === 429 || event.status >= 500)) return
+    switching = true
+    try {
+      while (nextFallback < MODEL_FALLBACKS.length) {
+        const candidate = MODEL_FALLBACKS[nextFallback++]
+        const slash = candidate.indexOf('/')
+        const provider = candidate.slice(0, slash)
+        const modelId = candidate.slice(slash + 1)
+        if (!provider || !modelId) continue
+        if (ctx.model?.provider === provider && ctx.model?.id === modelId) continue
+        const model = ctx.modelRegistry.find(provider, modelId)
+        if (!model || !ctx.modelRegistry.hasConfiguredAuth(model)) continue
+        if (await pi.setModel(model)) {
+          ctx.ui.notify(
+            'Provider returned HTTP ' + event.status + '; switched the next request to ' + candidate,
+            'warning'
+          )
+          return
+        }
+      }
+    } finally {
+      switching = false
+    }
+  })
+}
+
 export default async function (pi) {
   // sessionIdRef lets the mcpCall closure read and update the session id
   // across calls; the value is also persisted to SESSION_FILE so that a
   // pi \`/reload\` (which re-imports this file as a fresh module) can pick
   // it back up and rejoin the bridge's live session.
   const sessionIdRef = { value: loadSessionId() }
+  registerModelFailover(pi)
 
   if (sessionIdRef.value) {
     // Probe the persisted session with a cheap, idempotent call. If the

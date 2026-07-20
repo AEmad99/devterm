@@ -1,10 +1,13 @@
-import { ipcMain, BrowserWindow } from 'electron'
-import { randomUUID } from 'crypto'
+import { ipcMain, BrowserWindow, app, dialog, type OpenDialogOptions } from 'electron'
+import { createHash, randomUUID } from 'crypto'
+import { mkdirSync, readFileSync, statSync } from 'fs'
+import { basename, join } from 'path'
 import {
   IPC,
   type AgentBridgeStatus,
   type AgentOpenOpts,
   type AgentOpenResult,
+  type AgentTrustedSkill,
   type ConfirmRequest,
   type HostContext,
   type SSHStatus
@@ -13,7 +16,12 @@ import { McpBridge } from '../mcp/server'
 import type { ConfirmOutcome } from '../mcp/tools'
 import { Policy } from '../mcp/policy'
 import * as approvalRules from '../approval-rules'
-import { buildAgentsMd, prepareAgentLaunch } from '../agent/launch'
+import {
+  buildAgentsMd,
+  getBuiltinAgentCapabilities,
+  prepareAgentLaunch,
+  prepareBuiltinAgentLaunch
+} from '../agent/launch'
 import { buildClaudeMd, prepareClaudeLaunch } from '../agent/claude-launch'
 import { buildKimiMd, prepareKimiLaunch } from '../agent/kimi-launch'
 import { buildOpencodeMd, prepareOpencodeLaunch } from '../agent/opencode-launch'
@@ -138,6 +146,33 @@ export function registerAgentIpc(
     return launchAgent(opts)
   })
 
+  ipcMain.handle(IPC.agentCapabilities, (_e, forceRefresh: boolean) =>
+    getBuiltinAgentCapabilities(forceRefresh === true)
+  )
+
+  ipcMain.handle(IPC.agentChooseSkill, async (): Promise<AgentTrustedSkill | null> => {
+    const options: OpenDialogOptions = {
+      title: 'Choose an instruction-only agent skill',
+      properties: ['openFile'],
+      filters: [
+        { name: 'Skill markdown', extensions: ['md'] },
+        { name: 'All files', extensions: ['*'] }
+      ]
+    }
+    const win = getWindow()
+    const result = win
+      ? await dialog.showOpenDialog(win, options)
+      : await dialog.showOpenDialog(options)
+    if (result.canceled || !result.filePaths[0]) return null
+    const path = result.filePaths[0]
+    const stat = statSync(path)
+    if (!stat.isFile() || stat.size > 512 * 1024) {
+      throw new Error('Skills must be regular files no larger than 512 KiB.')
+    }
+    const sha256 = createHash('sha256').update(readFileSync(path)).digest('hex')
+    return { name: basename(path), path, sha256, enabled: true }
+  })
+
   /**
    * Spin up the MCP bridge + agent PTY for the given session. Factored out of
    * the `agent:open` IPC handler so the auto-restart-after-SSH-reconnect path
@@ -146,7 +181,10 @@ export function registerAgentIpc(
    * everything already allocated — partial failure used to orphan an HTTP
    * server + heartbeat interval + temp dir per retry.
    */
-  const launchAgent = async (opts: AgentOpenOpts): Promise<AgentOpenResult> => {
+  const launchAgent = async (
+    opts: AgentOpenOpts,
+    reusePtyId?: string
+  ): Promise<AgentOpenResult> => {
     const context = ssh.getContext(opts.sessionId)
     if (!context) throw new Error('Connect the SSH session before opening the agent.')
 
@@ -180,45 +218,62 @@ export function registerAgentIpc(
     try {
       const info = await bridge.start()
       spec =
-        opts.kind === 'claude'
-          ? await prepareClaudeLaunch(
-              buildClaudeMd(context, airGapped, cwds.get(opts.sessionId)),
-              info
-            )
-          : opts.kind === 'kimi'
-            ? await prepareKimiLaunch(
-                buildKimiMd(context, airGapped, cwds.get(opts.sessionId)),
+        opts.kind === 'devterm'
+          ? await (async () => {
+              const sessionDir = join(app.getPath('userData'), 'agent-sessions')
+              mkdirSync(sessionDir, { recursive: true })
+              return prepareBuiltinAgentLaunch(
+                buildAgentsMd(context, airGapped, cwds.get(opts.sessionId)),
+                info,
+                {
+                  preferences: opts.preferences,
+                  sessionDir,
+                  sessionId: opts.sessionId.replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 128)
+                }
+              )
+            })()
+          : opts.kind === 'claude'
+            ? await prepareClaudeLaunch(
+                buildClaudeMd(context, airGapped, cwds.get(opts.sessionId)),
                 info
               )
-            : opts.kind === 'opencode'
-              ? await prepareOpencodeLaunch(
-                  buildOpencodeMd(context, airGapped, cwds.get(opts.sessionId)),
+            : opts.kind === 'kimi'
+              ? await prepareKimiLaunch(
+                  buildKimiMd(context, airGapped, cwds.get(opts.sessionId)),
                   info
                 )
-              : opts.kind === 'grok'
-                ? prepareGrokLaunch(
-                    buildGrokMd(context, airGapped, cwds.get(opts.sessionId)),
-                    info,
-                    opts.mode
+              : opts.kind === 'opencode'
+                ? await prepareOpencodeLaunch(
+                    buildOpencodeMd(context, airGapped, cwds.get(opts.sessionId)),
+                    info
                   )
-                : opts.kind === 'codex'
-                  ? prepareCodexLaunch(
-                      buildCodexMd(context, airGapped, cwds.get(opts.sessionId)),
+                : opts.kind === 'grok'
+                  ? prepareGrokLaunch(
+                      buildGrokMd(context, airGapped, cwds.get(opts.sessionId)),
                       info,
                       opts.mode
                     )
-                  : await prepareAgentLaunch(
-                      buildAgentsMd(context, airGapped, cwds.get(opts.sessionId)),
-                      info
-                    )
-      const { id: ptyId } = pty.create({
-        shell: spec.bin,
-        args: spec.args,
-        cwd: spec.cwd,
-        env: spec.env,
-        cols: opts.cols,
-        rows: opts.rows
-      })
+                  : opts.kind === 'codex'
+                    ? prepareCodexLaunch(
+                        buildCodexMd(context, airGapped, cwds.get(opts.sessionId)),
+                        info,
+                        opts.mode
+                      )
+                    : await prepareAgentLaunch(
+                        buildAgentsMd(context, airGapped, cwds.get(opts.sessionId)),
+                        info
+                      )
+      const { id: ptyId } = pty.create(
+        {
+          shell: spec.bin,
+          args: spec.args,
+          cwd: spec.cwd,
+          env: spec.env,
+          cols: opts.cols,
+          rows: opts.rows
+        },
+        reusePtyId
+      )
 
       const sshDispose = ssh.addStatusListener(opts.sessionId, (status: SSHStatus) => {
         const sess = sessions.get(opts.sessionId)
@@ -279,9 +334,18 @@ export function registerAgentIpc(
           // the new PTY binds to the same pane id.
           if (sess.agentExited && sess.lastOpts) {
             sess.agentExited = false
+            const restartOpts = {
+              ...sess.lastOpts,
+              cwd: cwds.get(opts.sessionId) ?? sess.lastOpts.cwd
+            }
+            const stablePtyId = sess.ptyId
             void (async () => {
               try {
-                await launchAgent(sess.lastOpts!)
+                // Fully retire the old bridge/listeners/temp directory before
+                // replacing the process. Reuse the PTY id so the renderer's
+                // existing per-id data/exit subscriptions remain valid.
+                await closeOne(opts.sessionId)
+                await launchAgent(restartOpts, stablePtyId)
               } catch (err) {
                 sendBridgeStatus(opts.sessionId, {
                   state: 'error',

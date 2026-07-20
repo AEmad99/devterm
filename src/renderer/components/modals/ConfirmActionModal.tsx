@@ -5,6 +5,7 @@ import { useSessions } from '../../store/sessions'
 const SNOOZE_MS = 5 * 60 * 1000
 
 const AGENT_DISPLAY: Record<AgentKind, string> = {
+  devterm: 'DevTerm Agent',
   claude: 'Claude',
   pi: 'Pi',
   opencode: 'OpenCode',

@@ -98,7 +98,7 @@ process.on('unhandledRejection', (reason) => {
 })
 import { registerPtyIpc } from './ipc/pty'
 import { IPC } from '@shared/types'
-import { globalSearchIndex } from './search/index'
+import { flushPersist, globalSearchIndex } from './search/index'
 import { registerSshIpc } from './ipc/ssh'
 import { registerContextIpc } from './ipc/context'
 import { registerFileIpc } from './ipc/files'
@@ -114,7 +114,9 @@ import { registerFoundationIpc } from './foundation-ipc'
 import { registerGitIpc } from './ipc/git'
 import { registerTransfersIpc } from './ipc/transfers'
 import { registerBrowserIpc } from './ipc/browser'
+import { registerPerformanceIpc } from './ipc/performance'
 import { initAutoUpdater } from './updater'
+import { flushScheduledSnapshot } from './settings-io'
 import type { PtyManager } from './pty/manager'
 import type { SSHManager } from './ssh/manager'
 import type { FileController } from './ipc/files'
@@ -254,6 +256,7 @@ function registerIpc(): void {
   // Cluster D: persistent transfer queue + in-app browser enhancements.
   transfersController = registerTransfersIpc(sshManager, () => mainWindow)
   browserController = registerBrowserIpc(() => mainWindow)
+  registerPerformanceIpc()
 
   // Global search handler (MVP)
   ipcMain.handle(IPC.searchQuery, (_e, q: string) => globalSearchIndex.query(q))
@@ -413,13 +416,7 @@ if (process.argv.includes('--self-test')) {
     void transfersController?.shutdown()
     void browserController?.shutdown()
     // Optional persistent search tail (when search.persist is on).
-    void flushPersistSearch()
+    void flushPersist()
+    void flushScheduledSnapshot()
   })
-}
-
-async function flushPersistSearch(): Promise<void> {
-  // Imported here to avoid a circular import: search/index re-exports from
-  // search/persist, and importing at the top pulls in `electron` early.
-  const { flushPersist } = await import('./search')
-  await flushPersist()
 }

@@ -1,5 +1,5 @@
 import { ipcMain, BrowserWindow } from 'electron'
-import { IPC, type SSHProfile, type SSHStatus } from '@shared/types'
+import { IPC, type SSHOpenShellOptions, type SSHProfile, type SSHStatus } from '@shared/types'
 import { SSHManager, type ReconnectPolicy } from '../ssh/manager'
 import { makeCoalescer } from './coalesce'
 import { globalSearchIndex } from '../search/index'
@@ -39,8 +39,10 @@ export function registerSshIpc(getWindow: () => BrowserWindow | null): SSHManage
   })
 
   ipcMain.handle(IPC.sshConnect, (_e, profile: SSHProfile) => manager.connect(profile))
-  ipcMain.handle(IPC.sshOpenShell, (_e, id: string, cols: number, rows: number) =>
-    manager.openShell(id, cols, rows)
+  ipcMain.handle(
+    IPC.sshOpenShell,
+    (_e, id: string, cols: number, rows: number, options?: SSHOpenShellOptions) =>
+      manager.openShell(id, cols, rows, options)
   )
   ipcMain.on(IPC.sshInput, (_e, id: string, data: string) => manager.input(id, data))
   ipcMain.on(IPC.sshResize, (_e, id: string, cols: number, rows: number) =>

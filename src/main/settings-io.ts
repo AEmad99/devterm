@@ -102,7 +102,15 @@ export function defaultSettingsSnapshot(): SettingsSnapshot {
     sftpSidePane: false,
     activityIndicators: true,
     zenMode: false,
-    agentKind: 'claude' as AgentKind,
+    agentKind: 'devterm' as AgentKind,
+    agentPreferences: {
+      provider: '',
+      model: '',
+      fallbackModels: [],
+      resumeSessions: true,
+      trustedSkills: []
+    },
+    remoteDetachedSessions: true,
     transfersPanelOpen: false,
     defaultShell: { kind: 'auto' } as DefaultShellPref,
     gitPanelOpen: false,
@@ -131,19 +139,48 @@ export function mergeSnapshotWithDefaults(
   const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object'
   const out: SettingsSnapshot = { ...defaults }
   if (typeof raw.themeId === 'string') out.themeId = raw.themeId
-  if (isObj(raw.terminalBg)) out.terminalBg = { ...defaults.terminalBg, ...raw.terminalBg } as TerminalBg
+  if (isObj(raw.terminalBg))
+    out.terminalBg = { ...defaults.terminalBg, ...raw.terminalBg } as TerminalBg
   if (isObj(raw.prefs)) out.prefs = { ...defaults.prefs, ...raw.prefs } as TerminalPrefs
-  if (isObj(raw.autoReconnect)) out.autoReconnect = { ...defaults.autoReconnect, ...raw.autoReconnect }
+  if (isObj(raw.autoReconnect))
+    out.autoReconnect = { ...defaults.autoReconnect, ...raw.autoReconnect }
   if (isObj(raw.attention)) {
     out.attention = { ...(defaults.attention ?? {}), ...raw.attention } as AttentionSettingsSnapshot
   }
   if (typeof raw.showStatusBar === 'boolean') out.showStatusBar = raw.showStatusBar
-  if (typeof raw.agentActivityCollapsed === 'boolean') out.agentActivityCollapsed = raw.agentActivityCollapsed
-  if (typeof raw.inactivePaneDimming === 'boolean') out.inactivePaneDimming = raw.inactivePaneDimming
+  if (typeof raw.agentActivityCollapsed === 'boolean')
+    out.agentActivityCollapsed = raw.agentActivityCollapsed
+  if (typeof raw.inactivePaneDimming === 'boolean')
+    out.inactivePaneDimming = raw.inactivePaneDimming
   if (typeof raw.sftpSidePane === 'boolean') out.sftpSidePane = raw.sftpSidePane
   if (typeof raw.activityIndicators === 'boolean') out.activityIndicators = raw.activityIndicators
   if (typeof raw.zenMode === 'boolean') out.zenMode = raw.zenMode
-  if (typeof raw.agentKind === 'string') out.agentKind = raw.agentKind as AgentKind
+  if (isAgentKind(raw.agentKind)) out.agentKind = raw.agentKind
+  if (isObj(raw.agentPreferences)) {
+    out.agentPreferences = {
+      ...(defaults.agentPreferences ?? {
+        provider: '',
+        model: '',
+        fallbackModels: [],
+        resumeSessions: true,
+        trustedSkills: []
+      }),
+      ...raw.agentPreferences,
+      fallbackModels: Array.isArray(raw.agentPreferences.fallbackModels)
+        ? raw.agentPreferences.fallbackModels.filter(
+            (value): value is string => typeof value === 'string'
+          )
+        : (defaults.agentPreferences?.fallbackModels ?? []),
+      trustedSkills: Array.isArray(raw.agentPreferences.trustedSkills)
+        ? (raw.agentPreferences.trustedSkills.filter(
+            (value) => value && typeof value === 'object'
+          ) as NonNullable<SettingsSnapshot['agentPreferences']>['trustedSkills'])
+        : (defaults.agentPreferences?.trustedSkills ?? [])
+    }
+  }
+  if (typeof raw.remoteDetachedSessions === 'boolean') {
+    out.remoteDetachedSessions = raw.remoteDetachedSessions
+  }
   if (typeof raw.transfersPanelOpen === 'boolean') out.transfersPanelOpen = raw.transfersPanelOpen
   if (isObj(raw.defaultShell)) out.defaultShell = raw.defaultShell as DefaultShellPref
   if (typeof raw.gitPanelOpen === 'boolean') out.gitPanelOpen = raw.gitPanelOpen
@@ -151,6 +188,18 @@ export function mergeSnapshotWithDefaults(
   if (isObj(raw.stt)) out.stt = { ...(defaults.stt ?? {}), ...raw.stt } as STTSettings
   if (typeof raw.searchPersist === 'boolean') out.searchPersist = raw.searchPersist
   return out
+}
+
+function isAgentKind(value: unknown): value is AgentKind {
+  return (
+    value === 'devterm' ||
+    value === 'claude' ||
+    value === 'pi' ||
+    value === 'opencode' ||
+    value === 'kimi' ||
+    value === 'grok' ||
+    value === 'codex'
+  )
 }
 
 async function readSnippets(): Promise<Snippet[]> {
@@ -213,6 +262,37 @@ async function writeSettingsSnapshot(s: SettingsSnapshot): Promise<void> {
   await writeJsonAtomic(settingsFile(), { version: 1, ...s })
 }
 
+// Renderer controls such as font-size/volume sliders can emit many snapshots
+// per second. Keep localStorage immediate in the renderer, but coalesce the
+// on-disk mirror and serialize writes so two atomic renames never race over the
+// same settings.json.tmp file.
+const SNAPSHOT_DEBOUNCE_MS = 120
+let pendingSnapshot: SettingsSnapshot | null = null
+let snapshotTimer: NodeJS.Timeout | null = null
+let snapshotWrite: Promise<void> = Promise.resolve()
+
+export function scheduleSnapshot(s: SettingsSnapshot): void {
+  pendingSnapshot = s
+  if (snapshotTimer) return
+  snapshotTimer = setTimeout(() => {
+    snapshotTimer = null
+    void flushScheduledSnapshot().catch((err) => {
+      console.warn('settings:sync write failed:', err)
+    })
+  }, SNAPSHOT_DEBOUNCE_MS)
+}
+
+export async function flushScheduledSnapshot(): Promise<void> {
+  if (snapshotTimer) clearTimeout(snapshotTimer)
+  snapshotTimer = null
+  const next = pendingSnapshot
+  pendingSnapshot = null
+  if (next) {
+    snapshotWrite = snapshotWrite.catch(() => undefined).then(() => writeSettingsSnapshot(next))
+  }
+  await snapshotWrite
+}
+
 /**
  * Write the live renderer settings snapshot to `userData/settings.json`.
  * Called from the `settings:sync` IPC on every renderer `persist()` so the
@@ -220,7 +300,8 @@ async function writeSettingsSnapshot(s: SettingsSnapshot): Promise<void> {
  * (possibly partial) snapshot — we just write whatever the renderer sends.
  */
 export async function writeSnapshot(s: SettingsSnapshot): Promise<void> {
-  await writeSettingsSnapshot(s)
+  pendingSnapshot = s
+  await flushScheduledSnapshot()
 }
 
 async function writeSnippets(list: Snippet[]): Promise<void> {
@@ -244,6 +325,7 @@ async function writeApprovalRules(list: ApprovalRule[]): Promise<void> {
 // ---------------------------------------------------------------------------
 
 export async function exportAll(): Promise<SettingsExportBundle> {
+  await flushScheduledSnapshot()
   const [settings, snippets, connections, workspaces, rules] = await Promise.all([
     readSettingsSnapshot(),
     readSnippets(),
@@ -288,7 +370,10 @@ export async function importAll(
     // Always merge missing fields with the renderer's defaults so an older
     // bundle (with only themeId/terminalBg/prefs/autoReconnect) still
     // produces a complete snapshot for the renderer to apply.
-    const settings = mergeSnapshotWithDefaults(bundle.settings as Record<string, unknown>, defaultSettingsSnapshot())
+    const settings = mergeSnapshotWithDefaults(
+      bundle.settings as Record<string, unknown>,
+      defaultSettingsSnapshot()
+    )
     if (opts.mode === 'replace') {
       await writeSettingsSnapshot(settings)
       await writeSnippets(bundle.snippets)
@@ -353,6 +438,7 @@ export async function exportToPath(getWindow: () => BrowserWindow | null): Promi
 }
 
 export async function importFromPath(getWindow: () => BrowserWindow | null): Promise<ImportResult> {
+  await flushScheduledSnapshot()
   const win = getWindow()
   const opts = {
     title: 'Import DevTerm settings',

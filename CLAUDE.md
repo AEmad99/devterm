@@ -145,7 +145,7 @@ The embedded agent is the real interactive `pi` CLI process (the `pi` coding age
 
 - Renderer: `RemoteSessionView.tsx` opens `AgentPane.tsx` beside a remote terminal.
 - IPC: `src/main/ipc/agent.ts`.
-- Launch prep: `src/main/agent/launch.ts` (writes `AGENTS.md` + the per-session pi extension, picks the `pi` binary).
+- Launch prep: `src/main/agent/launch.ts` (writes `AGENTS.md` + the per-session Pi extension; the primary DevTerm Agent uses the bundled provider-agnostic package, while external Pi remains a fallback).
 - Agent instructions: `src/main/agent/context.ts` (host briefing, air-gapped rules, MCP tool map).
 - pi extension source: `src/main/agent/extension.ts` (a TypeScript string the launch step writes to disk and pi loads via `-e`).
 - MCP bridge: `src/main/mcp/server.ts` (transport-agnostic; could feed any MCP client).
@@ -156,14 +156,19 @@ For each agent session DevTerm:
 
 1. Starts an in-process MCP server on `127.0.0.1:<random-port>` gated by a random bearer token.
 2. Writes a per-session working directory containing `AGENTS.md` (the host briefing) and `devterm-mcp.mjs` (the pi extension source).
-3. Spawns `pi` in a node-pty with:
-   - `--no-session` (don't persist to `~/.pi/agent/sessions/`)
-   - `--no-builtin-tools` (scope the agent to MCP tools; no local fs/shell)
+3. Spawns DevTerm Agent (or the selected fallback CLI) in a node-pty with:
+   - `--session-dir <userData>/agent-sessions --session-id <remote-id>` when resume is enabled, otherwise `--no-session`
+   - `--no-builtin-tools` (scope the Pi-based agent to the explicit DevTerm MCP extension; no local fs/shell)
+   - discovery disabled for user extensions/skills/templates/themes
    - `-e <abs-path>/devterm-mcp.mjs` (load our MCP bridge adapter)
    - `--offline` (skip pi's startup network checks)
+   - optional `--provider`, `--model`, and `--models` routing from Settings
+   - optional `--skill` paths only while the selected file matches its approved SHA-256 digest; arbitrary executable extensions remain disabled
 4. The pi extension reads `DEVTERM_BRIDGE_URL` / `DEVTERM_BRIDGE_TOKEN` from the inherited env, performs the MCP `initialize` → `notifications/initialized` → `tools/list` handshake with `fetch` against the bridge, and re-registers each discovered tool with pi as `mcp__devterm__<name>`. Tool calls go back through the same bridge as streamable-HTTP POSTs.
 
 Built-in pi tools are intentionally disabled so the agent cannot read/write the local machine; everything the model does goes through the MCP bridge, which runs on the shared `ssh2` client for the session. The agent's terminal output is raw and must not be parsed as state. Bridge state is reported by main over `agent:bridge-status:<sessionId>` based on actual MCP HTTP activity. The UI shows connecting, waiting, connected, disconnected, stopped, error, and exited states. Recoverable states show a Restart button that recreates the bridge and agent process. The bridge disables Node HTTP idle/request/socket timeouts and sends a standard MCP `notifications/message` heartbeat every 25 seconds while the agent's standalone SSE stream is connected, so a quiet agent session does not look stale to the client or OS.
+
+Settings queries the bundled runtime's offline model catalog over `agent:capabilities` and reports credential presence without exposing credential values. The DevTerm extension switches subsequent requests to the next authenticated fallback after HTTP 408, 429, or 5xx provider responses. Local process CPU/memory is exposed on demand through `performance:snapshot`; it is never uploaded.
 
 DevTerm policy modes:
 

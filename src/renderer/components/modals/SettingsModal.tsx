@@ -1,8 +1,13 @@
-import { useEffect, useRef, useState, type CSSProperties } from 'react'
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
 import { useSettings } from '../../store/settings'
 import { useSessions } from '../../store/sessions'
 import { useShallow } from 'zustand/react/shallow'
-import type { ApprovalRule, DefaultShellPref } from '@shared/types'
+import type {
+  AgentCapabilities,
+  ApprovalRule,
+  DefaultShellPref,
+  PerformanceSnapshot
+} from '@shared/types'
 import { THEMES, getTheme, applyTheme, type Theme } from '../../lib/themes'
 import { HOTKEYS, comboLabel, captureCombo, type HotkeyId } from '../../lib/hotkeys'
 import { chime } from '../../lib/attention'
@@ -107,6 +112,10 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
   const setZenMode = useSettings((s) => s.setZenMode)
   const stt = useSettings((s) => s.stt)
   const setStt = useSettings((s) => s.setStt)
+  const agentPreferences = useSettings((s) => s.agentPreferences)
+  const setAgentPreferences = useSettings((s) => s.setAgentPreferences)
+  const remoteDetachedSessions = useSettings((s) => s.remoteDetachedSessions)
+  const setRemoteDetachedSessions = useSettings((s) => s.setRemoteDetachedSessions)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [shellHint, setShellHint] = useState<string | null>(null)
@@ -114,6 +123,11 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
   const [ioHint, setIoHint] = useState<string | null>(null)
   const [capturing, setCapturing] = useState<HotkeyId | null>(null)
   const [sttHint, setSttHint] = useState<string | null>(null)
+  const [agentCapabilities, setAgentCapabilities] = useState<AgentCapabilities | null>(null)
+  const [agentCapabilitiesError, setAgentCapabilitiesError] = useState<string | null>(null)
+  const [agentCapabilitiesBusy, setAgentCapabilitiesBusy] = useState(false)
+  const [fallbackDraft, setFallbackDraft] = useState(agentPreferences.fallbackModels.join(', '))
+  const [performance, setPerformance] = useState<PerformanceSnapshot | null>(null)
   // Agent guardrails (approval rules) — list + add/remove UI.
   const [rules, setRules] = useState<ApprovalRule[]>([])
   const [rulePrefix, setRulePrefix] = useState('')
@@ -125,6 +139,10 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
   const hintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
+    setFallbackDraft(agentPreferences.fallbackModels.join(', '))
+  }, [agentPreferences.fallbackModels])
+
+  useEffect(() => {
     return () => {
       if (hintTimerRef.current) {
         clearTimeout(hintTimerRef.current)
@@ -132,6 +150,50 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
       }
     }
   }, [])
+
+  const refreshAgentCapabilities = useCallback(async (forceRefresh = false) => {
+    setAgentCapabilitiesBusy(true)
+    setAgentCapabilitiesError(null)
+    try {
+      setAgentCapabilities(await window.devterm.agent.capabilities(forceRefresh))
+    } catch (e) {
+      setAgentCapabilitiesError((e as Error).message || String(e))
+    } finally {
+      setAgentCapabilitiesBusy(false)
+    }
+  }, [])
+
+  const addTrustedSkill = async () => {
+    try {
+      const skill = await window.devterm.agent.chooseSkill()
+      if (!skill) return
+      const withoutSamePath = agentPreferences.trustedSkills.filter(
+        (existing) => existing.path !== skill.path
+      )
+      setAgentPreferences({ trustedSkills: [...withoutSamePath, skill] })
+    } catch (e) {
+      setAgentCapabilitiesError((e as Error).message || String(e))
+    }
+  }
+
+  useEffect(() => {
+    void refreshAgentCapabilities()
+    let active = true
+    const refreshPerformance = () => {
+      void window.devterm.performance
+        .snapshot()
+        .then((snapshot) => {
+          if (active) setPerformance(snapshot)
+        })
+        .catch(() => undefined)
+    }
+    refreshPerformance()
+    const timer = setInterval(refreshPerformance, 3000)
+    return () => {
+      active = false
+      clearInterval(timer)
+    }
+  }, [refreshAgentCapabilities])
 
   // Load agent approval rules when the modal opens; refresh on focus so a
   // rule added via the "Remember my choice" checkbox in ConfirmActionModal
@@ -795,6 +857,217 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                 )}
               </span>
             </div>
+          )}
+        </section>
+
+        <section className="settings-section">
+          <h3>DevTerm Agent</h3>
+          <div className="settings-sub-hint">
+            Choose the default provider and model for the embedded agent. Credentials stay in the
+            runtime&apos;s protected auth store or environment; DevTerm only reports whether a
+            provider is connected. Run <code>/login</code> inside an agent pane to add OAuth or API
+            credentials.
+          </div>
+
+          <label className="settings-row">
+            <span className="settings-label">Provider</span>
+            <span className="settings-control">
+              <select
+                className="text-input"
+                value={agentPreferences.provider}
+                onChange={(e) => setAgentPreferences({ provider: e.target.value, model: '' })}
+              >
+                <option value="">Automatic</option>
+                {agentCapabilities?.providers.map((provider) => (
+                  <option key={provider.provider} value={provider.provider}>
+                    {provider.provider}
+                    {provider.authenticated ? ` â€” connected (${provider.source})` : ''}
+                  </option>
+                ))}
+              </select>
+            </span>
+          </label>
+
+          <label className="settings-row">
+            <span className="settings-label">Model</span>
+            <span className="settings-control">
+              <input
+                className="text-input"
+                list="devterm-agent-models"
+                value={agentPreferences.model}
+                placeholder="Provider default"
+                onChange={(e) => setAgentPreferences({ model: e.target.value })}
+              />
+              <datalist id="devterm-agent-models">
+                {agentCapabilities?.models
+                  .filter(
+                    (model) =>
+                      !agentPreferences.provider || model.provider === agentPreferences.provider
+                  )
+                  .slice(0, 500)
+                  .map((model) => (
+                    <option
+                      key={`${model.provider}/${model.model}`}
+                      value={`${model.provider}/${model.model}`}
+                    >
+                      {model.context} context{model.thinking ? ' Â· thinking' : ''}
+                    </option>
+                  ))}
+              </datalist>
+            </span>
+          </label>
+
+          <label className="settings-row">
+            <span className="settings-label">Automatic fallbacks</span>
+            <span className="settings-control">
+              <input
+                className="text-input"
+                value={fallbackDraft}
+                placeholder="anthropic/claude-sonnet-4.6, openai/gpt-5"
+                onChange={(e) => setFallbackDraft(e.target.value)}
+                onBlur={() =>
+                  setAgentPreferences({
+                    fallbackModels: fallbackDraft
+                      .split(',')
+                      .map((value) => value.trim())
+                      .filter((value) => value.includes('/'))
+                  })
+                }
+              />
+            </span>
+          </label>
+          <div className="settings-sub-hint">
+            On HTTP 408, 429, or provider 5xx responses, the next request switches to the first
+            authenticated fallback. The same list is available for Ctrl+P model cycling.
+          </div>
+
+          <label className="settings-row">
+            <span className="settings-label">Resume agent tasks</span>
+            <span className="settings-control">
+              <input
+                type="checkbox"
+                checked={agentPreferences.resumeSessions}
+                onChange={(e) => setAgentPreferences({ resumeSessions: e.target.checked })}
+              />
+            </span>
+          </label>
+
+          <div className="settings-row">
+            <span className="settings-label">Trusted skills</span>
+            <span className="settings-control">
+              <button className="ghost" onClick={() => void addTrustedSkill()}>
+                Add skill fileâ€¦
+              </button>
+              <span className="settings-hint">
+                Instruction-only, hash-pinned, and still limited by the session MCP policy.
+              </span>
+            </span>
+          </div>
+          {agentPreferences.trustedSkills.map((skill) => (
+            <div className="settings-row" key={skill.path}>
+              <span className="settings-label" title={skill.path}>
+                {skill.name}
+              </span>
+              <span className="settings-control">
+                <input
+                  type="checkbox"
+                  checked={skill.enabled}
+                  onChange={(e) =>
+                    setAgentPreferences({
+                      trustedSkills: agentPreferences.trustedSkills.map((item) =>
+                        item.path === skill.path ? { ...item, enabled: e.target.checked } : item
+                      )
+                    })
+                  }
+                />
+                <code>{skill.sha256.slice(0, 12)}â€¦</code>
+                <button
+                  className="ghost small"
+                  onClick={() =>
+                    setAgentPreferences({
+                      trustedSkills: agentPreferences.trustedSkills.filter(
+                        (item) => item.path !== skill.path
+                      )
+                    })
+                  }
+                >
+                  Remove
+                </button>
+              </span>
+            </div>
+          ))}
+
+          <label className="settings-row">
+            <span className="settings-label">Detached remote shells</span>
+            <span className="settings-control">
+              <input
+                type="checkbox"
+                checked={remoteDetachedSessions}
+                onChange={(e) => setRemoteDetachedSessions(e.target.checked)}
+              />
+            </span>
+          </label>
+          <div className="settings-sub-hint">
+            POSIX hosts reattach through tmux when available. Regardless of tmux, DevTerm now
+            reopens the shell channel automatically after an SSH transport reconnect.
+          </div>
+
+          <div className="settings-row">
+            <span className="settings-label">Runtime catalog</span>
+            <span className="settings-control">
+              <button
+                className="ghost"
+                disabled={agentCapabilitiesBusy}
+                onClick={() => void refreshAgentCapabilities(true)}
+              >
+                {agentCapabilitiesBusy ? 'Loadingâ€¦' : 'Refresh models'}
+              </button>
+              {agentCapabilities && (
+                <span className="settings-hint">
+                  v{agentCapabilities.runtimeVersion} Â· {agentCapabilities.models.length} models Â·{' '}
+                  {agentCapabilities.providers.filter((provider) => provider.authenticated).length}{' '}
+                  connected providers
+                </span>
+              )}
+            </span>
+          </div>
+          {agentCapabilitiesError && (
+            <div className="settings-error">Catalog failed: {agentCapabilitiesError}</div>
+          )}
+        </section>
+
+        <section className="settings-section">
+          <h3>Performance</h3>
+          <div className="settings-sub-hint">
+            Live, local-only process telemetry. No background analytics or network reporting.
+          </div>
+          {performance ? (
+            <>
+              <div className="settings-row">
+                <span className="settings-label">App uptime</span>
+                <span className="settings-control">
+                  {(performance.uptimeMs / 1000).toFixed(1)}s Â· main heap{' '}
+                  {performance.mainHeapUsedMb.toFixed(1)}/{performance.mainHeapTotalMb.toFixed(1)}{' '}
+                  MB
+                </span>
+              </div>
+              {performance.processes
+                .slice()
+                .sort((a, b) => b.cpuPercent - a.cpuPercent)
+                .slice(0, 8)
+                .map((process) => (
+                  <div className="settings-row" key={process.pid}>
+                    <span className="settings-label">
+                      {process.type} ({process.pid})
+                    </span>
+                    <span className="settings-control">
+                      {process.cpuPercent.toFixed(1)}% CPU Â· {process.workingSetMb.toFixed(1)} MB
+                    </span>
+                  </div>
+                ))}
+            </>
+          ) : (
+            <div className="settings-empty">Collecting the first snapshotâ€¦</div>
           )}
         </section>
 

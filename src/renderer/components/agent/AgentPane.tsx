@@ -3,6 +3,7 @@ import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import type { AgentBridgeStatus, AgentKind, PolicyMode } from '@shared/types'
 import { useSessions } from '../../store/sessions'
+import { useSettings } from '../../store/settings'
 import { fitNow, fitSoon } from '../../lib/fit'
 import { attachRenderer, attachClipboard } from '../../lib/renderer'
 import { createIdleChime, AGENT_ATTENTION_BODY } from '../../lib/attention'
@@ -23,7 +24,10 @@ const MODE_LABEL: Record<PolicyMode, string> = {
  * `command=python3 <<'PY' …`); keep the tool name plus the useful value.
  */
 function formatAgentTabTask(tool: string | undefined, detail: string | undefined): string {
-  const d = (detail ?? '').replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim()
+  const d = (detail ?? '')
+    .replace(/[\r\n]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
   if (!tool) return d
   if (!d) return tool
 
@@ -43,7 +47,7 @@ function formatAgentTabTask(tool: string | undefined, detail: string | undefined
 }
 
 /**
- * Runs a real interactive coding-agent CLI (`claude`, `pi`, `opencode`,
+ * Runs the embedded DevTerm Agent or a fallback coding-agent CLI (`claude`, `pi`, `opencode`,
  * `kimi`, `grok`, or `codex`, per `kind`) in a node-pty, wired to the
  * in-process MCP bridge for this session — Claude via its native
  * `--mcp-config`, pi via a loaded extension, OpenCode via a per-session
@@ -63,17 +67,19 @@ export default function AgentPane({
   mode: PolicyMode
 }) {
   const label =
-    kind === 'claude'
-      ? 'Claude'
-      : kind === 'opencode'
-        ? 'OpenCode'
-        : kind === 'kimi'
-          ? 'Kimi'
-          : kind === 'grok'
-            ? 'Grok'
-            : kind === 'codex'
-              ? 'Codex'
-              : 'Pi'
+    kind === 'devterm'
+      ? 'DevTerm'
+      : kind === 'claude'
+        ? 'Claude'
+        : kind === 'opencode'
+          ? 'OpenCode'
+          : kind === 'kimi'
+            ? 'Kimi'
+            : kind === 'grok'
+              ? 'Grok'
+              : kind === 'codex'
+                ? 'Codex'
+                : 'Pi'
   const hostRef = useRef<HTMLDivElement>(null)
   const [bridge, setBridge] = useState<BridgeState>('connecting')
   const [bridgeMessage, setBridgeMessage] = useState<string | undefined>()
@@ -166,6 +172,7 @@ export default function AgentPane({
           sessionId,
           kind,
           mode,
+          preferences: kind === 'devterm' ? useSettings.getState().agentPreferences : undefined,
           // Read non-reactively so the launch isn't tied to cwd changes; live
           // updates after this flow through agent.setCwd (effect above).
           cwd: useSessions.getState().sessions.find((x) => x.id === sessionId)?.cwd,
@@ -176,17 +183,19 @@ export default function AgentPane({
         setMcpUrl(mcpUrl)
         setBridge((cur) => (cur === 'connecting' ? 'listening' : cur))
         const toolNote =
-          kind === 'claude'
-            ? 'local file tools scratch-only'
-            : kind === 'opencode'
-              ? 'built-in tools off, MCP devterm server'
-              : kind === 'kimi'
-                ? 'use mcp__devterm__* tools for host work'
-                : kind === 'grok'
-                  ? 'built-in tools off, MCP devterm server'
-                  : kind === 'codex'
+          kind === 'devterm'
+            ? 'embedded multi-provider runtime, MCP-only host tools'
+            : kind === 'claude'
+              ? 'local file tools scratch-only'
+              : kind === 'opencode'
+                ? 'built-in tools off, MCP devterm server'
+                : kind === 'kimi'
+                  ? 'use mcp__devterm__* tools for host work'
+                  : kind === 'grok'
                     ? 'built-in tools off, MCP devterm server'
-                    : 'built-in tools off'
+                    : kind === 'codex'
+                      ? 'built-in tools off, MCP devterm server'
+                      : 'built-in tools off'
         term.write(
           `\x1b[90mMCP bridge: ${mcpUrl} | policy: ${mode} | agent: ${kind} (${toolNote})\x1b[0m\r\n`
         )
@@ -229,11 +238,12 @@ export default function AgentPane({
             term.write(`\r\n\x1b[90m[${kind} exited with code ${exitCode}]\x1b[0m\r\n`)
           })
         )
-        term.onData((d) => {
+        const inputDisposable = term.onData((d) => {
           attention.setArmed(true)
           attention.onInput()
           window.devterm.pty.input(ptyId, d)
         })
+        cleanups.push(() => inputDisposable.dispose())
         const push = () => {
           if (fitNow(fit, host)) window.devterm.pty.resize(ptyId, term.cols, term.rows)
         }
@@ -252,7 +262,9 @@ export default function AgentPane({
         setBridgeMessage(msg)
         term.write(`\r\n\x1b[31m[failed to start ${kind}: ${msg}]\x1b[0m\r\n`)
         term.write(
-          `\x1b[90mIs the \`${kind}\` CLI installed and on PATH? Authenticated with an API key or /login? Is the SSH session connected?\x1b[0m\r\n`
+          kind === 'devterm'
+            ? `\x1b[90mAuthenticate with /login or a provider API-key environment variable, then retry. DevTerm does not store model credentials.\x1b[0m\r\n`
+            : `\x1b[90mIs the \`${kind}\` CLI installed and on PATH? Authenticated with an API key or /login? Is the SSH session connected?\x1b[0m\r\n`
         )
       }
     })()

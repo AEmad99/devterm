@@ -1,6 +1,5 @@
-import type { Dispatch, SetStateAction } from 'react'
+import { lazy, Suspense, type Dispatch, type SetStateAction } from 'react'
 import TerminalLayout from '../terminal/TerminalLayout'
-import EditorView from '../files/EditorView'
 import GroupBar from './GroupBar'
 import {
   IconTerminals,
@@ -14,6 +13,11 @@ import { DEFAULT_GROUP, type Group } from '../../store/layout'
 import type { Session } from '../../store/sessions'
 import type { EditorDoc } from '../../store/editors'
 import { useSettings } from '../../store/settings'
+
+// CodeMirror and its editor-only UI are unnecessary for the terminal-first
+// screen. Keep them in a local async chunk and load only when a document is
+// focused; terminals continue running underneath while it resolves.
+const EditorView = lazy(() => import('../files/EditorView'))
 
 interface TerminalsViewProps {
   showGroupBar: boolean
@@ -175,7 +179,9 @@ export default function TerminalsView({
 
         {editorFocused && editorActiveId && (
           <div className="pane pane-editor">
-            <EditorView />
+            <Suspense fallback={<div className="editor-status">Opening editor…</div>}>
+              <EditorView />
+            </Suspense>
           </div>
         )}
 

@@ -59,29 +59,26 @@ export function registerFoundationIpc(
     bridgeActivity.clear(sessionId)
   })
 
-  ipcMain.handle(
-    IPC.bridgeActivityExport,
-    async (_e, sessionId: string, targetPath?: string) => {
-      if (typeof sessionId !== 'string') return null
-      let path = targetPath
-      if (!path) {
-        const win = getWindow()
-        const opts = {
-          title: 'Export bridge activity log',
-          defaultPath: `devterm-bridge-${sessionId.slice(0, 8)}-${new Date()
-            .toISOString()
-            .slice(0, 10)}.jsonl`,
-          filters: [{ name: 'JSON Lines', extensions: ['jsonl'] }]
-        }
-        const result = win
-          ? await dialog.showSaveDialog(win, opts)
-          : await dialog.showSaveDialog(opts)
-        if (result.canceled || !result.filePath) return null
-        path = result.filePath
+  ipcMain.handle(IPC.bridgeActivityExport, async (_e, sessionId: string, targetPath?: string) => {
+    if (typeof sessionId !== 'string') return null
+    let path = targetPath
+    if (!path) {
+      const win = getWindow()
+      const opts = {
+        title: 'Export bridge activity log',
+        defaultPath: `devterm-bridge-${sessionId.slice(0, 8)}-${new Date()
+          .toISOString()
+          .slice(0, 10)}.jsonl`,
+        filters: [{ name: 'JSON Lines', extensions: ['jsonl'] }]
       }
-      return bridgeActivity.exportSession(sessionId, path)
+      const result = win
+        ? await dialog.showSaveDialog(win, opts)
+        : await dialog.showSaveDialog(opts)
+      if (result.canceled || !result.filePath) return null
+      path = result.filePath
     }
-  )
+    return bridgeActivity.exportSession(sessionId, path)
+  })
 
   // The data layer doesn't know about BrowserWindow — expose a tiny bus so
   // other modules (the agent bridge, the policy enforcer) can record events
@@ -104,7 +101,8 @@ export function registerFoundationIpc(
     const result = await settingsIo.importFromPath(getWindow)
     if (result.ok) {
       const win = getWindow()
-      if (win && !win.isDestroyed()) win.webContents.send(IPC.settingsImported, result.settings ?? null)
+      if (win && !win.isDestroyed())
+        win.webContents.send(IPC.settingsImported, result.settings ?? null)
     }
     return result
   })
@@ -119,9 +117,7 @@ export function registerFoundationIpc(
     // Forward the persist-search toggle to the search module so a setting
     // flip takes effect without a restart.
     setPersistEnabled(snapshot.searchPersist === true)
-    void settingsIo.writeSnapshot(snapshot).catch((err) => {
-      console.warn('settings:sync write failed:', err)
-    })
+    settingsIo.scheduleSnapshot(snapshot)
   })
 
   // -------------------------------------------------------------------------

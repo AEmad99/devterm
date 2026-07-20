@@ -302,9 +302,9 @@ export interface FileContent {
 export const MAX_EDIT_BYTES = 5 * 1024 * 1024
 
 // ---------------------------------------------------------------------------
-// Agent bridge: an interactive coding-agent CLI wired to the in-process MCP
-// bridge. DevTerm can launch either the `claude` CLI or the `pi` CLI; the user
-// picks per session. The MCP bridge, tools, and policy are agent-agnostic —
+// Agent bridge: an interactive coding agent wired to the in-process MCP
+// bridge. DevTerm provides a bundled multi-provider runtime plus external CLI
+// fallbacks selected per session. The MCP bridge, tools, and policy are agent-agnostic —
 // they speak MCP. The renderer-visible contract below is the only place the
 // agent's identity leaks out, and the IPC channel names are pure strings with
 // no agent-specific bits.
@@ -313,7 +313,9 @@ export const MAX_EDIT_BYTES = 5 * 1024 * 1024
 export type PolicyMode = 'read_only' | 'confirm' | 'full'
 
 /**
- * Which coding agent to spawn for a session. `claude` runs the Claude CLI
+ * Which coding agent to spawn for a session. `devterm` runs the provider-
+ * agnostic agent runtime bundled with DevTerm; it supports OAuth subscriptions,
+ * API keys, and custom/local providers. `claude` runs the Claude CLI
  * (Anthropic-only, native MCP via --mcp-config); `pi` runs the pi coding agent
  * (more models/subscriptions, MCP via a loaded extension); `opencode` runs the
  * OpenCode TUI (sst/opencode) wired to the bridge through a per-session
@@ -321,10 +323,52 @@ export type PolicyMode = 'read_only' | 'confirm' | 'full'
  * (Moonshot AI) wired through a per-session `.kimi-code/mcp.json`; `grok` runs
  * the Grok CLI wired to the bridge through a per-session `.grok/config.toml`
  * HTTP MCP entry; `codex` runs the OpenAI Codex CLI wired through a per-session
- * isolated `CODEX_HOME/config.toml` HTTP MCP entry. All six reach this host only
+ * isolated `CODEX_HOME/config.toml` HTTP MCP entry. Every agent reaches this host only
  * through DevTerm's MCP bridge.
  */
-export type AgentKind = 'claude' | 'pi' | 'opencode' | 'kimi' | 'grok' | 'codex'
+export type AgentKind = 'devterm' | 'claude' | 'pi' | 'opencode' | 'kimi' | 'grok' | 'codex'
+
+export interface AgentTrustedSkill {
+  name: string
+  path: string
+  sha256: string
+  enabled: boolean
+}
+
+export interface AgentPreferences {
+  /** Optional provider id. Empty lets the runtime choose its configured default. */
+  provider: string
+  /** Optional model id or provider/model pair. Empty uses the provider default. */
+  model: string
+  /** Ordered provider/model pairs used after retryable provider failures. */
+  fallbackModels: string[]
+  /** Persist one conversation per remote session and reopen it after reconnects. */
+  resumeSessions: boolean
+  /** Hash-pinned, instruction-only skills. Executable third-party extensions stay disabled. */
+  trustedSkills: AgentTrustedSkill[]
+}
+
+export interface AgentModelInfo {
+  provider: string
+  model: string
+  context: string
+  maxOutput: string
+  thinking: boolean
+  images: boolean
+}
+
+export interface AgentProviderStatus {
+  provider: string
+  authenticated: boolean
+  source?: 'oauth' | 'api-key' | 'environment' | 'profile'
+}
+
+export interface AgentCapabilities {
+  runtimeVersion: string
+  models: AgentModelInfo[]
+  providers: AgentProviderStatus[]
+  loadedAt: number
+}
 
 export interface AgentOpenOpts {
   sessionId: string
@@ -333,6 +377,8 @@ export interface AgentOpenOpts {
   mode: PolicyMode
   /** Tell the agent the host has no internet. Optional; defaults to false. */
   airGapped?: boolean
+  /** Built-in DevTerm Agent launch preferences. Ignored by external fallbacks. */
+  preferences?: AgentPreferences
   /**
    * The remote shell's current working directory at launch (from OSC 7), so the
    * agent's commands start where the operator is. Live updates flow over
@@ -341,6 +387,27 @@ export interface AgentOpenOpts {
   cwd?: string
   cols: number
   rows: number
+}
+
+export interface SSHOpenShellOptions {
+  /** Attach to a stable tmux session when tmux is available on a POSIX host. */
+  detached?: boolean
+}
+
+export interface ProcessPerformanceMetric {
+  type: string
+  pid: number
+  cpuPercent: number
+  workingSetMb: number
+  peakWorkingSetMb: number
+}
+
+export interface PerformanceSnapshot {
+  capturedAt: number
+  uptimeMs: number
+  mainHeapUsedMb: number
+  mainHeapTotalMb: number
+  processes: ProcessPerformanceMetric[]
 }
 
 export interface AgentOpenResult {
@@ -510,6 +577,11 @@ export const IPC = {
   agentBridgeStatus: 'agent:bridge-status', // suffixed :<sessionId>
   agentStatus: 'agent:status',
   agentSetCwd: 'agent:set-cwd', // renderer -> main: live working-directory updates
+  agentCapabilities: 'agent:capabilities',
+  agentChooseSkill: 'agent:choose-skill',
+
+  // Local-only process telemetry (no analytics or network reporting).
+  performanceSnapshot: 'performance:snapshot',
 
   // saved connections (persisted in userData)
   connectionsList: 'connections:list',
@@ -674,7 +746,12 @@ export interface DevTermApi {
   }
   ssh: {
     connect(profile: SSHProfile): Promise<SSHConnectResult>
-    openShell(sessionId: string, cols: number, rows: number): Promise<void>
+    openShell(
+      sessionId: string,
+      cols: number,
+      rows: number,
+      options?: SSHOpenShellOptions
+    ): Promise<void>
     input(sessionId: string, data: string): void
     resize(sessionId: string, cols: number, rows: number): void
     disconnect(sessionId: string): void
@@ -735,6 +812,8 @@ export interface DevTermApi {
    */
   agent: {
     open(opts: AgentOpenOpts): Promise<AgentOpenResult>
+    capabilities(forceRefresh?: boolean): Promise<AgentCapabilities>
+    chooseSkill(): Promise<AgentTrustedSkill | null>
     close(sessionId: string): void
     /** Push the remote shell's live cwd so the agent's commands follow the operator's `cd`. */
     setCwd(sessionId: string, cwd: string): void
@@ -742,6 +821,9 @@ export interface DevTermApi {
     onBridgeStatus(sessionId: string, cb: (status: AgentBridgeStatus) => void): () => void
     onConfirm(cb: (req: ConfirmRequest) => void): () => void
     replyConfirm(reqId: string, approved: boolean): void
+  }
+  performance: {
+    snapshot(): Promise<PerformanceSnapshot>
   }
   /** Persisted SSH connections (CRUD); each call returns the full updated list. */
   connections: {
@@ -978,11 +1060,7 @@ export interface DevTermApi {
       ref?: string
     }): Promise<string>
     /** Blame for a file: per-line author + sha + line text. */
-    blame(target: {
-      sessionId?: string
-      path: string
-      file: string
-    }): Promise<GitBlameLine[]>
+    blame(target: { sessionId?: string; path: string; file: string }): Promise<GitBlameLine[]>
     /** Show one commit (message + stat). */
     show(target: {
       sessionId?: string
@@ -1078,17 +1156,9 @@ export interface DevTermApi {
       ref?: string
     }): Promise<GitCommandResult>
     /** Drop a stash (`git stash drop <ref>`). */
-    stashDrop(target: {
-      sessionId?: string
-      path: string
-      ref?: string
-    }): Promise<GitCommandResult>
+    stashDrop(target: { sessionId?: string; path: string; ref?: string }): Promise<GitCommandResult>
     /** Pop the top of the stash (or `ref` if given). */
-    stashPop(target: {
-      sessionId?: string
-      path: string
-      ref?: string
-    }): Promise<GitCommandResult>
+    stashPop(target: { sessionId?: string; path: string; ref?: string }): Promise<GitCommandResult>
     /** Create a commit. `files` stages the given paths before committing; omit to commit staged. */
     commit(target: {
       sessionId?: string
@@ -1099,11 +1169,7 @@ export interface DevTermApi {
       signOff?: boolean
     }): Promise<GitCommandResult>
     /** Stage one or more paths (analogous to `git add <path>…`; paths are repo-relative). */
-    stage(target: {
-      sessionId?: string
-      path: string
-      files: string[]
-    }): Promise<GitCommandResult>
+    stage(target: { sessionId?: string; path: string; files: string[] }): Promise<GitCommandResult>
     /** Unstage one or more paths (analogous to `git restore --staged <path>…`). */
     unstage(target: {
       sessionId?: string
@@ -1291,14 +1357,14 @@ export interface SettingsSnapshot {
   activityIndicators?: boolean
   zenMode?: boolean
   agentKind?: AgentKind
+  agentPreferences?: AgentPreferences
+  /** Reattach POSIX remote terminals through tmux when it is installed. */
+  remoteDetachedSessions?: boolean
   transfersPanelOpen?: boolean
   defaultShell?: DefaultShellPref
   gitPanelOpen?: boolean
   /** Per-id keybinding overrides. */
-  keybindings?: Record<
-    string,
-    { mod?: boolean; shift?: boolean; alt?: boolean; key: string }
-  >
+  keybindings?: Record<string, { mod?: boolean; shift?: boolean; alt?: boolean; key: string }>
   stt?: STTSettings
   /** Optional persistent global-search tail (off by default). */
   searchPersist?: boolean

@@ -55,17 +55,19 @@ function RemoteSessionView({ session }: { session: Session }) {
   const [agentKind, setAgentKind] = useState<AgentKind>(() => useSettings.getState().agentKind)
   const persistAgentKind = useSettings((s) => s.setAgentKind)
   const agentLabel =
-    agentKind === 'claude'
-      ? 'Claude'
-      : agentKind === 'opencode'
-        ? 'OpenCode'
-        : agentKind === 'kimi'
-          ? 'Kimi'
-          : agentKind === 'grok'
-            ? 'Grok'
-            : agentKind === 'codex'
-              ? 'Codex'
-              : 'Pi'
+    agentKind === 'devterm'
+      ? 'DevTerm Agent'
+      : agentKind === 'claude'
+        ? 'Claude'
+        : agentKind === 'opencode'
+          ? 'OpenCode'
+          : agentKind === 'kimi'
+            ? 'Kimi'
+            : agentKind === 'grok'
+              ? 'Grok'
+              : agentKind === 'codex'
+                ? 'Codex'
+                : 'Pi'
   const [agentWidth, setAgentWidth] = useState(480)
   const [filesSideOpen, setFilesSideOpen] = useState(false)
   const [filesWidth, setFilesWidth] = useState(420)
@@ -179,7 +181,7 @@ function RemoteSessionView({ session }: { session: Session }) {
 
         <label
           className="policy-field"
-          title="Which coding agent to launch for this host. Claude is Anthropic-only; Pi reaches more models and subscriptions; OpenCode (sst/opencode), Kimi (kimi-cli), Grok (xAI Grok CLI), and Codex (OpenAI Codex CLI) are TUI agents with broad provider reach. All six act on this host only through DevTerm's MCP bridge."
+          title="DevTerm Agent is the embedded multi-provider default (OAuth, API keys, custom endpoints, and local models). External CLIs are available as fallbacks. Every agent acts on this host only through DevTerm's MCP bridge."
         >
           <span className="policy-label">Agent</span>
           <select
@@ -192,12 +194,17 @@ function RemoteSessionView({ session }: { session: Session }) {
               persistAgentKind(next)
             }}
           >
-            <option value="claude">Claude</option>
-            <option value="pi">Pi</option>
-            <option value="opencode">OpenCode</option>
-            <option value="kimi">Kimi</option>
-            <option value="grok">Grok</option>
-            <option value="codex">Codex</option>
+            <optgroup label="Built in">
+              <option value="devterm">DevTerm Agent (all providers)</option>
+            </optgroup>
+            <optgroup label="External CLI fallbacks">
+              <option value="claude">Claude</option>
+              <option value="pi">Pi</option>
+              <option value="opencode">OpenCode</option>
+              <option value="kimi">Kimi</option>
+              <option value="grok">Grok</option>
+              <option value="codex">Codex</option>
+            </optgroup>
           </select>
         </label>
         <label className="policy-field" title="What the in-app agent is allowed to do on this host">

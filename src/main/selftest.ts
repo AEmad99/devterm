@@ -5,6 +5,7 @@ import { join } from 'path'
 import { Server } from 'ssh2'
 import type { AddressInfo } from 'net'
 import { PtyManager, defaultShell } from './pty/manager'
+import { resolveBundledAgentCli, resolveBundledNodeBin } from './agent/launch'
 import { SSHManager, DEFAULT_RECONNECT_POLICY, type ReconnectPolicy } from './ssh/manager'
 import { listRemote, mkdirRemote, renameRemote, deleteRemote } from './ssh/sftp'
 import { TransferManager } from './transfer'
@@ -114,6 +115,56 @@ function testStartupFailureDiagnostic(): Promise<void> {
       mgr.killAll()
       resolve()
     }, 3500)
+  })
+}
+
+// --- Bundled agent runtime --------------------------------------------------
+// Exercise the exact packaged launch shape without contacting a model. This
+// proves the packaged Node runtime works inside ConPTY and that the provider-
+// agnostic agent package is present/resolvable.
+function testBundledAgentRuntime(): Promise<void> {
+  return new Promise((resolve) => {
+    let buf = ''
+    let finished = false
+    const mgr = new PtyManager({
+      onData: (_id, data) => {
+        buf += data
+      },
+      onExit: (_id, exitCode) => {
+        if (finished) return
+        finished = true
+        clearTimeout(timeout)
+        check(
+          'bundled DevTerm Agent runtime starts in ConPTY',
+          exitCode === 0 && /\b\d+\.\d+\.\d+\b/.test(buf),
+          `exit=${String(exitCode)} output=${buf.replace(/\s+/g, ' ').trim()}`
+        )
+        mgr.killAll()
+        resolve()
+      }
+    })
+    const timeout = setTimeout(() => {
+      if (finished) return
+      finished = true
+      check('bundled DevTerm Agent runtime starts in ConPTY', false, 'timed out')
+      mgr.killAll()
+      resolve()
+    }, 10_000)
+    mgr.create({
+      cols: 80,
+      rows: 24,
+      shell: resolveBundledNodeBin(),
+      args: [
+        resolveBundledAgentCli(),
+        '--no-builtin-tools',
+        '--no-extensions',
+        '--no-skills',
+        '--no-prompt-templates',
+        '--no-themes',
+        '--offline',
+        '--version'
+      ]
+    })
   })
 }
 
@@ -373,8 +424,9 @@ async function testReconnect(): Promise<void> {
   // the right status. (A full mock-level scenario would require restarting
   // the server; this is enough coverage for the loop semantics.)
   const statuses: SSHStatus[] = []
+  let restoredShellData = ''
   const mgr = new SSHManager({
-    onData: () => {},
+    onData: (_id, data) => (restoredShellData += data),
     onExit: () => {},
     onStatus: (_id, s) => statuses.push(s)
   })
@@ -392,12 +444,21 @@ async function testReconnect(): Promise<void> {
       username: 'tester',
       password: 'x'
     })
+    await mgr.openShell(sessionId, 80, 24)
+    await new Promise((r) => setTimeout(r, 150))
+    restoredShellData = ''
     // Force a drop by ending the underlying client. The manager must fire a
     // `reconnecting` status with attempt 1/2 and the policy's baseDelayMs.
     ;(mgr as unknown as { sessions: Map<string, { client: { end: () => void } }> }).sessions
       .get(sessionId)
       ?.client.end()
-    await new Promise((r) => setTimeout(r, 150))
+    const reconnectDeadline = Date.now() + 2500
+    while (
+      Date.now() < reconnectDeadline &&
+      !statuses.some((status) => status.type === 'reconnected')
+    ) {
+      await new Promise((r) => setTimeout(r, 25))
+    }
     const reconnectStatus = statuses.find((s) => s.type === 'reconnecting')
     check(
       'reconnect: surfaces reconnecting status on drop',
@@ -411,6 +472,12 @@ async function testReconnect(): Promise<void> {
         `attempt=${reconnectStatus.attempt} delayMs=${reconnectStatus.delayMs}`
       )
     }
+    check(
+      'reconnect: restores the human shell channel',
+      statuses.some((status) => status.type === 'reconnected') &&
+        restoredShellData.includes('mock-shell-ready'),
+      statuses.map((status) => status.type).join(',')
+    )
     // (3) cancel before the loop runs out: stop the manager and verify the
     // status sequence ends without a `reconnect-failed` (the mock is still up
     // so the retry would succeed, which is also fine — we just want to confirm
@@ -624,6 +691,7 @@ export async function runSelfTest(): Promise<boolean> {
   console.log('=== DevTerm self-test ===  defaultShell=' + defaultShell())
   await testLocalShell()
   await testStartupFailureDiagnostic()
+  await testBundledAgentRuntime()
   await testSshScenario('linux')
   await testSshScenario('windows')
   await testSftp()
