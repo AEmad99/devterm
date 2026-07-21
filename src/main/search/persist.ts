@@ -16,6 +16,8 @@ import { promises as fsp, mkdirSync, existsSync } from 'fs'
 import { join, dirname } from 'path'
 
 const MAX_LINES = 5000
+/** Bound the in-memory retry queue when appendFile keeps failing. */
+const MAX_PENDING = 2000
 const FLUSH_DEBOUNCE_MS = 500
 
 interface SessionTail {
@@ -24,6 +26,8 @@ interface SessionTail {
   /** Lines already persisted (FIFO cap, mirrors the in-memory tail). */
   persisted: string[]
   flushTimer: NodeJS.Timeout | null
+  /** Serialize flush/truncate so a timer flush can't race flushAll/truncate. */
+  writeChain: Promise<void>
 }
 
 const tails = new Map<string, SessionTail>()
@@ -60,7 +64,7 @@ export function setEnabled(v: boolean): void {
 function getTail(sessionId: string): SessionTail {
   let t = tails.get(sessionId)
   if (!t) {
-    t = { pending: [], persisted: [], flushTimer: null }
+    t = { pending: [], persisted: [], flushTimer: null, writeChain: Promise.resolve() }
     tails.set(sessionId, t)
   }
   return t
@@ -76,33 +80,55 @@ function scheduleFlush(t: SessionTail, sessionId: string): void {
 
 async function flush(t: SessionTail, sessionId: string): Promise<void> {
   if (t.pending.length === 0) return
-  ensureDir()
-  const lines = t.pending.splice(0)
-  const file = tailFile(sessionId)
-  const data = lines.map((l) => JSON.stringify({ t: Date.now(), l })).join('\n') + '\n'
-  try {
-    await fsp.appendFile(file, data, 'utf8')
-  } catch (err) {
-    console.warn('search-persist: append failed for', sessionId, err)
-    // Put the lines back so the next push retries.
-    t.pending.unshift(...lines)
-    return
-  }
-  t.persisted.push(...lines)
-  // FIFO cap: drop the oldest when we exceed the limit.
-  if (t.persisted.length > MAX_LINES) {
-    t.persisted.splice(0, t.persisted.length - MAX_LINES)
-    // Rewrite the file with the surviving lines so the cap is durable.
-    void truncate(t, sessionId)
-  }
+  const run = t.writeChain
+    .catch(() => {
+      /* keep chain alive */
+    })
+    .then(async () => {
+      if (t.pending.length === 0) return
+      ensureDir()
+      const lines = t.pending.splice(0)
+      const file = tailFile(sessionId)
+      const data = lines.map((l) => JSON.stringify({ t: Date.now(), l })).join('\n') + '\n'
+      try {
+        await fsp.appendFile(file, data, 'utf8')
+      } catch (err) {
+        console.warn('search-persist: append failed for', sessionId, err)
+        // Put the lines back so the next push retries, but bound the queue so
+        // a persistently failing disk can't grow RAM without limit.
+        t.pending.unshift(...lines)
+        if (t.pending.length > MAX_PENDING) {
+          t.pending.splice(0, t.pending.length - MAX_PENDING)
+        }
+        return
+      }
+      t.persisted.push(...lines)
+      // FIFO cap: drop the oldest when we exceed the limit.
+      if (t.persisted.length > MAX_LINES) {
+        t.persisted.splice(0, t.persisted.length - MAX_LINES)
+        // Rewrite the file with the surviving lines so the cap is durable.
+        await truncate(t, sessionId)
+      }
+    })
+  t.writeChain = run
+  await run
 }
 
 async function truncate(t: SessionTail, sessionId: string): Promise<void> {
   const data = t.persisted.map((l) => JSON.stringify({ t: Date.now(), l })).join('\n') + '\n'
+  const file = tailFile(sessionId)
+  const tmp = file + '.tmp'
   try {
-    await fsp.writeFile(tailFile(sessionId), data, 'utf8')
+    // Atomic replace: a crash mid-write can't leave a half-truncated tail.
+    await fsp.writeFile(tmp, data, 'utf8')
+    await fsp.rename(tmp, file)
   } catch (err) {
     console.warn('search-persist: truncate failed for', sessionId, err)
+    try {
+      await fsp.unlink(tmp)
+    } catch {
+      /* ignore */
+    }
   }
 }
 

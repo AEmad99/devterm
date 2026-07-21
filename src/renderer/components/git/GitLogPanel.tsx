@@ -22,15 +22,21 @@ export default function GitLogPanel({ scope }: { scope: GitScope }) {
   const [entries, setEntries] = useState<GitLogEntry[] | null>(null)
   const [selected, setSelected] = useState<string | null>(null)
   const [show, setShow] = useState<GitShowResult | null | undefined>(undefined)
+  // The input is a draft; only Enter (or Refresh) applies it as the fetch ref,
+  // so typing doesn't fire a `git log` per keystroke (an SSH exec on remotes).
+  const [refDraft, setRefDraft] = useState<string>('')
   const [ref, setRef] = useState<string>('')
   const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const [view, setView] = useState<LogView>('graph')
 
   const reload = useCallback(() => {
     setBusy(true)
+    setError(null)
     void window.devterm.git
       .log({ sessionId: scope.sessionId, path: scope.path, ref: ref || undefined, maxCount: 200 })
       .then((e) => setEntries(e))
+      .catch((e) => setError(String((e as Error).message || e)))
       .finally(() => setBusy(false))
   }, [scope.sessionId, scope.path, ref])
 
@@ -67,17 +73,28 @@ export default function GitLogPanel({ scope }: { scope: GitScope }) {
   return (
     <div className="git-log">
       <div className="git-log-toolbar">
-        <input
-          className="git-input small"
-          value={ref}
-          onChange={(e) => setRef(e.target.value)}
-          placeholder="HEAD"
-          spellCheck={false}
-          title="Ref to start from (e.g. origin/main, v1.0.0, abc1234)"
-        />
-        <button className="git-mini" onClick={reload} disabled={busy}>
-          Refresh
-        </button>
+        <form
+          style={{ display: 'contents' }}
+          onSubmit={(e) => {
+            e.preventDefault()
+            const next = refDraft.trim()
+            // Same ref → explicit reload; a changed ref reloads via the effect.
+            if (next === ref) reload()
+            else setRef(next)
+          }}
+        >
+          <input
+            className="git-input small"
+            value={refDraft}
+            onChange={(e) => setRefDraft(e.target.value)}
+            placeholder="HEAD"
+            spellCheck={false}
+            title="Ref to start from (e.g. origin/main, v1.0.0, abc1234) — press Enter to apply"
+          />
+          <button type="submit" className="git-mini" disabled={busy}>
+            Refresh
+          </button>
+        </form>
         <span className="git-log-toolbar-spacer" />
         <div className="git-log-view-toggle" role="group" aria-label="Log view">
           <button
@@ -102,6 +119,14 @@ export default function GitLogPanel({ scope }: { scope: GitScope }) {
           </button>
         </div>
       </div>
+      {error && (
+        <div className="git-panel-error" role="alert">
+          <pre>{error}</pre>
+          <button onClick={() => setError(null)} aria-label="Dismiss">
+            ×
+          </button>
+        </div>
+      )}
       {entries === null && <div className="git-loading">loading…</div>}
       {entries !== null && entries.length === 0 && <div className="git-empty">no commits</div>}
       {entries && entries.length > 0 && view === 'graph' && (

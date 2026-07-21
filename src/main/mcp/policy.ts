@@ -31,8 +31,20 @@ const DESTRUCTIVE =
 // Anything that mutates state is blocked outright on read-only hosts. Adds the
 // in-place / truncating writers the old list missed (sed -i, truncate, unlink,
 // chattr) so read-only actually blocks file modification, not just `rm`/`>`.
+// The redirection alternation excludes digit/&-adjacent forms (`2>&1`, `>&2`,
+// `2>file` fd duplication stays excluded only for `2>&1`-style targets) so
+// stderr plumbing in an otherwise read-only command doesn't false-positive.
 const MUTATING =
-  /(\b(rm|mv|cp|touch|mkdir|rmdir|chmod|chown|chattr|ln|kill|pkill|tee|truncate|unlink)\b|\bsed\s+-i|>>?|\b(yum|dnf|apt|apt-get|pip|npm)\s+(install|remove|update|upgrade)|\bsystemctl\s+(start|restart|enable)|\b(oc|kubectl)\s+(apply|create|scale|edit|patch)|\bgit\s+(push|reset|clean)|\bnpm\s+publish)/i
+  /(\b(rm|mv|cp|touch|mkdir|rmdir|chmod|chown|chattr|ln|kill|pkill|tee|truncate|unlink)\b|\bsed\s+-i|(?<![0-9&])>>?(?!&)|\b(yum|dnf|apt|apt-get|pip|npm)\s+(install|remove|update|upgrade)|\bsystemctl\s+(start|restart|enable)|\b(oc|kubectl)\s+(apply|create|scale|edit|patch)|\bgit\s+(push|reset|clean)|\bnpm\s+publish)/i
+
+/**
+ * Strip single/double-quoted spans before pattern checks: a quoted `>` or a
+ * keyword inside a literal string (e.g. `echo "a > b"`, `grep 'rm -rf' log`)
+ * is not a mutation, and matching it blocked read-only commands.
+ */
+function stripQuoted(cmd: string): string {
+  return cmd.replace(/'[^']*'|"[^"]*"/g, ' ')
+}
 
 /**
  * Per-host guardrail layer enforced at the MCP boundary. Read-only blocks
@@ -65,8 +77,9 @@ export class Policy {
   }
 
   evaluateCommand(cmd: string): PolicyVerdict {
-    const destructive = DESTRUCTIVE.test(cmd)
-    const mutating = MUTATING.test(cmd)
+    const scan = stripQuoted(cmd)
+    const destructive = DESTRUCTIVE.test(scan)
+    const mutating = MUTATING.test(scan)
     if (this.mode === 'read_only') {
       if (destructive || mutating)
         return { allow: false, needConfirm: false, reason: 'host is read-only' }

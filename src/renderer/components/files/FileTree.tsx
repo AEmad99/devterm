@@ -148,14 +148,15 @@ function FileTreeImpl(
   // Keep only open dirs that still exist in the currently reachable tree; this
   // also lets the watch reconciliation below tear down dead watches.
   useEffect(() => {
+    // One traversal serves both reconciliations — it reads the live refs, so
+    // it's computed from the same snapshot either way.
+    const reachable = reachableOpenDirs(rootEntries, dirsRef.current, openRef.current)
     setOpen((prev) => {
-      const reachable = reachableOpenDirs(rootEntries, dirsRef.current, prev)
       if (reachable.size === prev.size && [...prev].every((path) => reachable.has(path)))
         return prev
       return reachable
     })
     setDirs((prev) => {
-      const reachable = reachableOpenDirs(rootEntries, prev, openRef.current)
       const next = Object.fromEntries(Object.entries(prev).filter(([path]) => reachable.has(path)))
       return Object.keys(next).length === Object.keys(prev).length ? prev : next
     })
@@ -412,20 +413,13 @@ function extendSelection(
 ): Selection {
   const next = new Set(prev)
   if (ev.shiftKey) {
-    // Find the anchor: the last item of the existing selection, or the
-    // clicked entry itself when nothing is selected.
+    // Find the anchor: the last selected item that's a visible sibling (or
+    // the clicked entry itself when nothing selected is visible here).
     const siblingPaths = visibleSiblings.map((s) => s.path)
     const clickedIdx = siblingPaths.indexOf(clicked.path)
     if (clickedIdx < 0) return new Set([clicked.path])
-    let anchorIdx = -1
-    for (let i = prev.size; i > 0; i--) {
-      // Find the highest-index sibling in the current selection
-      const last = [...prev].reverse().find((p) => siblingPaths.includes(p))
-      if (last) {
-        anchorIdx = siblingPaths.indexOf(last)
-        break
-      }
-    }
+    const last = [...prev].reverse().find((p) => siblingPaths.includes(p))
+    let anchorIdx = last ? siblingPaths.indexOf(last) : -1
     if (anchorIdx < 0) anchorIdx = clickedIdx
     const [from, to] = anchorIdx <= clickedIdx ? [anchorIdx, clickedIdx] : [clickedIdx, anchorIdx]
     for (let i = from; i <= to; i++) next.add(siblingPaths[i])

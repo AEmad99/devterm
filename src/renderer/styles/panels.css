@@ -1,7 +1,11 @@
 /* --- in-app browser pane (BrowserPane.tsx) --- */
 .browser-pane {
-  display: flex;
-  flex-direction: column;
+  /* Grid so the downloads drawer can overlay exactly the .browser-stack row
+     (row 5) regardless of which optional chrome rows (find bar) are present —
+     no magic top offset. Row 4 stays empty (0-height auto) when the find bar
+     is closed. */
+  display: grid;
+  grid-template-rows: auto auto auto auto minmax(0, 1fr);
   width: 100%;
   height: 100%;
   background: var(--bg);
@@ -81,6 +85,7 @@
   }
 }
 .browser-stack {
+  grid-row: 5; /* pinned to the flexible row; rows above auto-place (find bar optional) */
   flex: 1;
   min-height: 0;
   position: relative;

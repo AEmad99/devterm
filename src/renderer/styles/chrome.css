@@ -301,6 +301,9 @@
 .panes.tiling {
   position: absolute;
   inset: 0;
+  /* Height of a pane tab strip — the dropzone starts below it. Must match
+     TAB_H in src/renderer/components/terminal/TerminalLayout.tsx. */
+  --tab-h: 30px;
 }
 .term-layer {
   position: absolute;
@@ -322,16 +325,27 @@
   isolation: isolate;
 }
 /* Dim panes that are visible but not part of the active leaf, so multi-pane
-   layouts make focus obvious at a glance. The filter is transform-only on the
-   compositor and never touches xterm geometry. */
+   layouts make focus obvious at a glance. This is a translucent overlay, NOT a
+   filter on the slot: filtering a live xterm canvas pays a full filtered
+   recomposite on every output chunk (and makes the slot a containing block for
+   fixed descendants), while the overlay just overpaints a static tint. */
 .term-slot.inactive {
   opacity: 0.86;
-  filter: saturate(0.78);
+}
+.term-slot.inactive::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--bg) 24%, transparent);
 }
 @media (prefers-reduced-transparency: reduce) {
   .term-slot.inactive {
     opacity: 1;
-    filter: none;
+  }
+  .term-slot.inactive::after {
+    content: none;
   }
 }
 /* A terminal-hosting layer that is currently hidden (an inactive tab/group, the
@@ -399,7 +413,7 @@
   left: 0;
   right: 0;
   bottom: 0;
-  top: 30px;
+  top: var(--tab-h, 30px);
   pointer-events: none;
 }
 .panes.tiling.dragging .pane-dropzone {
@@ -537,7 +551,7 @@
   left: 50%;
   bottom: 14px;
   transform: translateX(-50%);
-  z-index: 7; /* above .term-layer (1) and focused slots (6) */
+  z-index: 4; /* above .term-layer (1), below the focus backdrop (5) and focused slots (6) */
   display: flex;
   align-items: center;
   gap: 10px;
@@ -657,6 +671,9 @@
 .pane-add,
 .pane-merge,
 .pane-focus {
+  /* Never let these shrink away: .pane-tabs (flex:1, min-width:0) absorbs all
+     the squeeze so focus/add/merge stay visible on narrow panes. */
+  flex: 0 0 auto;
   background: transparent;
   color: var(--muted);
   border: none;
@@ -690,6 +707,12 @@
 }
 .pane-tabs::-webkit-scrollbar {
   display: none;
+}
+/* Tabs keep their natural width and scroll (via the ‹ › chevrons) instead of
+   being squashed to nothing when the pane gets narrow. max-width on .tab
+   still caps a single busy tab. */
+.pane-tabs > .tab {
+  flex: 0 0 auto;
 }
 .tab-nav {
   align-self: center;

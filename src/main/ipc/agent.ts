@@ -20,7 +20,8 @@ import {
   buildAgentsMd,
   getBuiltinAgentCapabilities,
   prepareAgentLaunch,
-  prepareBuiltinAgentLaunch
+  prepareBuiltinAgentLaunch,
+  sweepStaleAgentTempDirs
 } from '../agent/launch'
 import { buildClaudeMd, prepareClaudeLaunch } from '../agent/claude-launch'
 import { buildKimiMd, prepareKimiLaunch } from '../agent/kimi-launch'
@@ -64,8 +65,37 @@ export function registerAgentIpc(
   pty: PtyManager,
   getWindow: () => BrowserWindow | null
 ): AgentController {
+  // Crash-path backstop: per-session temp dirs hold the bridge bearer token
+  // (and codex sessions a copy of ~/.codex/auth.json); explicit close removes
+  // them, a crash doesn't. Sweep day-old leftovers once at startup.
+  sweepStaleAgentTempDirs()
+
   const sessions = new Map<string, AgentSession>()
-  const pendingConfirms = new Map<string, (outcome: ConfirmOutcome) => void>()
+  interface PendingConfirm {
+    sessionId: string
+    resolve: (outcome: ConfirmOutcome) => void
+    timer: ReturnType<typeof setTimeout>
+  }
+  const pendingConfirms = new Map<string, PendingConfirm>()
+  // Per-session launch chain: serializes agent:open against the reconnect
+  // auto-restart so a concurrent pair never runs two launchAgent calls (the
+  // loser would leak a bridge port, heartbeat interval, and temp dir).
+  const launchChains = new Map<string, Promise<unknown>>()
+  const enqueueLaunch = <T>(
+    sessionId: string,
+    fn: () => Promise<T>
+  ): Promise<T> => {
+    const prev = launchChains.get(sessionId) ?? Promise.resolve()
+    const next = prev.catch(() => undefined).then(fn)
+    launchChains.set(
+      sessionId,
+      next.then(
+        () => undefined,
+        () => undefined
+      )
+    )
+    return next
+  }
   // The remote shell's live cwd per session, fed by OSC 7 from the renderer
   // (`agent:set-cwd`). The bridge reads it through a getter so the agent's
   // commands follow the operator's `cd` without restarting the agent.
@@ -82,25 +112,35 @@ export function registerAgentIpc(
   const confirm = (sessionId: string, tool: string, detail: string): Promise<ConfirmOutcome> =>
     new Promise((resolve) => {
       const reqId = randomUUID()
-      pendingConfirms.set(reqId, resolve)
-      const req: ConfirmRequest = { reqId, sessionId, tool, detail }
-      send(IPC.agentConfirm, req)
-      setTimeout(() => {
+      const timer = setTimeout(() => {
         if (pendingConfirms.delete(reqId)) resolve('timeout')
       }, 120000)
+      pendingConfirms.set(reqId, { sessionId, resolve, timer })
+      const req: ConfirmRequest = { reqId, sessionId, tool, detail }
+      send(IPC.agentConfirm, req)
     })
 
   ipcMain.on(IPC.agentConfirmReply, (_e, reqId: string, approved: boolean) => {
     const r = pendingConfirms.get(reqId)
     if (r) {
       pendingConfirms.delete(reqId)
-      r(approved ? 'approved' : 'denied')
+      clearTimeout(r.timer)
+      r.resolve(approved ? 'approved' : 'denied')
     }
   })
 
   const closeOne = async (sessionId: string): Promise<void> => {
     const s = sessions.get(sessionId)
     if (!s) return
+    // Fail any in-flight approval prompts for this session immediately —
+    // otherwise the tool call pends until the 120s timeout after the pane is
+    // already gone.
+    for (const [reqId, pending] of pendingConfirms) {
+      if (pending.sessionId !== sessionId) continue
+      pendingConfirms.delete(reqId)
+      clearTimeout(pending.timer)
+      pending.resolve('denied')
+    }
     s.sshDispose?.()
     s.ptyDispose?.()
     s.sshDispose = undefined
@@ -140,10 +180,13 @@ export function registerAgentIpc(
     send(`${IPC.agentBridgeStatus}:${sessionId}`, status)
 
   ipcMain.handle(IPC.agentOpen, async (_e, opts: AgentOpenOpts): Promise<AgentOpenResult> => {
-    // Close any previous session for the same id (Restart button path). Await
-    // so the old bridge / temp dir are fully gone before we allocate new ones.
-    if (sessions.has(opts.sessionId)) await closeOne(opts.sessionId)
-    return launchAgent(opts)
+    // Serialize against reconnect auto-restart for the same session id.
+    return enqueueLaunch(opts.sessionId, async () => {
+      // Close any previous session for the same id (Restart button path). Await
+      // so the old bridge / temp dir are fully gone before we allocate new ones.
+      if (sessions.has(opts.sessionId)) await closeOne(opts.sessionId)
+      return launchAgent(opts)
+    })
   })
 
   ipcMain.handle(IPC.agentCapabilities, (_e, forceRefresh: boolean) =>
@@ -339,24 +382,24 @@ export function registerAgentIpc(
               cwd: cwds.get(opts.sessionId) ?? sess.lastOpts.cwd
             }
             const stablePtyId = sess.ptyId
-            void (async () => {
-              try {
-                // Fully retire the old bridge/listeners/temp directory before
-                // replacing the process. Reuse the PTY id so the renderer's
-                // existing per-id data/exit subscriptions remain valid.
-                await closeOne(opts.sessionId)
-                await launchAgent(restartOpts, stablePtyId)
-              } catch (err) {
-                sendBridgeStatus(opts.sessionId, {
-                  state: 'error',
-                  mcpUrl: undefined,
-                  message: `Auto-restart after reconnect failed: ${(err as Error).message}`,
-                  lastActivityAt: Date.now(),
-                  lastHeartbeatAt: undefined,
-                  activeStreams: 0
-                })
-              }
-            })()
+            // Enqueue so a concurrent agent:open (Restart button) cannot race
+            // this relaunch and leak a second bridge/tempdir.
+            void enqueueLaunch(opts.sessionId, async () => {
+              // Fully retire the old bridge/listeners/temp directory before
+              // replacing the process. Reuse the PTY id so the renderer's
+              // existing per-id data/exit subscriptions remain valid.
+              await closeOne(opts.sessionId)
+              return launchAgent(restartOpts, stablePtyId)
+            }).catch((err) => {
+              sendBridgeStatus(opts.sessionId, {
+                state: 'error',
+                mcpUrl: undefined,
+                message: `Auto-restart after reconnect failed: ${(err as Error).message}`,
+                lastActivityAt: Date.now(),
+                lastHeartbeatAt: undefined,
+                activeStreams: 0
+              })
+            })
           }
         } else if (status.type === 'reconnect-failed') {
           sendBridgeStatus(opts.sessionId, {

@@ -13,7 +13,12 @@ import { PortForwardManager } from './port-forward'
 
 interface Session {
   id: string
-  client: Client
+  /**
+   * Live ssh2 client, or undefined while a reconnect placeholder is in
+   * effect (transport down). Callers must treat undefined as "session
+   * reconnecting" rather than "unknown session".
+   */
+  client?: Client
   jump?: Client
   shell?: ClientChannel
   /** Last requested terminal channel, retained across transport reconnects. */
@@ -30,6 +35,10 @@ interface Session {
    */
   shellDecoder?: TextDecoder
   sftp?: SFTPWrapper
+  /** In-flight SFTP open; concurrent getSftp callers share this promise. */
+  sftpInflight?: Promise<SFTPWrapper>
+  /** In-flight shell open; concurrent openShell callers share this promise. */
+  shellInflight?: Promise<void>
   context: HostContext
   /**
    * The original profile the session was opened with. Kept so the
@@ -50,6 +59,8 @@ interface Session {
   /** Pending shell-setup write timers; cleared on disconnect. */
   setupTimers?: Set<NodeJS.Timeout>
 }
+
+const RECONNECTING_ERR = 'session reconnecting'
 
 interface ReconnectState {
   /** Timer for the next attempt; cleared when the loop is cancelled. */
@@ -232,26 +243,51 @@ export class SSHManager {
       onStatus
     )
 
-    client.on('close', () => {
-      onStatus({ type: 'closed' })
-      this.handlers.onExit(id)
-      // The session is now gone from our map. If auto-reconnect is in effect
-      // (or the user explicitly retried after a permanent failure), schedule
-      // the next attempt with the saved profile.
-      const reaped = this.sessions.get(id)
-      if (!reaped) return
-      this.cleanup(id)
-      if (reaped.reconnect) {
-        // User-initiated retry: timer was already cleared by `reconnect()`.
-        void this.runReconnect(id, reaped.reconnect)
-      } else if (this.policy.enabled) {
-        this.scheduleReconnect(id, reaped.profile, reaped.shellRequest)
-      }
-    })
+    // Attach close BEFORE detectRemoteContext: a drop during detection must
+    // still schedule reconnect rather than leaving a dead client with no
+    // listener and a false "connected" state.
+    client.on('close', () => this.handleTransportClose(id))
 
     const context = await detectRemoteContext(client)
     this.sessions.set(id, { id, client, jump, context, profile })
     return { sessionId: id, context }
+  }
+
+  /**
+   * Transport dropped. Suspend port-forward listeners (keep specs for rebind),
+   * clear live channels, and schedule reconnect when policy allows — without
+   * forgetting the profile (so "Reconnect now" still works after permanent
+   * failure).
+   */
+  private handleTransportClose(sessionId: string): void {
+    this.fireStatus(sessionId, { type: 'closed' })
+    this.handlers.onExit(sessionId)
+    const reaped = this.sessions.get(sessionId)
+    if (!reaped) return
+    this.clearLiveChannels(reaped)
+    this.forwardManager.suspendBySession(sessionId)
+    // Drop the dead client references but keep the session entry + profile.
+    reaped.client = undefined
+    reaped.jump = undefined
+    if (reaped.reconnect) {
+      void this.runReconnect(sessionId, reaped.reconnect)
+    } else if (this.policy.enabled) {
+      this.scheduleReconnect(sessionId, reaped.profile, reaped.shellRequest)
+    }
+    // else: tombstone remains so a later manual reconnect() can find the profile
+  }
+
+  /** Tear down shell/SFTP/setup timers on a session without forgetting the entry. */
+  private clearLiveChannels(s: Session): void {
+    if (s.setupTimers) {
+      for (const t of s.setupTimers) clearTimeout(t)
+      s.setupTimers.clear()
+    }
+    s.shell = undefined
+    s.shellDecoder = undefined
+    s.shellInflight = undefined
+    s.sftp = undefined
+    s.sftpInflight = undefined
   }
 
   /**
@@ -278,6 +314,27 @@ export class SSHManager {
       clearTimeout(s.reconnect.timer)
       void this.runReconnect(sessionId, s.reconnect)
       return
+    }
+    // User-initiated reconnect while the session still has a live client:
+    // end the old client first so we don't orphan its socket/server session.
+    // Detach our close listener first so handleTransportClose doesn't race
+    // a second scheduleReconnect with the one we install below.
+    if (s?.client) {
+      const oldClient = s.client
+      const oldJump = s.jump
+      s.client = undefined
+      s.jump = undefined
+      this.clearLiveChannels(s)
+      this.forwardManager.suspendBySession(sessionId)
+      oldClient.removeAllListeners('close')
+      try {
+        oldClient.end()
+        oldJump?.end()
+      } catch {
+        /* ignore */
+      }
+      this.fireStatus(sessionId, { type: 'closed' })
+      this.handlers.onExit(sessionId)
     }
     this.scheduleReconnect(sessionId, prof, s?.shellRequest, /*userInitiated*/ true)
   }
@@ -308,15 +365,16 @@ export class SSHManager {
       userInitiated,
       shellRequest
     }
-    // Persist the state on a sentinel "pre-session" entry so `cancelReconnect`
-    // can find it by id even before the first attempt has been made.
+    // Reuse the existing entry when present (keeps context/forwards map key);
+    // otherwise install a placeholder so cancelReconnect can find it by id.
+    const existing = this.sessions.get(sessionId)
     this.sessions.set(sessionId, {
       id: sessionId,
-      client: undefined as unknown as Client, // placeholder; replaced on success
-      context: { kind: 'remote', os: 'unknown', detail: '', hostname: '' },
+      client: undefined,
+      context: existing?.context ?? { kind: 'remote', os: 'unknown', detail: '', hostname: '' },
       profile,
       reconnect: state,
-      shellRequest
+      shellRequest: shellRequest ?? existing?.shellRequest
     })
     clearTimeout(state.timer)
     state.timer = setTimeout(() => void this.runReconnect(sessionId, state), initialDelay)
@@ -340,10 +398,6 @@ export class SSHManager {
     const profile = s.profile
     state.attempt += 1
     try {
-      // We don't have a fresh id yet — `connect` mints one if the profile has
-      // no `id` (we strip it so the manager does mint a new uuid) and returns
-      // a new id. To keep the original session id stable across reconnects, we
-      // *override* `profile.id` on the way in.
       const { client, jump } = await establish(
         {
           host: profile.host,
@@ -358,30 +412,25 @@ export class SSHManager {
           /* swallow per-attempt status events — surface only the final outcome */
         }
       )
+      // Wire close immediately so a drop during detectRemoteContext still
+      // re-enters the reconnect path (mirrors connect()).
+      client.on('close', () => this.handleTransportClose(sessionId))
       const context = await detectRemoteContext(client)
-      // The client is now alive; re-wire the close handler to schedule the
-      // next reconnect if it drops again.
-      client.on('close', () => {
-        this.fireStatus(sessionId, { type: 'closed' })
-        this.handlers.onExit(sessionId)
-        const cur = this.sessions.get(sessionId)
-        if (!cur) return
-        this.cleanup(sessionId)
-        if (cur.reconnect) {
-          void this.runReconnect(sessionId, cur.reconnect)
-        } else if (this.policy.enabled) {
-          this.scheduleReconnect(sessionId, cur.profile, cur.shellRequest)
-        }
-      })
       this.sessions.set(sessionId, {
         id: sessionId,
         client,
         jump,
         context,
         profile,
-        reconnect: state,
-        shellRequest: state.shellRequest
+        // Clear reconnect bookkeeping on success; the next drop starts a new loop.
+        shellRequest: state.shellRequest ?? s.shellRequest
       })
+      // Re-establish -L/-D listeners that were suspended on the previous drop.
+      try {
+        await this.forwardManager.rebind(sessionId)
+      } catch (err) {
+        console.warn('[ssh] port-forward rebind failed:', err)
+      }
       if (state.shellRequest) {
         try {
           await this.openShell(sessionId, state.shellRequest.cols, state.shellRequest.rows, {
@@ -399,8 +448,20 @@ export class SSHManager {
       const reason = (err as Error).message || String(err)
       state.lastError = reason
       if (state.attempt >= state.maxAttempts) {
-        delete this.sessions.get(sessionId)?.reconnect
-        this.sessions.delete(sessionId)
+        // Keep a profile tombstone so "Reconnect now" still works.
+        const cur = this.sessions.get(sessionId)
+        if (cur) {
+          delete cur.reconnect
+          cur.client = undefined
+          cur.jump = undefined
+        } else {
+          this.sessions.set(sessionId, {
+            id: sessionId,
+            client: undefined,
+            context: { kind: 'remote', os: 'unknown', detail: '', hostname: '' },
+            profile
+          })
+        }
         this.fireStatus(sessionId, {
           type: 'reconnect-failed',
           attempts: state.attempt,
@@ -450,8 +511,12 @@ export class SSHManager {
       detached: options.detached === true
     }
     if (s.shell) return Promise.resolve()
-    return new Promise((resolve, reject) => {
-      s.client.shell({ term: 'xterm-256color', cols, rows }, (err, channel) => {
+    if (!s.client) return Promise.reject(new Error(RECONNECTING_ERR))
+    if (s.shellInflight) return s.shellInflight
+    const client = s.client
+    const inflight = new Promise<void>((resolve, reject) => {
+      client.shell({ term: 'xterm-256color', cols, rows }, (err, channel) => {
+        s.shellInflight = undefined
         if (err) return reject(err)
         s.shell = channel
         // Stream every chunk through a per-session UTF-8 decoder so multi-byte
@@ -529,7 +594,7 @@ export class SSHManager {
           // the local PTY's PowerShell branch in `main/pty/manager.ts`
           // (function `prompt` writes the OSC 7 sequence and the OSC 133 ;A/;B
           // markers around the visible prompt).
-          void probeWindowsShell(s.client).then((isPS) => {
+          void probeWindowsShell(client).then((isPS) => {
             s.isWindowsPowerShell = isPS
             if (!isPS) return // cmd.exe: known limitation, no OSC 7.
             const setup =
@@ -549,24 +614,36 @@ export class SSHManager {
         resolve()
       })
     })
+    s.shellInflight = inflight
+    return inflight
   }
 
   /**
    * Lazily open an SFTP channel on the session's EXISTING client (channel mux —
-   * never a second connection), cached for reuse.
+   * never a second connection), cached for reuse. Concurrent callers share one
+   * in-flight open so we never leak a second SFTP channel.
    */
   getSftp(sessionId: string): Promise<SFTPWrapper> {
     const s = this.sessions.get(sessionId)
     if (!s) return Promise.reject(new Error('unknown session'))
     if (s.sftp) return Promise.resolve(s.sftp)
-    return new Promise((resolve, reject) => {
-      s.client.sftp((err, sftp) => {
+    if (!s.client) return Promise.reject(new Error(RECONNECTING_ERR))
+    if (s.sftpInflight) return s.sftpInflight
+    const client = s.client
+    s.sftpInflight = new Promise<SFTPWrapper>((resolve, reject) => {
+      client.sftp((err, sftp) => {
+        s.sftpInflight = undefined
         if (err) return reject(err)
         s.sftp = sftp
-        sftp.on('close', () => (s.sftp = undefined))
+        // Only clear the cache if this wrapper is still the one we stored —
+        // a later open must not be wiped by a leaked wrapper's close.
+        sftp.on('close', () => {
+          if (s.sftp === sftp) s.sftp = undefined
+        })
         resolve(sftp)
       })
     })
+    return s.sftpInflight
   }
 
   getContext(sessionId: string): HostContext | undefined {
@@ -587,16 +664,29 @@ export class SSHManager {
   ): Promise<{ stdout: string; stderr: string; code: number | null; timedOut: boolean }> {
     const s = this.sessions.get(sessionId)
     if (!s) return Promise.reject(new Error('unknown session'))
+    if (!s.client) return Promise.reject(new Error(RECONNECTING_ERR))
+    const client = s.client
     return new Promise((resolve, reject) => {
       let settled = false
       const stdoutChunks: Buffer[] = []
       const stderrChunks: Buffer[] = []
+      let streamRef: ClientChannel | undefined
       // Decode once on completion so multi-byte UTF-8 codepoints split across
       // ssh2 data chunks aren't turned into U+FFFD by per-chunk `.toString()`.
       const snapshot = () => ({
         stdout: Buffer.concat(stdoutChunks).toString('utf8'),
         stderr: Buffer.concat(stderrChunks).toString('utf8')
       })
+      const detach = () => {
+        if (!streamRef) return
+        streamRef.removeAllListeners('data')
+        streamRef.stderr.removeAllListeners('data')
+        try {
+          streamRef.close()
+        } catch {
+          /* ignore */
+        }
+      }
       const finish = (r: {
         stdout: string
         stderr: string
@@ -608,22 +698,27 @@ export class SSHManager {
           resolve(r)
         }
       }
-      const timer = setTimeout(
-        () => finish({ ...snapshot(), code: null, timedOut: true }),
-        timeoutMs
-      )
-      s.client.exec(command, (err, stream) => {
+      const timer = setTimeout(() => {
+        detach()
+        finish({ ...snapshot(), code: null, timedOut: true })
+      }, timeoutMs)
+      client.exec(command, (err, stream) => {
         if (err) {
           clearTimeout(timer)
           return reject(err)
         }
+        streamRef = stream
         stream
           .on('close', (c: number) => {
             clearTimeout(timer)
             finish({ ...snapshot(), code: c ?? null, timedOut: false })
           })
-          .on('data', (d: Buffer) => stdoutChunks.push(d))
-          .stderr.on('data', (d: Buffer) => stderrChunks.push(d))
+          .on('data', (d: Buffer) => {
+            if (!settled) stdoutChunks.push(d)
+          })
+          .stderr.on('data', (d: Buffer) => {
+            if (!settled) stderrChunks.push(d)
+          })
       })
     })
   }

@@ -51,8 +51,16 @@ export function registerFileIpc(
   // Live directory watching: the renderer subscribes to a path and gets a fresh
   // listing pushed whenever the directory's contents change — no manual refresh.
   const fsWatcher = new FsWatchManager((id, listing) => send(`${IPC.fsWatchEvent}:${id}`, listing))
-  ipcMain.handle(IPC.fsWatch, (_e, p: string) => fsWatcher.start(p))
-  ipcMain.on(IPC.fsUnwatch, (_e, id: string) => fsWatcher.stop(id))
+  const fsWatchesBySender = new Map<number, Set<string>>()
+  ipcMain.handle(IPC.fsWatch, async (e, p: string) => {
+    const id = await fsWatcher.start(p)
+    trackWatch(e.sender, fsWatchesBySender, id, (wid) => fsWatcher.stop(wid))
+    return id
+  })
+  ipcMain.on(IPC.fsUnwatch, (e, id: string) => {
+    fsWatcher.stop(id)
+    fsWatchesBySender.get(e.sender.id)?.delete(id)
+  })
 
   // Remote filesystem over SFTP (channel on the existing client)
   ipcMain.handle(IPC.sftpList, async (_e, sid: string, path?: string) =>
@@ -83,13 +91,51 @@ export function registerFileIpc(
     (sid) => ssh.getSftp(sid),
     (id, listing) => send(`${IPC.sftpWatchEvent}:${id}`, listing)
   )
-  ipcMain.handle(IPC.sftpWatch, (_e, sid: string, p: string) => sftpWatcher.start(sid, p))
-  ipcMain.on(IPC.sftpUnwatch, (_e, id: string) => sftpWatcher.stop(id))
+  const sftpWatchesBySender = new Map<number, Set<string>>()
+  ipcMain.handle(IPC.sftpWatch, async (e, sid: string, p: string) => {
+    const id = await sftpWatcher.start(sid, p)
+    trackWatch(e.sender, sftpWatchesBySender, id, (wid) => sftpWatcher.stop(wid))
+    return id
+  })
+  ipcMain.on(IPC.sftpUnwatch, (e, id: string) => {
+    sftpWatcher.stop(id)
+    sftpWatchesBySender.get(e.sender.id)?.delete(id)
+  })
 
   return {
     stopWatches: () => {
       fsWatcher.stopAll()
       sftpWatcher.stopAll()
+      fsWatchesBySender.clear()
+      sftpWatchesBySender.clear()
     }
   }
+}
+
+/**
+ * Key a watch id by the requesting webContents so a renderer reload (which
+ * never sends unwatch) can't leak fs.watch handles / SFTP poll timers until
+ * app quit: when the sender is destroyed, every watch it started is stopped.
+ */
+function trackWatch(
+  sender: Electron.WebContents,
+  registry: Map<number, Set<string>>,
+  id: string,
+  stop: (id: string) => void
+): void {
+  if (sender.isDestroyed()) {
+    stop(id)
+    return
+  }
+  let set = registry.get(sender.id)
+  if (!set) {
+    set = new Set()
+    registry.set(sender.id, set)
+    sender.once('destroyed', () => {
+      const ids = registry.get(sender.id)
+      registry.delete(sender.id)
+      if (ids) for (const wid of ids) stop(wid)
+    })
+  }
+  set.add(id)
 }

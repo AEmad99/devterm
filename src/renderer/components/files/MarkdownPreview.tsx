@@ -93,7 +93,6 @@ export default function MarkdownPreview({ docId, content, previewMode }: Markdow
       ref={containerRef}
       className="md-preview"
       onClick={handleClick}
-      aria-live="polite"
       aria-label="Markdown preview"
     />
   )

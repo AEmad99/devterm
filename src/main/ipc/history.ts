@@ -42,8 +42,17 @@ async function writeStore(entries: StoredEntry[]): Promise<void> {
   await fs.rename(tmp, storeFile()) // atomic replace so a crash mid-write can't corrupt the store
 }
 
-/** Read a text file (best-effort); empty if missing/unreadable. */
-async function readText(path: string): Promise<string> {
+// Serialize read-modify-write mutations so concurrent history:record calls
+// can't interleave readStore→writeStore and silently drop entries.
+let mutationQueue: Promise<unknown> = Promise.resolve()
+
+function enqueueMutation<T>(op: () => Promise<T>): Promise<T> {
+  const next = mutationQueue.then(op, op)
+  mutationQueue = next.catch(() => undefined)
+  return next
+}
+
+/** Read a text file (best-effort); empty if missing/unreadable. */async function readText(path: string): Promise<string> {
   try {
     return await fs.readFile(path, 'utf8')
   } catch {
@@ -91,27 +100,29 @@ async function remoteHistory(ssh: SSHManager, sessionId: string): Promise<string
 }
 
 export function registerHistoryIpc(ssh: SSHManager): void {
-  ipcMain.handle(IPC.historyRecord, async (_e, command: string, scope: 'local' | 'remote') => {
-    const cmd = clean(command)
-    if (!cmd || cmd.length > 2000 || looksSensitive(cmd)) return
-    const entries = await readStore()
-    // Match by historyKey so re-running a variant (`CD X\` after `cd 'X'`)
-    // bumps the existing entry instead of forking a near-duplicate; the stored
-    // display text follows the most recent variant.
-    const idx = entries.findIndex(
-      (x) => x.scope === scope && historyKey(x.command) === historyKey(cmd)
-    )
-    if (idx >= 0)
-      entries[idx] = {
-        ...entries[idx],
-        command: cmd,
-        count: entries[idx].count + 1,
-        last: Date.now()
-      }
-    else entries.push({ command: cmd, count: 1, last: Date.now(), scope })
-    entries.sort((a, b) => b.last - a.last) // keep the most-recently-used within the cap
-    await writeStore(entries.slice(0, MAX_STORE))
-  })
+  ipcMain.handle(IPC.historyRecord, (_e, command: string, scope: 'local' | 'remote') =>
+    enqueueMutation(async () => {
+      const cmd = clean(command)
+      if (!cmd || cmd.length > 2000 || looksSensitive(cmd)) return
+      const entries = await readStore()
+      // Match by historyKey so re-running a variant (`CD X\` after `cd 'X'`)
+      // bumps the existing entry instead of forking a near-duplicate; the stored
+      // display text follows the most recent variant.
+      const idx = entries.findIndex(
+        (x) => x.scope === scope && historyKey(x.command) === historyKey(cmd)
+      )
+      if (idx >= 0)
+        entries[idx] = {
+          ...entries[idx],
+          command: cmd,
+          count: entries[idx].count + 1,
+          last: Date.now()
+        }
+      else entries.push({ command: cmd, count: 1, last: Date.now(), scope })
+      entries.sort((a, b) => b.last - a.last) // keep the most-recently-used within the cap
+      await writeStore(entries.slice(0, MAX_STORE))
+    })
+  )
 
   ipcMain.handle(IPC.historyQuery, async (_e, q: HistoryQuery): Promise<HistoryResult> => {
     const inApp = (await readStore()).filter((e) => e.scope === q.scope)

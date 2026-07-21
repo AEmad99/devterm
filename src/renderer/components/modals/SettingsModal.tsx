@@ -260,6 +260,11 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
     const onKey = (e: KeyboardEvent) => {
       e.preventDefault()
       e.stopPropagation()
+      // Escape cancels capture without binding a combo.
+      if (e.key === 'Escape') {
+        setCapturing(null)
+        return
+      }
       const combo = captureCombo(e)
       if (combo) setKeybinding(capturing, combo)
       setCapturing(null)
@@ -342,10 +347,16 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <div className="modal-backdrop" onMouseDown={onClose}>
-      <div className="modal settings-modal" onMouseDown={(e) => e.stopPropagation()}>
+    <div className="modal-backdrop" onClick={onClose}>
+      <div
+        className="modal settings-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="settings-modal-title"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="modal-head">
-          <h2>Settings</h2>
+          <h2 id="settings-modal-title">Settings</h2>
           <button className="modal-x" onClick={onClose} title="Close">
             <IconClose size={16} />
           </button>

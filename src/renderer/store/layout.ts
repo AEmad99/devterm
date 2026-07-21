@@ -206,8 +206,9 @@ function reconcile(prev: RootState, ids: string[]): RootState {
   let activeLeaf = prev.activeLeaf
 
   // Common case: a pending session's id was swapped for its real id — rename in
-  // place so the tab keeps its position.
-  if (removed.length === 1 && added.length === 1) {
+  // place so the tab keeps its position. Gate on the pending- prefix: a genuine
+  // close-A/open-B pair batched by React 18 must not be treated as a rename.
+  if (removed.length === 1 && added.length === 1 && removed[0].startsWith('pending-')) {
     const owner = leafOf(root, removed[0])
     if (owner) {
       root = updateLeaf(root!, owner.id, (l) => ({
@@ -364,7 +365,13 @@ export const useLayout = create<LayoutState>((set) => ({
         // and spinOffGroup), so a group is never left transiently empty here.
         if (ids.length === 0 && gid !== DEFAULT_GROUP) continue
         const rec = reconcile({ root: prev.root, activeLeaf: prev.activeLeaf }, ids)
-        groups.push({ ...prev, root: rec.root, activeLeaf: rec.activeLeaf })
+        // Reuse the previous Group object when nothing changed so unchanged
+        // groups don't re-render subscribers on every sync.
+        groups.push(
+          rec.root === prev.root && rec.activeLeaf === prev.activeLeaf
+            ? prev
+            : { ...prev, root: rec.root, activeLeaf: rec.activeLeaf }
+        )
       }
       if (!groups.some((g) => g.id === DEFAULT_GROUP)) {
         const prev = known.get(DEFAULT_GROUP)
@@ -391,9 +398,16 @@ export const useLayout = create<LayoutState>((set) => ({
       // Prune group flags for groups that no longer exist (group closed → flag
       // is meaningless).
       const liveGroupIds = new Set(groups.map((g) => g.id))
-      const groupFlags: Record<string, { launchedFromWorkspaceId?: string }> = {}
-      for (const [gid, flag] of Object.entries(s.groupFlags)) {
-        if (liveGroupIds.has(gid)) groupFlags[gid] = flag
+      let groupFlags = s.groupFlags
+      let pruned = false
+      for (const gid of Object.keys(s.groupFlags)) {
+        if (!liveGroupIds.has(gid)) pruned = true
+      }
+      if (pruned) {
+        groupFlags = {}
+        for (const [gid, flag] of Object.entries(s.groupFlags)) {
+          if (liveGroupIds.has(gid)) groupFlags[gid] = flag
+        }
       }
       return { groups, activeGroupId, focusedId, groupFlags }
     }),

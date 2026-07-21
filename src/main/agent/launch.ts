@@ -1,7 +1,7 @@
 import { execFile } from 'child_process'
 import { createHash } from 'crypto'
 import { promisify } from 'util'
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs'
 import { homedir, tmpdir } from 'os'
 import { join, sep } from 'path'
 import type { BridgeInfo } from '../mcp/server'
@@ -40,8 +40,13 @@ async function resolveOnWindows(name: string): Promise<string | undefined> {
 }
 
 async function resolveOnPosix(name: string): Promise<string | undefined> {
+  // `command` is a shell builtin — execFile('command', ...) always throws
+  // (ENOENT), so resolution used to fall through to the bare-name fallback
+  // every time. Run it through `sh` instead.
   try {
-    const { stdout } = await execFileAsync('command', ['-v', name], { encoding: 'utf8' })
+    const { stdout } = await execFileAsync('sh', ['-c', 'command -v "$1"', 'sh', name], {
+      encoding: 'utf8'
+    })
     const out = stdout.split(/\r?\n/).find((l) => l.trim())
     return out?.trim()
   } catch {
@@ -57,11 +62,14 @@ export async function resolveCached(
   const cached = binCache.get(name)
   if (cached) return cached
   const resolved =
-    process.platform === 'win32'
-      ? ((await resolveOnWindows(name)) ?? winFallback)
-      : ((await resolveOnPosix(name)) ?? posixFallback)
-  binCache.set(name, resolved)
-  return resolved
+    process.platform === 'win32' ? await resolveOnWindows(name) : await resolveOnPosix(name)
+  // Only cache a genuinely resolved path. Caching the bare-name fallback
+  // meant a CLI installed later wasn't found until an app restart.
+  if (resolved) {
+    binCache.set(name, resolved)
+    return resolved
+  }
+  return process.platform === 'win32' ? winFallback : posixFallback
 }
 
 /** Resolve the interactive `pi` binary on PATH. Falls back to the bare name. */
@@ -333,3 +341,29 @@ export async function prepareAgentLaunch(
 }
 
 export { buildAgentsMd }
+
+/**
+ * Remove per-session agent temp dirs (`devterm-<kind>-*`) left behind by a
+ * crash or kill — they hold the bridge bearer token, and codex sessions copy
+ * `~/.codex/auth.json` into them. Explicit close already cleans up; this is
+ * the crash-path backstop, called once when the agent IPC module initializes.
+ * Only dirs older than a day are touched so a concurrently running second
+ * instance's live session is never swept.
+ */
+export function sweepStaleAgentTempDirs(maxAgeMs = 24 * 60 * 60 * 1000): void {
+  try {
+    for (const entry of readdirSync(tmpdir())) {
+      if (!/^devterm-(agent|pi|claude|kimi|opencode|grok|codex)-/.test(entry)) continue
+      const full = join(tmpdir(), entry)
+      try {
+        const stat = statSync(full)
+        if (!stat.isDirectory() || Date.now() - stat.mtimeMs < maxAgeMs) continue
+        rmSync(full, { recursive: true, force: true })
+      } catch {
+        /* ignore individual failures */
+      }
+    }
+  } catch {
+    /* tmpdir unreadable — nothing to sweep */
+  }
+}

@@ -305,7 +305,7 @@ function RemoteSessionView({ session }: { session: Session }) {
             )}
           </div>
         </div>
-        {filesOpened && (
+        {filesOpened && !filesSideOpen && (
           <div
             className="view-layer"
             style={{ visibility: view === 'files' ? undefined : 'hidden' }}

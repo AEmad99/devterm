@@ -10,17 +10,55 @@
 // Run with: npm run setup   (after `npm install --ignore-scripts`)
 
 import { execSync } from 'node:child_process'
-import { existsSync, mkdirSync, writeFileSync, rmSync, readdirSync, copyFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import {
+  existsSync,
+  mkdirSync,
+  writeFileSync,
+  readFileSync,
+  rmSync,
+  readdirSync,
+  copyFileSync
+} from 'node:fs'
+import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+
+const require = createRequire(import.meta.url)
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const nm = join(root, 'node_modules')
 
-// node-pty-prebuilt-multiarch version (see the `node-pty` alias in package.json)
-// and the Electron module ABI we pin to (Electron 29 → v121).
+// node-pty-prebuilt-multiarch version (see the `node-pty` alias in package.json).
 const NODE_PTY_VER = '0.13.1'
-const ELECTRON_ABI = 'v121'
+
+// Derive the Electron module ABI from the installed Electron instead of pinning
+// it, so an Electron upgrade doesn't silently keep a wrong-ABI pty.node.
+// node-abi ships with electron-builder; fall back to the known table + warning.
+const resolveElectronAbi = () => {
+  const { version } = JSON.parse(readFileSync(join(nm, 'electron', 'package.json'), 'utf8'))
+  try {
+    const { getAbi } = require('node-abi')
+    return `v${getAbi(version, 'electron')}`
+  } catch {
+    const known = { 28: 119, 29: 121, 30: 123, 31: 125, 32: 128, 33: 130, 34: 132, 35: 135 }
+    const abi = known[Number(version.split('.')[0])]
+    if (!abi) {
+      throw new Error(`node-abi unavailable and Electron ${version} is not in the fallback ABI table`)
+    }
+    console.warn(`! node-abi not resolvable; using fallback ABI v${abi} for Electron ${version}`)
+    return `v${abi}`
+  }
+}
+const ELECTRON_ABI = resolveElectronAbi()
+
+// SHA-256 integrity pins for the downloaded prebuilt tarballs, keyed by ABI
+// (each ABI is a separate upstream artifact). The homebridge releases publish
+// no checksums, so these are pinned from a known-good download; extend the map
+// when the Electron ABI moves and verify the new hash out-of-band.
+const TARBALL_SHA256 = {
+  v121: '992c3ce75d41f9ff87dd539ee719ec8ed8c74f51bd0fe0aa6b02394bc636a066'
+}
 
 // 1) Electron binary
 const electronBin = join(nm, 'electron', 'dist', process.platform === 'win32' ? 'electron.exe' : 'electron')
@@ -31,17 +69,31 @@ if (existsSync(electronBin)) {
   execSync(`node ${JSON.stringify(join(nm, 'electron', 'install.js'))}`, { stdio: 'inherit', cwd: root })
 }
 
-// 2) node-pty native addon for the Electron ABI
+// 2) node-pty native addon for the Electron ABI. A marker file records which
+//    ABI the installed pty.node was built for; a stale binary from an older
+//    Electron (wrong ABI) is re-fetched instead of trusted on sight.
 const ptyBin = join(nm, 'node-pty', 'build', 'Release', 'pty.node')
-if (existsSync(ptyBin)) {
-  console.log('✓ node-pty native binary present')
+const ptyAbiMarker = join(nm, 'node-pty', 'build', 'Release', '.devterm-abi')
+const installedAbi = existsSync(ptyAbiMarker) ? readFileSync(ptyAbiMarker, 'utf8').trim() : null
+if (existsSync(ptyBin) && installedAbi === ELECTRON_ABI) {
+  console.log(`✓ node-pty native binary present (Electron ABI ${ELECTRON_ABI})`)
 } else if (process.platform !== 'win32' || process.arch !== 'x64') {
-  console.warn(
-    '! Auto-fetch covers win32-x64 only. On other platforms install VS Build Tools + Python and run\n' +
-      '  `npx electron-rebuild -f -w node-pty`, or grab the matching prebuilt from\n' +
-      '  https://github.com/homebridge/node-pty-prebuilt-multiarch/releases'
-  )
+  if (existsSync(ptyBin)) {
+    console.warn(
+      `! node-pty binary present but not verified for Electron ABI ${ELECTRON_ABI} (marker: ${installedAbi ?? 'none'}).\n` +
+        '  Auto-fetch covers win32-x64 only; if PTYs fail to load, rebuild with `npx electron-rebuild -f -w node-pty`.'
+    )
+  } else {
+    console.warn(
+      '! Auto-fetch covers win32-x64 only. On other platforms install VS Build Tools + Python and run\n' +
+        '  `npx electron-rebuild -f -w node-pty`, or grab the matching prebuilt from\n' +
+        '  https://github.com/homebridge/node-pty-prebuilt-multiarch/releases'
+    )
+  }
 } else {
+  if (existsSync(ptyBin)) {
+    console.log(`• node-pty binary is stale (ABI ${installedAbi ?? 'unknown'} ≠ ${ELECTRON_ABI}); re-fetching`)
+  }
   const url = `https://github.com/homebridge/node-pty-prebuilt-multiarch/releases/download/v${NODE_PTY_VER}/node-pty-prebuilt-multiarch-v${NODE_PTY_VER}-electron-${ELECTRON_ABI}-win32-x64.tar.gz`
   const tgz = join(root, '.node-pty-prebuilt.tar.gz')
   console.log('• Downloading node-pty prebuilt:\n  ' + url)
@@ -50,11 +102,28 @@ if (existsSync(ptyBin)) {
     console.error(`✗ Download failed (HTTP ${res.status}).`)
     process.exit(1)
   }
-  writeFileSync(tgz, Buffer.from(await res.arrayBuffer()))
+  const tarball = Buffer.from(await res.arrayBuffer())
+  const expectedSha = TARBALL_SHA256[ELECTRON_ABI]
+  const actualSha = createHash('sha256').update(tarball).digest('hex')
+  if (expectedSha) {
+    if (actualSha !== expectedSha) {
+      console.error(`✗ SHA-256 mismatch for ${ELECTRON_ABI} tarball:\n  expected ${expectedSha}\n  actual   ${actualSha}`)
+      process.exit(1)
+    }
+  } else {
+    console.warn(`! No SHA-256 pin for Electron ABI ${ELECTRON_ABI}; verify ${actualSha} out-of-band and add it to TARBALL_SHA256`)
+  }
+  writeFileSync(tgz, tarball)
   mkdirSync(join(nm, 'node-pty', 'build'), { recursive: true })
-  execSync(`tar -xzf ${JSON.stringify(tgz)} -C ${JSON.stringify(join(nm, 'node-pty'))}`, { stdio: 'inherit' })
+  // Git Bash tar chokes on Windows paths (drive colon = remote host, backslash
+  // separators); --force-local + forward slashes keep it happy on every shell.
+  const posix = (p) => p.replace(/\\/g, '/')
+  execSync(`tar --force-local -xzf ${JSON.stringify(posix(tgz))} -C ${JSON.stringify(posix(join(nm, 'node-pty')))}`, {
+    stdio: 'inherit'
+  })
   rmSync(tgz)
-  console.log('✓ node-pty native binary installed')
+  writeFileSync(ptyAbiMarker, ELECTRON_ABI + '\n')
+  console.log(`✓ node-pty native binary installed (Electron ABI ${ELECTRON_ABI})`)
 }
 
 // 3) Bundled ConPTY dll (Windows only). PtyManager forks with `useConptyDll`

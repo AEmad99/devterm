@@ -120,37 +120,47 @@ async function ensureLoaded(modelId: STTModelId): Promise<void> {
   }
 }
 
-self.onmessage = async (e: MessageEvent<STTRequest>): Promise<void> => {
-  const msg = e.data
-  try {
-    if (msg.type === 'load') {
-      await ensureLoaded(msg.modelId)
-      return
-    }
-    if (msg.type === 'transcribe') {
-      post({ type: 'transcribing', id: msg.id })
-      // ensureLoaded is a no-op if the requested model is already resident.
-      await ensureLoaded(msg.modelId)
-      if (!transcriber) throw new Error('Model not loaded')
+// Serialize onmessage work so concurrent transcribe/load messages don't
+// interleave async pipeline calls (and race the shared transcriber).
+let messageChain: Promise<void> = Promise.resolve()
 
-      const out = await transcriber(msg.audio, {
-        // Whisper's native window is 30s; chunking with overlap handles longer
-        // utterances without the caller having to segment.
-        chunk_length_s: 30,
-        stride_length_s: 5,
-        language: msg.language === 'auto' ? undefined : msg.language,
-        task: 'transcribe'
-      })
-      const text = Array.isArray(out)
-        ? out.map((o) => o.text ?? '').join(' ')
-        : (out.text ?? '')
-      post({ type: 'transcript', id: msg.id, text })
-    }
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
-    const id = msg.type === 'transcribe' ? msg.id : undefined
-    // A load failure is fatal (nothing will work); a single transcription
-    // failure is recoverable (the next utterance may succeed).
-    post({ type: 'error', id, message, fatal: msg.type === 'load' })
-  }
+self.onmessage = (e: MessageEvent<STTRequest>): void => {
+  const msg = e.data
+  messageChain = messageChain
+    .catch(() => {
+      /* keep queue alive after a prior failure */
+    })
+    .then(async () => {
+      try {
+        if (msg.type === 'load') {
+          await ensureLoaded(msg.modelId)
+          return
+        }
+        if (msg.type === 'transcribe') {
+          post({ type: 'transcribing', id: msg.id })
+          // ensureLoaded is a no-op if the requested model is already resident.
+          await ensureLoaded(msg.modelId)
+          if (!transcriber) throw new Error('Model not loaded')
+
+          const out = await transcriber(msg.audio, {
+            // Whisper's native window is 30s; chunking with overlap handles longer
+            // utterances without the caller having to segment.
+            chunk_length_s: 30,
+            stride_length_s: 5,
+            language: msg.language === 'auto' ? undefined : msg.language,
+            task: 'transcribe'
+          })
+          const text = Array.isArray(out)
+            ? out.map((o) => o.text ?? '').join(' ')
+            : (out.text ?? '')
+          post({ type: 'transcript', id: msg.id, text })
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        const id = msg.type === 'transcribe' ? msg.id : undefined
+        // A load failure is fatal (nothing will work); a single transcription
+        // failure is recoverable (the next utterance may succeed).
+        post({ type: 'error', id, message, fatal: msg.type === 'load' })
+      }
+    })
 }

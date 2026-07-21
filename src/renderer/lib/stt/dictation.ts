@@ -18,6 +18,8 @@ class DictationController {
   private worker: Worker | null = null
   private capture = new AudioCapture()
   private reqId = 0
+  /** Id of the most recently issued transcribe request; 0 = none in flight. */
+  private lastTranscribeId = 0
   private currentModel: STTModelId | null = null
 
   private setState = useDictation.getState().set
@@ -68,6 +70,7 @@ class DictationController {
     this.setState({ status: 'transcribing', progress: null })
     const worker = this.ensureWorker(stt.modelId)
     const id = ++this.reqId
+    this.lastTranscribeId = id
     const req: STTRequest = { type: 'transcribe', id, modelId: stt.modelId, audio, language: stt.language }
     // Transfer the audio buffer to avoid a copy; it's freshly allocated per
     // utterance by the resampler so detaching it is safe.
@@ -77,6 +80,8 @@ class DictationController {
   /** Abandon a recording without transcribing. */
   cancel(): void {
     this.capture.cancel()
+    // Invalidate any in-flight transcription so its late result is dropped.
+    this.lastTranscribeId = 0
     if (useDictation.getState().status !== 'error') this.setState({ status: 'idle' })
   }
 
@@ -126,9 +131,13 @@ class DictationController {
         })
         break
       case 'transcribing':
+        if (msg.id !== this.lastTranscribeId) break
         this.setState({ status: 'transcribing' })
         break
       case 'transcript': {
+        // Drop results for requests that were cancelled or superseded.
+        if (msg.id !== this.lastTranscribeId) break
+        this.lastTranscribeId = 0
         const { stt } = useSettings.getState()
         const text = msg.text.trim()
         // Whisper hallucinates short tokens on silence; ignore trivial output.
@@ -139,6 +148,10 @@ class DictationController {
         break
       }
       case 'error':
+        // Load errors carry no id and always apply; transcribe errors only
+        // apply when they answer the in-flight request.
+        if (msg.id !== undefined && msg.id !== this.lastTranscribeId) break
+        this.lastTranscribeId = 0
         this.setState({ status: 'error', error: msg.message, progress: null })
         break
     }

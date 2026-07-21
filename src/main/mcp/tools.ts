@@ -298,9 +298,24 @@ export function registerTools(mcp: McpServer, deps: ToolDeps): void {
       try {
         const target = resolvePosix(posixCwd(getCwd), path)
         const sftp = await ssh.getSftp(sessionId)
-        const buf = await new Promise<Buffer>((resolve, reject) =>
-          sftp.readFile(target, (err, data) => (err ? reject(err) : resolve(data as Buffer)))
-        )
+        const cap = max_bytes ?? 200000
+        // Read at most `cap + 1` bytes through an explicit handle instead of
+        // sftp.readFile: readFile streams the ENTIRE remote file into memory
+        // before we capped the output, so a 2 GB log pulled 2 GB across the
+        // wire. The extra byte tells us whether the file continues past cap.
+        const buf = await new Promise<Buffer>((resolve, reject) => {
+          sftp.open(target, 'r', (openErr, handle) => {
+            if (openErr) return reject(openErr)
+            const out = Buffer.alloc(cap + 1)
+            sftp.read(handle, out, 0, cap + 1, 0, (readErr, bytesRead) => {
+              sftp.close(handle, () => {
+                /* best-effort close; surface the read result either way */
+              })
+              if (readErr) return reject(readErr)
+              resolve(out.subarray(0, bytesRead))
+            })
+          })
+        })
         // Guard against binary files: decoding arbitrary bytes as UTF-8 emits
         // U+FFFD noise which the agent then prints into its terminal — the
         // "random gibberish" symptom. Force the agent to use SFTP download for
@@ -312,7 +327,6 @@ export function registerTools(mcp: McpServer, deps: ToolDeps): void {
               `Use SFTP download instead of read_file for binary content.`
           )
         }
-        const cap = max_bytes ?? 200000
         const truncated = buf.length > cap
         return text(
           buf.subarray(0, cap).toString('utf8') +
@@ -350,7 +364,7 @@ export function registerTools(mcp: McpServer, deps: ToolDeps): void {
       if (v.needConfirm) {
         const outcome = await confirmWithActivity(
           'write_file',
-          `${target} (${content.length} bytes)`
+          `${target} (${Buffer.byteLength(content, 'utf8')} bytes)`
         )
         if (outcome === 'timeout')
           return errorText(
@@ -364,7 +378,7 @@ export function registerTools(mcp: McpServer, deps: ToolDeps): void {
         await new Promise<void>((resolve, reject) =>
           sftp.writeFile(target, content, (err) => (err ? reject(err) : resolve()))
         )
-        return text(`wrote ${content.length} bytes to ${target}`)
+        return text(`wrote ${Buffer.byteLength(content, 'utf8')} bytes to ${target}`)
       } catch (e) {
         return errorText(`write_file failed: ${(e as Error).message}`)
       }

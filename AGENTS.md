@@ -4,7 +4,7 @@ Guidance for coding agents working in the DevTerm repository.
 
 DevTerm is an Electron 29 desktop terminal: local shells (prebuilt node-pty), SSH/SFTP sessions, workspaces, file browsing/editing (CodeMirror 6), an in-app browser, snippets, a Warp-style Git panel, a persistent transfer queue, offline Whisper dictation, global terminal search, and an embedded multi-provider **DevTerm Agent** with six external CLI fallbacks (`pi`, `claude`, `opencode`, `kimi`, `grok`, `codex`). Every agent runs in a local PTY and reaches the remote host only through DevTerm's in-process MCP bridge. Stack: electron-vite, TypeScript strict, React 18, Zustand, xterm.js, ssh2, marked + DOMPurify, `@huggingface/transformers`, `@earendil-works/pi-coding-agent` (bundled runtime), dedicated `node` binary for the agent, electron-updater, zod.
 
-**Current version:** `package.json` → `1.3.3`. Top-level views: **Terminals** (always-mounted workspace: group tabs, split panes, local/remote/browser sessions), **Connections**, **Workspaces**, **Snippets**. DevTerm is a normal framed desktop app; the first screen is the terminal, not a marketing page.
+**Current version:** `package.json` → `1.3.4`. Top-level views: **Terminals** (always-mounted workspace: group tabs, split panes, local/remote/browser sessions), **Connections**, **Workspaces**, **Snippets**. DevTerm is a normal framed desktop app; the first screen is the terminal, not a marketing page.
 
 ## Architecture
 
@@ -91,7 +91,7 @@ Bridge & tools:
 - Agent PTY is **not** killed on its own exit — bridge + temp dir stay up for auto-restart after SSH reconnect; cleaned up only on explicit close. Activity log: `bridge-activity.ts` → `AgentActivityPanel.tsx` (filterable, exportable JSONL).
 - Briefings: `src/main/agent/context.ts` writes per-session `AGENTS.md` (host facts, air-gap rules, tool map).
 
-**DevTerm Agent settings (1.3.3):**
+**DevTerm Agent settings (1.3.4):**
 
 - Provider / model preferences, ordered rate-limit fallbacks (`fallbackModels` as `provider/model` pairs), and resume toggle live in Settings → DevTerm Agent (`agentPreferences` in `store/settings.ts`).
 - Credentials never cross DevTerm IPC: OAuth/API keys stay in Pi's auth store (`~/.pi/agent/auth.json`) or process env; `agent:capabilities` reports runtime version, model catalog, and authenticated-provider **presence** only.
@@ -160,7 +160,7 @@ Bridge & tools:
 
 ## Packaging
 
-- Version = `package.json` `version` (currently **1.3.3**).
+- Version = `package.json` `version` (currently **1.3.4**).
 - electron-builder: `appId com.devterm.app`, `productName DevTerm`, NSIS x64 (`oneClick: false`, `perMachine: false`, `allowToChangeInstallationDirectory: true`), unsigned (`verifyUpdateCodeSignature: false`), `npmRebuild: false`, GitHub publish provider `AEmad99/devterm`.
 - `asarUnpack` must include: `node-pty`, `ort/*.wasm`, bundled agent Node binary (`node/bin/**`), `@earendil-works/**`, and the listed agent runtime dependency packages in `electron-builder.yml`. Do not drop those entries or the built-in agent fails to start from the installed app.
 
@@ -183,6 +183,7 @@ Bridge & tools:
 
 ## Recent release notes (for context)
 
+- **1.3.4** — Deep reliability pass: git live status, SOCKS5 handshake, SSH reconnect/forwards/watches, PTY id-reuse, transfer cancel/flush, MCP agent cleanup, packaging size exclusions, TOFU confirm dialog.
 - **1.3.3** — Bundled multi-provider DevTerm Agent (default), provider/model routing + rate-limit fallbacks, resumable agent sessions, SHA-256 pinned skills, Settings performance snapshot, packaging unpack for agent Node runtime, remote detached tmux sessions setting.
 - **1.3.2** — PSReadLine multi-line history fix, ANSI-stripped global search, React #185 Zustand/`useShallow` fixes, welcome hint, ConfirmDialog/useEscapeKey, a11y polish.
 - **1.3.1** — STT worker crash recovery, download/transfer flicker fixes, layout/session guards, hotkey fixes.

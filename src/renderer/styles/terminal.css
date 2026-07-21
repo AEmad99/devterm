@@ -487,9 +487,10 @@
   position: absolute;
   inset: 0;
   z-index: 5; /* above normal term-slots (auto z-index), below the focused slot (6) */
-  background: color-mix(in srgb, var(--bg) 55%, transparent);
-  backdrop-filter: blur(3px);
-  -webkit-backdrop-filter: blur(3px);
+  /* A plain tint, not backdrop-filter: blurring here samples live terminal
+     canvases and pays a full filtered recomposite on every output chunk while
+     focus mode is open. The slightly more opaque tint reads near-identically. */
+  background: color-mix(in srgb, var(--bg) 74%, transparent);
   cursor: zoom-out;
 }
 .term-slot.focused {

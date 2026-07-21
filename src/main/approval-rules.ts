@@ -19,20 +19,41 @@ import type { ApprovalRule } from '@shared/types'
 
 const storeFile = () => join(app.getPath('userData'), 'approval-rules.json')
 
+/** In-memory cache so match() doesn't re-read disk on every run_command. */
+let cached: ApprovalRule[] | null = null
+/** Serialize read-modify-write mutations so concurrent add/remove can't lose rules. */
+let writeChain: Promise<void> = Promise.resolve()
+
 async function readAll(): Promise<ApprovalRule[]> {
+  if (cached) return cached
   try {
     const raw = await fs.readFile(storeFile(), 'utf8')
     const parsed = JSON.parse(raw)
-    return Array.isArray(parsed?.rules) ? (parsed.rules as ApprovalRule[]) : []
+    cached = Array.isArray(parsed?.rules) ? (parsed.rules as ApprovalRule[]) : []
   } catch {
-    return [] // missing or unreadable file → no rules
+    cached = [] // missing or unreadable file → no rules
   }
+  return cached
 }
 
 async function writeAll(rules: ApprovalRule[]): Promise<void> {
+  cached = rules
   const tmp = storeFile() + '.tmp'
   await fs.writeFile(tmp, JSON.stringify({ version: 1, rules }, null, 2), 'utf8')
   await fs.rename(tmp, storeFile()) // atomic replace so a crash mid-write can't corrupt the store
+}
+
+function enqueueWrite(mutate: (all: ApprovalRule[]) => ApprovalRule[] | Promise<ApprovalRule[]>): Promise<void> {
+  const run = writeChain.then(async () => {
+    const all = await readAll()
+    const next = await mutate(all.slice())
+    await writeAll(next)
+  })
+  // Keep the chain alive after failures so later writes aren't stuck.
+  writeChain = run.catch(() => {
+    /* ignore */
+  })
+  return run
 }
 
 export async function list(sessionId?: string): Promise<ApprovalRule[]> {
@@ -45,18 +66,19 @@ export async function list(sessionId?: string): Promise<ApprovalRule[]> {
 }
 
 export async function add(rule: Omit<ApprovalRule, 'id' | 'createdAt'>): Promise<ApprovalRule> {
-  const all = await readAll()
   const entry: ApprovalRule = { ...rule, id: randomUUID(), createdAt: Date.now() }
-  all.push(entry)
-  await writeAll(all)
+  await enqueueWrite((all) => {
+    all.push(entry)
+    return all
+  })
   return entry
 }
 
 export async function remove(id: string): Promise<void> {
-  const all = await readAll()
-  const next = all.filter((r) => r.id !== id)
-  if (next.length === all.length) return // nothing to do
-  await writeAll(next)
+  await enqueueWrite((all) => {
+    const next = all.filter((r) => r.id !== id)
+    return next.length === all.length ? all : next
+  })
 }
 
 /**
@@ -119,7 +141,6 @@ export function matchRules(
       r.sessionId === sessionId &&
       best.sessionId == null
     ) {
-      // Same length, but a session-specific rule beats a global one.
       best = r
     }
   }

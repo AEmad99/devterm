@@ -76,23 +76,37 @@ async function writeAll(list: SavedConnection[]): Promise<void> {
   await fs.chmod(storeFile(), 0o600).catch(() => {})
 }
 
+// Serialize read-modify-write mutations so concurrent saves/deletes can't
+// interleave readAll→writeAll and silently drop entries.
+let mutationQueue: Promise<unknown> = Promise.resolve()
+
+function enqueueMutation<T>(op: () => Promise<T>): Promise<T> {
+  const next = mutationQueue.then(op, op)
+  mutationQueue = next.catch(() => undefined)
+  return next
+}
+
 export function registerConnectionsIpc(): void {
   ipcMain.handle(IPC.connectionsList, () => readAll())
 
-  ipcMain.handle(IPC.connectionsSave, async (_e, conn: SavedConnection) => {
-    const list = await readAll()
-    const id = conn.id || randomUUID()
-    const entry: SavedConnection = { ...conn, id }
-    const idx = list.findIndex((c) => c.id === id)
-    if (idx >= 0) list[idx] = entry
-    else list.push(entry)
-    await writeAll(list)
-    return list
-  })
+  ipcMain.handle(IPC.connectionsSave, (_e, conn: SavedConnection) =>
+    enqueueMutation(async () => {
+      const list = await readAll()
+      const id = conn.id || randomUUID()
+      const entry: SavedConnection = { ...conn, id }
+      const idx = list.findIndex((c) => c.id === id)
+      if (idx >= 0) list[idx] = entry
+      else list.push(entry)
+      await writeAll(list)
+      return list
+    })
+  )
 
-  ipcMain.handle(IPC.connectionsDelete, async (_e, id: string) => {
-    const list = (await readAll()).filter((c) => c.id !== id)
-    await writeAll(list)
-    return list
-  })
+  ipcMain.handle(IPC.connectionsDelete, (_e, id: string) =>
+    enqueueMutation(async () => {
+      const list = (await readAll()).filter((c) => c.id !== id)
+      await writeAll(list)
+      return list
+    })
+  )
 }

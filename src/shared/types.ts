@@ -16,6 +16,13 @@ export interface PtyCreateOptions {
   cwd?: string
   cols: number
   rows: number
+  /**
+   * Optional renderer session id this PTY backs. When present, the main
+   * process keys the global search index (and its cleanup on exit/kill) by
+   * this id instead of the raw PTY id, so search hits match the session the
+   * renderer jumps to.
+   */
+  sessionId?: string
 }
 
 /**
@@ -654,7 +661,7 @@ export const IPC = {
   quickConnectList: 'quick-connect:list',
   quickConnectRecord: 'quick-connect:record',
 
-  // foundation cluster: port forwards (local -L implemented; dynamic -D stubbed)
+  // foundation cluster: port forwards (local -L and dynamic -D SOCKS5)
   portForwardList: 'port-forward:list',
   portForwardAdd: 'port-forward:add',
   portForwardRemove: 'port-forward:remove',
@@ -662,7 +669,10 @@ export const IPC = {
   // git status (read-only) — local and remote (mirrored over the session's exec channel)
   gitStatus: 'git:status',
   gitDiff: 'git:diff',
-  gitOnChange: 'git:on-change', // suffixed :<path>
+  gitOnChange: 'git:on-change', // suffixed :<l:/r: cache key> (see cacheKey in ipc/git.ts)
+  // Fire-and-forget watch registration (ipcRenderer.send → ipcMain.on).
+  gitOnChangeAdd: 'git:on-change:add',
+  gitOnChangeRemove: 'git:on-change:remove',
 
   // git read-side: branches, remotes, log, stash, tags, contributors
   gitBranches: 'git:branches',
@@ -976,11 +986,10 @@ export interface DevTermApi {
     record(host: string, port: number, username: string): Promise<void>
   }
   /**
-   * SSH port forwarding. `list`/`add`/`remove` are all real for local `-L`
+   * SSH port forwarding. `list`/`add`/`remove` cover both local `-L`
    * forwards (`PortForwardManager` opens a `net.Server` on `127.0.0.1` and
-   * pipes through the session's ssh2 `forwardOut`). Dynamic `-D` SOCKS
-   * forwards throw "not implemented yet" inside the manager; the UI hides
-   * the dynamic option accordingly.
+   * pipes through the session's ssh2 `forwardOut`) and dynamic `-D` SOCKS5
+   * forwards (no-auth, CONNECT only — see `port-forward.ts`).
    */
   portForward: {
     list(sessionId?: string): Promise<PortForward[]>

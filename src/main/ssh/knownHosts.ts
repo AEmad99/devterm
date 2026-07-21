@@ -1,6 +1,6 @@
 import { app } from 'electron'
 import { createHash } from 'crypto'
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs'
+import { chmodSync, existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs'
 import { promises as fsp } from 'fs'
 import { dirname, join } from 'path'
 
@@ -42,6 +42,12 @@ function persist(): void {
   const p = storePath()
   mkdirSync(dirname(p), { recursive: true })
   writeFileSync(p, JSON.stringify(cache ?? {}, null, 2), { mode: 0o600 })
+  // mode only applies at creation; re-assert it so perms stay tight.
+  try {
+    chmodSync(p, 0o600)
+  } catch {
+    /* ignore — best effort on exotic filesystems */
+  }
 }
 
 async function persistAsync(): Promise<void> {
@@ -50,26 +56,41 @@ async function persistAsync(): Promise<void> {
   await fsp.writeFile(p, JSON.stringify(cache ?? {}, null, 2), {
     mode: 0o600
   })
+  try {
+    await fsp.chmod(p, 0o600)
+  } catch {
+    /* ignore — best effort */
+  }
 }
 
 export function fingerprintOf(key: Buffer): string {
   return 'SHA256:' + createHash('sha256').update(key).digest('base64').replace(/=+$/, '')
 }
 
-/** Check (and on first use, record) a host key. */
+/**
+ * Check a host key against the store WITHOUT recording it. First-use keys
+ * return `firstUse: true` and are only persisted once the operator explicitly
+ * trusts them via {@link trustHostKey} — see the dialog prompt in
+ * `connection.ts`.
+ */
 export function verifyHostKey(hostId: string, key: Buffer): HostKeyVerdict {
   const store = load()
   const fingerprint = fingerprintOf(key)
   const expected = store[hostId]
   if (!expected) {
-    store[hostId] = fingerprint
-    persist()
     return { ok: true, firstUse: true, fingerprint }
   }
   if (expected !== fingerprint) {
     return { ok: false, fingerprint, expected }
   }
   return { ok: true, firstUse: false, fingerprint }
+}
+
+/** Record a first-use host key after the operator accepted it. */
+export function trustHostKey(hostId: string, fingerprint: string): void {
+  const store = load()
+  store[hostId] = fingerprint
+  persist()
 }
 
 /**

@@ -43,7 +43,6 @@
   --info-bg: color-mix(in srgb, var(--accent) 14%, var(--panel));
   --surface-raised: var(--panel-2);
   --surface-sunk: color-mix(in srgb, var(--panel) 84%, #000);
-  --input-bg: color-mix(in srgb, #000 22%, var(--panel));
 
   --git-modified: var(--status-warn);
   --git-added: var(--status-success);
@@ -71,7 +70,6 @@
      gets cohesive depth: a hairline top highlight on raised surfaces, and a
      slightly sunken tone for gradient bottoms / inset wells. */
   --elevate-hi: color-mix(in srgb, var(--fg) 7%, transparent);
-  --surface-sunk: color-mix(in srgb, var(--panel) 84%, #000);
 
   /* Ambient backdrop intensity — raised to 1 for glass themes by applyTheme. */
   --ambient-strength: 0.55;

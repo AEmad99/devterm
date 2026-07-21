@@ -1,6 +1,6 @@
 import { useSessions } from '../store/sessions'
 import { useLayout } from '../store/layout'
-import { buildGridSnapshot, clampGridSpec, gridCellCount, validateGridSpec } from './grid'
+import { buildGridSnapshot, clampGridSpec, gridCellCount, packIdsAsGrid, validateGridSpec } from './grid'
 import { sendToSession } from './input'
 import { focusTerminal } from './terms'
 
@@ -28,6 +28,13 @@ export type CreateGridRequest = {
   groupName?: string
   /** Optional command to broadcast to every created cell after the grid is ready. */
   broadcast?: CreateGridBroadcast
+  /**
+   * Remote grids finish asynchronously (one SSH connect per cell). When set,
+   * called once all cells have settled with the final result — including any
+   * per-cell failures in `errors`. Local grids never call this (their result
+   * is the synchronous return value).
+   */
+  onSettled?: (result: CreateGridResult) => void
 }
 
 export type CreateGridResult = {
@@ -45,8 +52,8 @@ export type CreateGridResult = {
  * Remote (SSH): one ssh2 client + shell channel per cell (independent
  * connections — the most resilient model; a single disconnect doesn't
  * knock out the whole grid). Each cell must resolve the saved connection
- * up front; if any cells fail, the rest still open and the failures are
- * returned in `errors`.
+ * up front; if any cells fail, the rest still open. Local failures are in the
+ * returned `errors`; remote failures arrive via `onSettled` once cells settle.
  */
 export function createTerminalGrid(req: CreateGridRequest): CreateGridResult {
   const err = validateGridSpec(req)
@@ -77,7 +84,8 @@ export function createTerminalGrid(req: CreateGridRequest): CreateGridResult {
     // Remote: look up the saved connection, then call `connectSsh` per cell.
     // `connectSsh` resolves with the new session id as soon as the session
     // is allocated (before the actual SSH handshake completes); the rest
-    // of the connect lifecycle is owned by the SSH manager.
+    // of the connect lifecycle is owned by the SSH manager. A rejected cell
+    // is recorded in `errors` and the remaining cells still open.
     void (async () => {
       const conns = await window.devterm.connections.list()
       const conn = conns.find((c) => c.id === req.connectionId)
@@ -87,39 +95,55 @@ export function createTerminalGrid(req: CreateGridRequest): CreateGridResult {
       }
       const { id: _id, name: _name, ...profile } = conn
       for (let i = 0; i < count; i++) {
-        const newId = await useSessions
-          .getState()
-          .connectSsh(profile, { connectionId: conn.id, groupId })
-        if (newId) {
-          ids.push(newId)
-        } else {
-          errors.push(`Cell ${i + 1}/${count} failed to open SSH session`)
+        try {
+          const newId = await useSessions
+            .getState()
+            .connectSsh(profile, { connectionId: conn.id, groupId })
+          if (newId) {
+            ids.push(newId)
+          } else {
+            errors.push(`Cell ${i + 1}/${count} failed to open SSH session`)
+          }
+        } catch (e) {
+          errors.push(`Cell ${i + 1}/${count}: ${e instanceof Error ? e.message : String(e)}`)
         }
       }
-      // Once all cells are allocated, restore the grid layout (re-runs with
-      // the actual ids, overwriting the placeholder set above if any).
+      // Once all cells have settled, restore the grid layout with the ids that
+      // actually connected — packed into a near-grid when some cells failed.
       if (ids.length > 0) {
-        const snap = buildGridSnapshot(ids, rows, cols)
-        useLayout.getState().restoreGroup(groupId, name, snap)
-        useSessions.getState().setActive(ids[0])
-        maybeBroadcast(ids, req, 'remote')
+        const snap = packIdsAsGrid(ids, cols)
+        if (snap) {
+          useLayout.getState().restoreGroup(groupId, name, snap)
+          useSessions.getState().setActive(ids[0])
+          maybeBroadcast(ids, req, 'remote')
+        }
       }
     })()
+      .catch((e) => {
+        errors.push(e instanceof Error ? e.message : String(e))
+      })
+      .finally(() => {
+        req.onSettled?.({
+          groupId,
+          sessionIds: [...ids],
+          requested: count,
+          created: ids.length,
+          errors: [...errors]
+        })
+      })
   }
 
-  // Build an initial layout with the cells we've already allocated. For
-  // local, this is the final snapshot. For remote, it's overwritten once
-  // all cells connect — but keeping a placeholder prevents the user from
-  // seeing an empty group before the first SSH handshake resolves.
-  if (ids.length > 0) {
+  // Local grids are fully allocated synchronously, so this is the final
+  // snapshot. Remote grids have no ids yet — their layout is restored by the
+  // async path above once the SSH cells settle.
+  if (req.kind === 'local' && ids.length > 0) {
     const snap = buildGridSnapshot(ids, rows, cols)
     useLayout.getState().restoreGroup(groupId, name, snap)
     useSessions.getState().setActive(ids[0])
+    maybeBroadcast(ids, req, 'local')
   }
 
-  maybeBroadcast(ids, req, req.kind === 'local' ? 'local' : 'remote')
-
-  return { groupId, sessionIds: ids, requested: count, created: ids.length, errors }
+  return { groupId, sessionIds: ids, requested: count, created: ids.length, errors: [...errors] }
 }
 
 /**

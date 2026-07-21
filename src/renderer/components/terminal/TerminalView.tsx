@@ -92,7 +92,10 @@ function applyHostBg(host: HTMLElement, bg: TerminalBg, theme: Theme): void {
   host.style.backgroundColor = terminalHostColor(theme)
   if (bg.image) {
     const d = Math.max(0, Math.min(0.85, bg.dim))
-    host.style.backgroundImage = `linear-gradient(rgba(0,0,0,${d}),rgba(0,0,0,${d})), url("${bg.image}")`
+    // Strip quotes/backslashes so a hostile path can't break out of the CSS
+    // url("…") declaration.
+    const url = bg.image.replace(/["\\]/g, '')
+    host.style.backgroundImage = `linear-gradient(rgba(0,0,0,${d}),rgba(0,0,0,${d})), url("${url}")`
     host.style.backgroundSize = 'cover'
     host.style.backgroundPosition = 'center'
     host.style.backgroundRepeat = 'no-repeat'
@@ -180,7 +183,15 @@ function TerminalView({ session }: { session: Session }) {
         /* ignore — search seeding must not break the terminal */
       }
     }
-    setTimeout(seedSearch, 0)
+    // Deferred so mount finishes first; cancelled on unmount, and gated on the
+    // session still being live so a stale timer can't seed a closed session or
+    // clobber the live-ingested index record of a remounted one.
+    const seedTimer = window.setTimeout(() => {
+      if (disposed) return
+      const live = useSessions.getState().sessions.find((s) => s.id === session.id)
+      if (!live || live.closed) return
+      seedSearch()
+    }, 0)
 
     const disposeRenderer = attachRenderer(term)
     const disposeClipboard = attachClipboard(term, host)
@@ -408,6 +419,14 @@ function TerminalView({ session }: { session: Session }) {
       cleanups.push(fitSoon(fit, host, notify))
     }
 
+    // Register keystroke handling synchronously at mount so input typed while a
+    // local PTY is still spawning isn't dropped — `sendInput` queues until the
+    // backend is wired (grid broadcast/snippets rely on the same queue).
+    term.onData((d) => {
+      onUserInput(d)
+      sendInput(d)
+    })
+
     if (session.kind === 'local') {
       ;(async () => {
         const { id, cwd: spawnCwd } = await window.devterm.pty.create({
@@ -473,13 +492,11 @@ function TerminalView({ session }: { session: Session }) {
         // broadcast sent while TerminalView was still mounting).
         for (const d of inputQueue) sendInput(d)
         inputQueue.length = 0
-        term.onData((d) => {
-          onUserInput(d)
-          window.devterm.pty.input(ptyId, d)
-        })
         wireResize((c, r) => window.devterm.pty.resize(id, c, r))
         cleanups.push(() => window.devterm.pty.kill(id))
-      })()
+      })().catch((e) => {
+        term.write(`\r\n\x1b[31m[failed to start shell: ${String(e)}]\x1b[0m\r\n`)
+      })
     } else {
       const sid = session.id
       // Subscribe before opening the shell so the login banner isn't missed.
@@ -509,15 +526,12 @@ function TerminalView({ session }: { session: Session }) {
           term.write(`\r\n\x1b[31m[failed to open shell: ${String(e)}]\x1b[0m\r\n`)
         })
       sendInput = (d) => window.devterm.ssh.input(sid, d)
-      term.onData((d) => {
-        onUserInput(d)
-        window.devterm.ssh.input(sid, d)
-      })
       wireResize((c, r) => window.devterm.ssh.resize(sid, c, r))
     }
 
     return () => {
       disposed = true
+      clearTimeout(seedTimer)
       suggest.dispose()
       suggestRef.current = null
       cleanups.forEach((fn) => fn())
@@ -564,8 +578,14 @@ function TerminalView({ session }: { session: Session }) {
     term.options.scrollback = prefs.scrollback
     // scrollSensitivity is an xterm init-only option (constructor only), so it
     // applies to newly opened terminals rather than updating live here.
+    const prevCols = term.cols
+    const prevRows = term.rows
     if (fitRef.current && fitNow(fitRef.current, host)) {
-      resizeRef.current?.(term.cols, term.rows)
+      // Only push a backend resize when the grid actually changed — a pure
+      // cursorBlink-style toggle must not make PSReadLine repaint its prompt.
+      if (term.cols !== prevCols || term.rows !== prevRows) {
+        resizeRef.current?.(term.cols, term.rows)
+      }
     }
     // Refresh the per-terminal bell cache so the writeData hot path can skip
     // its indexOf scan when the user has bells disabled.

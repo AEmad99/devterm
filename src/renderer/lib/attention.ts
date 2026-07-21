@@ -139,6 +139,11 @@ export function signalAttention(sessionId: string, notice: AttentionNotice): voi
   const now = Date.now()
   if (now - (lastSignalAt.get(sessionId) ?? 0) < DEBOUNCE_MS) return
   lastSignalAt.set(sessionId, now)
+  // Prune entries past the debounce window so the map doesn't grow with every
+  // session id ever seen (ids are never removed on session close otherwise).
+  for (const [id, at] of lastSignalAt) {
+    if (now - at > DEBOUNCE_MS) lastSignalAt.delete(id)
+  }
 
   // Wrapped so a failure here can never break the terminal data path that calls
   // us (this runs before term.write in the sink).

@@ -38,7 +38,6 @@ const ALLOWED_ATTR = [
   'alt',
   'title',
   'class',
-  'id',
   'type',
   'checked',
   'disabled',
@@ -51,12 +50,13 @@ const SAFE_HREF_RE = /^(https?:|mailto:|#)/i
 const DATA_IMAGE_RE = /^data:image\//i
 
 function slugify(text: string): string {
-  return text
+  const base = text
     .trim()
     .toLowerCase()
     .replace(/[^\w\s-]/g, '')
     .replace(/[\s_-]+/g, '-')
     .replace(/^-+|-+$/g, '')
+  return base || 'heading'
 }
 
 interface SanitizeConfig {
@@ -113,7 +113,7 @@ function getPurify(): Purifier {
       }
     })
 
-    purify.addHook('uponSanitizeAttribute', (_node: Element, data: SanitizeAttributeData) => {
+    purify.addHook('uponSanitizeAttribute', (node: Element, data: SanitizeAttributeData) => {
       if (data.attrName === 'href') {
         const value = data.attrValue.trim()
         if (SAFE_HREF_RE.test(value)) return
@@ -122,6 +122,13 @@ function getPurify(): Purifier {
         const value = data.attrValue.trim()
         if (DATA_IMAGE_RE.test(value)) return
         data.keepAttr = false
+      } else if (data.attrName === 'id') {
+        // Only keep heading ids we generated (slug format). Drop id on every
+        // other element to avoid DOM clobbering via crafted markdown.
+        const tag = node.tagName?.toLowerCase?.() ?? ''
+        if (!/^h[1-6]$/.test(tag) || !/^[a-z0-9-]+$/.test(data.attrValue)) {
+          data.keepAttr = false
+        }
       }
     })
   }
@@ -133,7 +140,8 @@ marked.use({
   renderer: {
     heading(token: Tokens.Heading) {
       const text = this.parser.parseInline(token.tokens)
-      const id = slugify(token.raw)
+      // Use the plain heading text (not token.raw, which includes the # marks).
+      const id = slugify(token.text)
       return `<h${token.depth} id="${id}">${text}</h${token.depth}>\n`
     }
   }
@@ -147,9 +155,11 @@ export function renderMarkdownToSafeHtml(source: string): string {
     pedantic: false
   }) as string
 
+  // `id` is allowed only for headings — the uponSanitizeAttribute hook strips
+  // it from every other element.
   return getPurify().sanitize(dirty, {
     ALLOWED_TAGS: [...ALLOWED_TAGS],
-    ALLOWED_ATTR: [...ALLOWED_ATTR],
+    ALLOWED_ATTR: [...ALLOWED_ATTR, 'id'],
     ALLOW_DATA_ATTR: false,
     ALLOW_UNKNOWN_PROTOCOLS: false
   })

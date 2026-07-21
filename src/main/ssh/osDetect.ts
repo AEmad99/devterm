@@ -15,14 +15,31 @@ function exec(
         resolve(r)
       }
     }
-    const timer = setTimeout(() => done({ stdout: '', stderr: 'timeout', code: null }), timeoutMs)
+    // After a timeout the stream may keep running on the host; drop our
+    // listeners so we don't buffer its output forever.
+    const detach = (stream?: import('ssh2').ClientChannel) => {
+      if (!stream) return
+      stream.removeAllListeners('data')
+      stream.stderr.removeAllListeners('data')
+    }
+    let streamRef: import('ssh2').ClientChannel | undefined
+    const stdoutChunks: Buffer[] = []
+    const stderrChunks: Buffer[] = []
+    const timer = setTimeout(() => {
+      detach(streamRef)
+      try {
+        streamRef?.close()
+      } catch {
+        /* ignore */
+      }
+      done({ stdout: '', stderr: 'timeout', code: null })
+    }, timeoutMs)
     client.exec(command, (err, stream) => {
       if (err) {
         clearTimeout(timer)
         return done({ stdout: '', stderr: String(err.message || err), code: null })
       }
-      const stdoutChunks: Buffer[] = []
-      const stderrChunks: Buffer[] = []
+      streamRef = stream
       stream
         .on('close', (c: number) => {
           clearTimeout(timer)
@@ -32,8 +49,12 @@ function exec(
           const stderr = Buffer.concat(stderrChunks).toString('utf8')
           done({ stdout, stderr, code: c ?? null })
         })
-        .on('data', (d: Buffer) => stdoutChunks.push(d))
-        .stderr.on('data', (d: Buffer) => stderrChunks.push(d))
+        .on('data', (d: Buffer) => {
+          if (!settled) stdoutChunks.push(d)
+        })
+        .stderr.on('data', (d: Buffer) => {
+          if (!settled) stderrChunks.push(d)
+        })
     })
   })
 }

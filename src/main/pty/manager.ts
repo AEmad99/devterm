@@ -205,7 +205,12 @@ export class PtyManager {
     const baseEnv: Record<string, string> = {}
     for (const [k, v] of Object.entries(process.env)) {
       if (v == null) continue
-      if (k.startsWith('ELECTRON_') || k.startsWith('NODE_') || k === 'VITE_DEV_SERVER_URL')
+      const upper = k.toUpperCase()
+      if (
+        upper.startsWith('ELECTRON_') ||
+        upper.startsWith('NODE_') ||
+        upper === 'VITE_DEV_SERVER_URL'
+      )
         continue
       baseEnv[k] = v
     }
@@ -224,7 +229,24 @@ export class PtyManager {
       // dll isn't on disk, rather than throwing. Ignored on non-Windows.
       useConptyDll: USE_CONPTY_DLL
     }
-    const proc = pty.spawn(shell, args, ptyOpts)
+    const proc = (() => {
+      try {
+        return pty.spawn(shell, args, ptyOpts)
+      } catch (err) {
+        // node-pty can throw synchronously (bad custom shell path, missing cwd,
+        // invalid dimensions). That path bypasses the exit-based startup-failure
+        // diagnostic below, so surface the same structured event here before the
+        // error propagates to the IPC caller.
+        try {
+          this.handlers.onStartupFailure?.(id, { shell, exitCode: undefined, signal: undefined })
+          // onStartupFailure is documented as always paired with onExit.
+          this.handlers.onExit(id, undefined)
+        } catch {
+          /* diagnostics must never mask the original spawn error */
+        }
+        throw err
+      }
+    })()
 
     // Startup-failure diagnostic: if the shell exits before emitting any *real*
     // output (Windows PowerShell 5.1's 0x8009001d is the canonical case — the
@@ -254,6 +276,11 @@ export class PtyManager {
       this.handlers.onData(id, data)
     })
     proc.onExit(({ exitCode, signal }) => {
+      // Stale-exit guard: ids can be reused (agent auto-restart re-creates a PTY
+      // with the same id after kill() removed it). If the map now holds a NEWER
+      // process for this id, this exit belongs to the old process — it must not
+      // fire events against, or delete, the live replacement.
+      if (this.ptys.get(id) !== proc) return
       // If we never saw real output, this is a startup failure — surface it.
       if (!healthHealthy && this.handlers.onStartupFailure) {
         this.handlers.onStartupFailure(id, { shell, exitCode, signal })
@@ -306,6 +333,11 @@ export class PtyManager {
       }
       this.ptys.delete(id)
     }
+    // Drop exit listeners even if kill() threw or the exit event never arrives —
+    // otherwise a leaked Set survives id reuse and fires against a later PTY.
+    // Listeners are not invoked here: kill() is an explicit teardown, and the
+    // process's own onExit (guarded against stale ids) owns listener fan-out.
+    this.exitListeners.delete(id)
   }
 
   killAll(): void {

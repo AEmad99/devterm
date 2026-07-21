@@ -38,33 +38,41 @@ export default function StatusBar() {
   const [git, setGit] = useState<GitStatus | null>(null)
   const [latency, setLatency] = useState<{ ms: number | null; err?: string } | null>(null)
 
+  // Depend on primitives only — the whole `active` object is replaced on every
+  // store update (cwd tick, status, agent bridge), which would re-subscribe
+  // git watchers and restart the latency loop with an immediate SSH exec.
+  const activeId = active?.id
+  const activeKind = active?.kind
+  const activeCwd = active?.cwd
+  const activeClosed = active?.closed
+
   // Local sessions: lazy-fetch git status for the cwd.
   useEffect(() => {
     if (!showStatusBar) return
-    if (!active || active.kind !== 'local' || !active.cwd) {
+    if (activeKind !== 'local' || !activeCwd) {
       setGit(null)
       return
     }
     let cancelled = false
     setGit(null)
-    void window.devterm.git.status({ path: active.cwd }).then((s) => {
+    void window.devterm.git.status({ path: activeCwd }).then((s) => {
       if (!cancelled) setGit(s)
     })
-    const off = window.devterm.git.onChange({ path: active.cwd }, (s) => {
+    const off = window.devterm.git.onChange({ path: activeCwd }, (s) => {
       if (!cancelled) setGit(s)
     })
-    window.devterm.git.watch({ path: active.cwd })
+    window.devterm.git.watch({ path: activeCwd })
     return () => {
       cancelled = true
       off()
     }
-  }, [showStatusBar, active])
+  }, [showStatusBar, activeKind, activeCwd])
 
   // Remote sessions: probe latency with exponential backoff on failure.
   const backoffRef = useRef(SSH_PING_INITIAL_MS)
   useEffect(() => {
     if (!showStatusBar) return
-    if (!active || active.kind !== 'remote' || active.closed) {
+    if (activeKind !== 'remote' || !activeId || activeClosed) {
       setLatency(null)
       return
     }
@@ -74,8 +82,8 @@ export default function StatusBar() {
       if (cancelled) return
       const t0 = Date.now()
       try {
-        if (active.cwd) {
-          await window.devterm.git.status({ sessionId: active.id, path: active.cwd })
+        if (activeCwd) {
+          await window.devterm.git.status({ sessionId: activeId, path: activeCwd })
         }
         if (!cancelled) {
           setLatency({ ms: Date.now() - t0 })
@@ -94,7 +102,7 @@ export default function StatusBar() {
       cancelled = true
       if (timer) clearTimeout(timer)
     }
-  }, [showStatusBar, active])
+  }, [showStatusBar, activeKind, activeId, activeCwd, activeClosed])
 
   if (!showStatusBar || zenMode) return null
   if (!active) {

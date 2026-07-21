@@ -211,12 +211,19 @@ export default function TerminalLayout({
     const up = () => {
       if (raf) cancelAnimationFrame(raf)
       if (cur !== last) resize(splitId, index, (cur - last) / span) // settle final delta
-      el.releasePointerCapture(e.pointerId)
+      // Capture may already be lost (e.g. after pointercancel) — releasing then throws.
+      try {
+        if (el.hasPointerCapture(e.pointerId)) el.releasePointerCapture(e.pointerId)
+      } catch {
+        /* capture already released */
+      }
       window.removeEventListener('pointermove', move)
       window.removeEventListener('pointerup', up)
+      window.removeEventListener('pointercancel', up)
     }
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', up)
+    window.addEventListener('pointercancel', up)
   }
 
   const slotBodyStyle = (rect: Rect): React.CSSProperties => ({

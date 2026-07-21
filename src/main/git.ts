@@ -41,11 +41,19 @@ const MAX_ENTRIES = 5000
 function pickStatus(index: string, worktree: string): GitFileStatus {
   // Untracked / ignored — porcelain emits '?' / '!' in the second column.
   if (worktree === '?' || worktree === '!') return '?'
-  // Conflicts ('U'/'AA'/'DD' etc.) — surface as 'U' for the badge.
+  // Real unmerged/conflict codes only (not AM/AD/RM, which are normal
+  // staged-then-edited / staged-add-then-deleted pairs).
+  const xy = index + worktree
   if (
+    xy === 'UU' ||
+    xy === 'AA' ||
+    xy === 'DD' ||
+    xy === 'AU' ||
+    xy === 'UA' ||
+    xy === 'DU' ||
+    xy === 'UD' ||
     worktree === 'U' ||
-    index === 'U' ||
-    (index !== ' ' && worktree !== ' ' && index !== worktree)
+    index === 'U'
   )
     return 'U'
   // Rename (worktree 'R') — only the short path is parsed below; the badge
@@ -67,9 +75,8 @@ function parsePorcelainLine(line: string): { status: GitFileStatus; relPath: str
   const index = line[0] ?? ' '
   const worktree = line[1] ?? ' '
   let rel = line.slice(3)
-  // Renames append " -> newPath"; the user-visible "from" path is more useful
-  // for tree badges (the new path gets its own status from a separate line in
-  // the same run, but collapsing to the source keeps the filter deterministic).
+  // Renames append " -> newPath"; use the destination path (after the arrow)
+  // so the tree badge lands on the file the user will see in the working tree.
   if (worktree === 'R' || index === 'R') {
     const arrow = rel.indexOf(' -> ')
     if (arrow !== -1) rel = rel.slice(arrow + 4)
@@ -615,8 +622,10 @@ function logArgs(opts: { maxCount?: number; ref?: string; file?: string }): stri
     '--no-color',
     `--format=${LOG_FORMAT}`
   ]
-  if (opts.file) args.push('--', opts.file)
+  // Revision must come BEFORE `-- <path>` or git treats the ref as a pathspec
+  // and per-file history silently always shows HEAD.
   args.push(...range)
+  if (opts.file) args.push('--', opts.file)
   return args
 }
 

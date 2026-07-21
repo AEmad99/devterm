@@ -1,8 +1,12 @@
+import { dialog } from 'electron'
 import { readFileSync } from 'fs'
 import { Socket } from 'net'
 import { Client, type ConnectConfig } from 'ssh2'
 import type { SSHHop, SSHStatus } from '@shared/types'
-import { verifyHostKey } from './knownHosts'
+import { trustHostKey, verifyHostKey } from './knownHosts'
+
+/** How long a bare TCP connect may take before we give up (OS SYN timeouts run ~2min). */
+const TCP_CONNECT_TIMEOUT_MS = 15000
 
 function authConfig(hop: SSHHop): Partial<ConnectConfig> {
   const cfg: Partial<ConnectConfig> = {}
@@ -28,13 +32,46 @@ function tcpNoDelay(host: string, port: number): Promise<Socket> {
       socket.destroy()
       reject(err)
     }
+    // Black-holed hosts never answer SYN, and ssh2's readyTimeout only starts
+    // AFTER the socket connects — cap the dial ourselves.
+    const onTimeout = () => {
+      socket.destroy()
+      reject(new Error(`TCP connect to ${host}:${port} timed out`))
+    }
+    socket.setTimeout(TCP_CONNECT_TIMEOUT_MS)
+    socket.once('timeout', onTimeout)
     socket.once('error', onError)
     socket.connect(port, host, () => {
+      socket.setTimeout(0)
+      socket.removeListener('timeout', onTimeout)
       socket.setNoDelay(true)
       socket.removeListener('error', onError)
       resolve(socket)
     })
   })
+}
+
+/**
+ * Ask the operator to trust a first-use host key (TOFU). The SHA256
+ * fingerprint is shown so it can be compared out-of-band. Resolves true only
+ * when the user explicitly accepts.
+ */
+async function promptTrustHostKey(hostId: string, fingerprint: string): Promise<boolean> {
+  const { response } = await dialog.showMessageBox({
+    type: 'warning',
+    title: 'Trust new SSH host key?',
+    message: `Trust new SSH host key for ${hostId}?`,
+    detail:
+      `This is the first time DevTerm connects to this host.\n\n` +
+      `Fingerprint: ${fingerprint}\n\n` +
+      `Verify this fingerprint out-of-band before trusting it. It will be stored in known_hosts and ` +
+      `future connections will warn if it changes.`,
+    buttons: ['Trust and save', 'Reject'],
+    defaultId: 1,
+    cancelId: 1,
+    noLink: true
+  })
+  return response === 0
 }
 
 /** Connect one hop (optionally tunneled through an existing `sock`). */
@@ -65,14 +102,12 @@ async function connectHop(
       sock: transport as ConnectConfig['sock'],
       keepaliveInterval: 15000,
       readyTimeout: 20000,
-      // Host-key verification (§7.1): TOFU with mismatch rejection.
+      // Host-key verification (§7.1): TOFU with operator confirmation on
+      // first use and mismatch rejection. ssh2 allows `verify` to be called
+      // asynchronously, so the confirm dialog can resolve later.
       hostVerifier: (key: Buffer, verify: (valid: boolean) => void) => {
         const verdict = verifyHostKey(hostId, key)
-        if (verdict.ok) {
-          if (verdict.firstUse)
-            onStatus({ type: 'hostkey-new', host: hostId, fingerprint: verdict.fingerprint })
-          verify(true)
-        } else {
+        if (!verdict.ok) {
           onStatus({
             type: 'hostkey-mismatch',
             host: hostId,
@@ -80,7 +115,24 @@ async function connectHop(
             expected: verdict.expected
           })
           verify(false)
+          return
         }
+        if (!verdict.firstUse) {
+          verify(true)
+          return
+        }
+        // First contact: only trust the key after the operator confirms.
+        void promptTrustHostKey(hostId, verdict.fingerprint)
+          .then((trusted) => {
+            if (trusted) {
+              trustHostKey(hostId, verdict.fingerprint)
+              onStatus({ type: 'hostkey-new', host: hostId, fingerprint: verdict.fingerprint })
+            } else {
+              onStatus({ type: 'error', message: `Host key for ${hostId} rejected by operator` })
+            }
+            verify(trusted)
+          })
+          .catch(() => verify(false))
       }
     })
   })

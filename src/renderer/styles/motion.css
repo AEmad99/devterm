@@ -102,6 +102,16 @@
     animation: dt-ambient-b 62s ease-in-out infinite alternate;
   }
 
+  /* Glass themes sample the ambient layer through ~20 backdrop-filter blurs,
+     so animating it forces every frosted region to recomposite on every frame,
+     forever — even when the app is idle. Keep the blooms static under glass
+     (the blur alone carries the effect); solid themes keep the drift since
+     nothing samples the backdrop there. */
+  :root[data-glass='on'] .app::before,
+  :root[data-glass='on'] .app::after {
+    animation: none;
+  }
+
   /* --- Overlay entrances: backdrop fades, panel scales up.
      These mount fresh on each open, so the keyframe plays once per open. --- */
   .modal-backdrop {

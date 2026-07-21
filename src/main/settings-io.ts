@@ -366,7 +366,21 @@ export async function importAll(
   if (!bundle || bundle.version !== 1) {
     return { ok: false, error: 'Unsupported bundle version' }
   }
+  // Validate array fields before writing anything so a malformed bundle can't
+  // partially replace snippets/workspaces/rules then fail mid-way.
+  if (!Array.isArray(bundle.snippets)) {
+    return { ok: false, error: 'Invalid bundle: snippets must be an array' }
+  }
+  if (!Array.isArray(bundle.workspaces)) {
+    return { ok: false, error: 'Invalid bundle: workspaces must be an array' }
+  }
+  if (!Array.isArray(bundle.approvalRules)) {
+    return { ok: false, error: 'Invalid bundle: approvalRules must be an array' }
+  }
   try {
+    // Drop any debounced pre-import snapshot so it can't overwrite the
+    // imported settings.json after we write.
+    pendingSnapshot = null
     // Always merge missing fields with the renderer's defaults so an older
     // bundle (with only themeId/terminalBg/prefs/autoReconnect) still
     // produces a complete snapshot for the renderer to apply.

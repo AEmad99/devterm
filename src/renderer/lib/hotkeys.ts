@@ -21,6 +21,7 @@ export type HotkeyId =
   | 'clearTerminal'
   | 'zoomIn'
   | 'zoomInAlt'
+  | 'zoomInAlt2'
   | 'zoomOut'
   | 'zoomReset'
   | 'settings'
@@ -59,7 +60,7 @@ export const HOTKEYS: Hotkey[] = [
   { id: 'clearTerminal', mod: true, shift: true, key: 'l', label: 'Clear terminal' },
   { id: 'zoomIn', mod: true, key: '=', label: 'Increase font size' },
   { id: 'zoomInAlt', mod: true, shift: true, key: '+', label: 'Increase font size', alias: true },
-  { id: 'zoomInAlt', mod: true, key: '+', label: 'Increase font size', alias: true },
+  { id: 'zoomInAlt2', mod: true, key: '+', label: 'Increase font size', alias: true },
   { id: 'zoomOut', mod: true, key: '-', label: 'Decrease font size' },
   { id: 'zoomReset', mod: true, key: '0', label: 'Reset font size' },
   { id: 'nextTerminal', mod: true, key: 'PageDown', label: 'Next terminal' },

@@ -189,6 +189,9 @@ function createWindow(): void {
   })
 
   mainWindow.on('ready-to-show', () => mainWindow?.show())
+  mainWindow.on('closed', () => {
+    mainWindow = null
+  })
 
   // Stop the attention taskbar flash as soon as the operator comes back to the
   // window (Windows usually auto-clears on activate, but be explicit so a flash
@@ -261,7 +264,15 @@ function registerIpc(): void {
   // Global search handler (MVP)
   ipcMain.handle(IPC.searchQuery, (_e, q: string) => globalSearchIndex.query(q))
   ipcMain.handle(IPC.searchSeed, (_e, sessionId: string, lines: string[]) => {
-    globalSearchIndex.seedLines(sessionId, lines, sessionId)
+    // Untrusted renderer input: cap both the number of lines and per-line size
+    // so a runaway seed can't blow up the in-memory index (which itself keeps
+    // at most 2000 lines per session).
+    if (typeof sessionId !== 'string' || !Array.isArray(lines)) return
+    const capped = lines
+      .filter((l): l is string => typeof l === 'string')
+      .slice(-2000)
+      .map((l) => (l.length > 4000 ? l.slice(0, 4000) : l))
+    globalSearchIndex.seedLines(sessionId, capped, sessionId)
   })
 }
 
@@ -322,6 +333,9 @@ if (process.argv.includes('--self-test')) {
       contents.on('will-attach-webview', (_evt, webPreferences) => {
         delete webPreferences.preload
         webPreferences.nodeIntegration = false
+        webPreferences.webSecurity = true
+        webPreferences.contextIsolation = true
+        webPreferences.allowRunningInsecureContent = false
       })
       if (contents.getType() === 'webview') {
         // A guest page opening a new window (target=_blank, window.open, "open in
@@ -407,16 +421,33 @@ if (process.argv.includes('--self-test')) {
     if (process.platform !== 'darwin') app.quit()
   })
 
-  app.on('before-quit', () => {
-    agentController?.closeAll()
+  // Quit cleanup must actually finish before the process exits: the transfer
+  // store, settings snapshot, and search tail all persist asynchronously, and
+  // fire-and-forget promises lose those writes when Electron quits. Intercept
+  // the first before-quit, await every async shutdown behind a watchdog, then
+  // exit for real. `quitPrepared` guards against re-entry (app.exit re-fires
+  // before-quit).
+  let quitPrepared = false
+  app.on('before-quit', (event) => {
+    if (quitPrepared) return
+    quitPrepared = true
+    event.preventDefault()
+    // Fast synchronous teardown stays synchronous.
     fileController?.stopWatches()
     ptyManager?.killAll()
     sshManager?.disconnectAll()
-    // Cluster D: persist the transfer queue and the browser zoom map.
-    void transfersController?.shutdown()
-    void browserController?.shutdown()
-    // Optional persistent search tail (when search.persist is on).
-    void flushPersist()
-    void flushScheduledSnapshot()
+    const watchdog = setTimeout(() => app.exit(0), 5000)
+    void (async () => {
+      await Promise.allSettled([
+        agentController?.closeAll() ?? Promise.resolve(),
+        transfersController?.shutdown() ?? Promise.resolve(),
+        browserController?.shutdown() ?? Promise.resolve(),
+        // Optional persistent search tail (when search.persist is on).
+        flushPersist(),
+        flushScheduledSnapshot()
+      ])
+      clearTimeout(watchdog)
+      app.exit(0)
+    })()
   })
 }

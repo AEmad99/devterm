@@ -226,8 +226,11 @@ export const useSessions = create<SessionState>((set, get) => ({
             ? s.activeId
             : s.sessions[0]?.id ?? null
         if (!stillPending) {
+          // The tab was closed while connect was in flight (pending- close skips
+          // disconnect): tear down the ssh2 client we just established.
           dispose()
           statusDisposers.delete(sessionId)
+          window.devterm.ssh.disconnect(sessionId)
         }
         return {
           sessions: s.sessions.map((x) =>

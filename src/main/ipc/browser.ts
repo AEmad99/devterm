@@ -7,6 +7,7 @@ import {
   webContents
 } from 'electron'
 import type { DownloadItem } from 'electron'
+import { existsSync } from 'fs'
 import { join } from 'path'
 import { IPC, type BrowserDownloadItem } from '@shared/types'
 import { BrowserZoomStore } from '../browser-zoom'
@@ -64,7 +65,8 @@ export function registerBrowserIpc(getWindow: () => BrowserWindow | null): {
     sess.on('will-download', (_event, item) => {
       const defaultDir = join(userData, 'Downloads')
       const filename = item.getFilename() || 'download'
-      const savePath = join(defaultDir, filename)
+      // Uniquify so two same-name downloads don't clobber each other.
+      const savePath = uniqueDownloadPath(defaultDir, filename)
       item.setSavePath(savePath)
       const id = synthId()
       const rec: BrowserDownloadItem = {
@@ -187,6 +189,19 @@ export function registerBrowserIpc(getWindow: () => BrowserWindow | null): {
 
 function synthId(): string {
   return `dl-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+}
+
+/** `name.ext` → `name (1).ext`, `name (2).ext`, … until the path is free. */
+function uniqueDownloadPath(dir: string, filename: string): string {
+  let candidate = join(dir, filename)
+  if (!existsSync(candidate)) return candidate
+  const dot = filename.lastIndexOf('.')
+  const base = dot > 0 ? filename.slice(0, dot) : filename
+  const ext = dot > 0 ? filename.slice(dot) : ''
+  for (let i = 1; ; i++) {
+    candidate = join(dir, `${base} (${i})${ext}`)
+    if (!existsSync(candidate)) return candidate
+  }
 }
 
 function mapState(

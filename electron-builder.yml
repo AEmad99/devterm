@@ -6,9 +6,24 @@ directories:
 files:
   - out/**/*
   - package.json
-  # Trim debug symbols and prebuilds for other platforms from the Windows build.
+  # Trim debug symbols (node-pty's linux prebuilds are excluded per-platform, see win.files).
   - '!**/*.pdb'
-  - '!**/node_modules/node-pty/prebuilds/linux-*/**'
+  # Build artifacts and unused native/runtime packages that bloat every installer:
+  # agent .js.map/.d.ts.map sources maps are never needed at runtime.
+  - '!**/*.map'
+  # STT runs entirely in the renderer on onnxruntime-web's wasm (served from
+  # out/renderer/ort, copied by scripts/setup-native.mjs). @huggingface/transformers
+  # hard-depends on onnxruntime-node (~208MB) and sharp/@img (~19MB), but neither
+  # is ever imported by DevTerm code — the STT worker only touches the web bundle.
+  - '!**/node_modules/onnxruntime-node/**'
+  - '!**/node_modules/sharp/**'
+  - '!**/node_modules/@img/**'
+  # The onnxruntime-web dist wasm in node_modules is never loaded at runtime
+  # (the worker points wasmPaths at /ort/); Vite has already inlined what it needs.
+  - '!**/node_modules/onnxruntime-web/**'
+  # Hashed ORT wasm asset emitted by transformers' `new URL(...)` fallback — only
+  # referenced when wasmPaths is unset, and the STT worker always sets it to /ort/.
+  - '!**/assets/ort-wasm-*.wasm'
 asarUnpack:
   - '**/node_modules/node-pty/**'
   # Dedicated runtime for the built-in DevTerm Agent. Executables cannot run
@@ -57,6 +72,11 @@ asarUnpack:
   - '**/ort/*.wasm'
 win:
   icon: resources/icon.ico
+  files:
+    # Windows-only trim: node-pty's tarball ships linux-* prebuilds, useless on
+    # Windows (we install the win32-x64 binary via scripts/setup-native.mjs).
+    # Scoped to win so Linux builds keep their loadable prebuilds.
+    - '!**/node_modules/node-pty/prebuilds/linux-*/**'
   target:
     - target: nsis
       arch:

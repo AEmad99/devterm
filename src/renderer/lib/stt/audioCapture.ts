@@ -10,6 +10,11 @@
 import { resampleTo16kMono, concatFloat32, WHISPER_SAMPLE_RATE } from './resample'
 import { PCM_WORKLET_NAME, PCM_WORKLET_SOURCE } from './pcmWorklet'
 
+/** Longest utterance we buffer: 10 minutes. Prevents unbounded memory growth. */
+const MAX_CAPTURE_SECONDS = 10 * 60
+/** Samples delivered per AudioWorklet quantum. */
+const WORKLET_QUANTUM = 128
+
 export class AudioCapture {
   private stream: MediaStream | null = null
   private ctx: AudioContext | null = null
@@ -18,6 +23,8 @@ export class AudioCapture {
   private frames: Float32Array[] = []
   private inputRate = WHISPER_SAMPLE_RATE
   private workletUrl: string | null = null
+  /** Frame ceiling for the current capture (derived from MAX_CAPTURE_SECONDS). */
+  private maxFrames = Infinity
 
   /** True while a capture is in progress. */
   get active(): boolean {
@@ -47,6 +54,7 @@ export class AudioCapture {
       const ctx = new AudioContext()
       this.ctx = ctx
       this.inputRate = ctx.sampleRate
+      this.maxFrames = Math.ceil((ctx.sampleRate * MAX_CAPTURE_SECONDS) / WORKLET_QUANTUM)
       // The mic click is the gesture; resume in case the context started suspended.
       if (ctx.state === 'suspended') await ctx.resume()
 
@@ -57,7 +65,9 @@ export class AudioCapture {
       this.source = ctx.createMediaStreamSource(this.stream)
       this.node = new AudioWorkletNode(ctx, PCM_WORKLET_NAME)
       this.node.port.onmessage = (e: MessageEvent<Float32Array>) => {
-        this.frames.push(e.data)
+        // Past the ceiling, drop quanta — the recording keeps the first
+        // MAX_CAPTURE_SECONDS instead of growing without bound.
+        if (this.frames.length < this.maxFrames) this.frames.push(e.data)
       }
       this.source.connect(this.node)
       // Connect to the destination so the graph is pulled; a zero-gain node keeps
@@ -67,8 +77,10 @@ export class AudioCapture {
       this.node.connect(sink)
       sink.connect(ctx.destination)
     } catch (err) {
-      for (const track of this.stream?.getTracks() ?? []) track.stop()
-      this.stream = null
+      // Full teardown (ctx, nodes, tracks, worklet URL) so a partial start
+      // never leaves `active` stuck true with no mic attached.
+      this.frames = []
+      this.teardown()
       throw err
     }
   }

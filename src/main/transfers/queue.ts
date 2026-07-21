@@ -60,11 +60,18 @@ export class TransferQueue {
     this.getSftp = getSftp
   }
 
-  /** Stop accepting new work; cancel anything in flight. */
+  /** Stop accepting new work; abort in-flight streams so settle paths finish. */
   shutdown(): void {
     this.alive = false
-    this.active.clear()
     this.pending = []
+    for (const cancel of this.cancelers.values()) {
+      try {
+        cancel()
+      } catch {
+        /* ignore */
+      }
+    }
+    this.active.clear()
   }
 
   /** Subscribe to per-item events + list ticks. Returns an unsubscribe. */
@@ -97,30 +104,15 @@ export class TransferQueue {
     return this.store.get(id) ?? item
   }
 
-  /** Mark an item as canceled. If it's in flight, abort the streams. */
+  /** Mark an item as canceled. If it's in flight, abort the streams and let
+   *  runOne's settle path own the store patch + done event (avoids double-finish
+   *  and losing the 'canceled' reason when the destroy path races). */
   async cancel(id: string): Promise<void> {
     const it = this.store.get(id)
     if (!it) return
     if (it.done || it.canceled) return
     if (this.active.has(id)) {
       this.cancelers.get(id)?.()
-      const now = Date.now()
-      await this.store.patch(id, {
-        done: true,
-        canceled: true,
-        error: 'canceled',
-        finishedAt: now
-      })
-      this.emitEvent(id, {
-        kind: 'done',
-        id,
-        transferred: 0,
-        total: 0,
-        canceled: true,
-        error: 'canceled',
-        finishedAt: now
-      })
-      this.notifyList()
       return
     }
     // Not yet running — just drop it from the pending pool and mark done.

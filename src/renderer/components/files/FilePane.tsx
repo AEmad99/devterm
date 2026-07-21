@@ -92,11 +92,15 @@ export default function FilePane({
   )
 
   useEffect(() => {
+    // A new api (different session) without a remount must not keep showing the
+    // previous session's directory — reset, then land on followPath or home.
+    setListing(null)
+    currentPath.current = null
     // Prefer shell cwd when already known so we don't flash home then jump.
     if (followPath) void load(followPath)
     else void api.home().then((h) => load(h))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [api])
 
   // Keep the editable path box in sync with the directory being shown.
   useEffect(() => {

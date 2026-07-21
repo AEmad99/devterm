@@ -2,7 +2,7 @@
  * GlobalSearchModal – floating search UI for live terminal output.
  * Triggered by Ctrl/Cmd+Alt+F (hotkey id `globalSearch`).
  */
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { SearchResult } from '@shared/types'
 import { useDebouncedCallback } from '../../lib/debounce'
 import { useSessions } from '../../store/sessions'
@@ -18,6 +18,9 @@ export const GlobalSearchModal: React.FC<Props> = ({ isOpen, onClose, onJump }) 
   const [results, setResults] = useState<SearchResult[]>([])
   const [loading, setLoading] = useState(false)
   const [failed, setFailed] = useState(false)
+  // Bumped on every search so a slower earlier query can't overwrite the
+  // results of a newer one (same pattern as FileExplorer's loadGen).
+  const searchGen = useRef(0)
   // The main-side index is seeded with the session GUID as the title; resolve
   // live session titles ("Local 1", "user@host") for display, falling back to
   // whatever the index stored when the session is gone.
@@ -27,6 +30,7 @@ export const GlobalSearchModal: React.FC<Props> = ({ isOpen, onClose, onJump }) 
 
   useEffect(() => {
     if (!isOpen) {
+      searchGen.current++ // drop any in-flight response from the closed modal
       setQuery('')
       setResults([])
       setFailed(false)
@@ -34,6 +38,7 @@ export const GlobalSearchModal: React.FC<Props> = ({ isOpen, onClose, onJump }) 
   }, [isOpen])
 
   const runSearch = async (q: string) => {
+    const gen = ++searchGen.current
     if (!q.trim()) {
       setResults([])
       setFailed(false)
@@ -42,14 +47,16 @@ export const GlobalSearchModal: React.FC<Props> = ({ isOpen, onClose, onJump }) 
     setLoading(true)
     try {
       const hits = await window.devterm.search.query(q)
+      if (gen !== searchGen.current) return // stale response — a newer search won
       setResults(hits)
       setFailed(false)
     } catch (e) {
+      if (gen !== searchGen.current) return
       console.error('search failed', e)
       setResults([])
       setFailed(true)
     } finally {
-      setLoading(false)
+      if (gen === searchGen.current) setLoading(false)
     }
   }
 
@@ -87,7 +94,7 @@ export const GlobalSearchModal: React.FC<Props> = ({ isOpen, onClose, onJump }) 
           )}
           {results.map((r, idx) => (
             <button
-              key={idx}
+              key={`${r.sessionId}:${r.lineNumber}:${idx}`}
               onClick={() => {
                 onJump(r.sessionId, r.lineNumber)
                 onClose()

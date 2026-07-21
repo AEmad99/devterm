@@ -5,7 +5,9 @@
 //     (checkout, branch create/delete/rename, fetch/pull/push, stash apply/
 //     drop/pop, commit, stage/unstage/discard, tag create/delete, remote add/
 //     remove, merge).
-//   * `git:on-change:<path>` — main→renderer push; polled on a 5s timer.
+//   * `git:on-change:<l:/r: cache key>` — main→renderer push; polled on a 5s
+//     timer. Watchers register via the fire-and-forget `git:on-change:add` /
+//     `git:on-change:remove` channels (ipcRenderer.send → ipcMain.on).
 //
 // Results are cached for 5s per (sessionId, path) so a busy file tree that
 // re-asks for the same directory doesn't spawn a fresh git process each frame.
@@ -46,6 +48,18 @@ const CACHE_TTL_MS = 5000
 const POLL_MS = 5000
 
 const cache = new Map<string, CacheEntry>()
+
+/** Soft cap on cached status entries; expired keys are swept when exceeded. */
+const CACHE_MAX_ENTRIES = 200
+
+/** Drop expired entries once the cache grows past the cap (never evicts in-flight runs). */
+function sweepCache(now = Date.now()): void {
+  if (cache.size <= CACHE_MAX_ENTRIES) return
+  for (const [key, entry] of cache) {
+    if (cache.size <= CACHE_MAX_ENTRIES) break
+    if (!entry.inflight && now - entry.ts >= CACHE_TTL_MS) cache.delete(key)
+  }
+}
 
 /** Composite cache key — local vs remote paths must not collide. */
 function cacheKey(sessionId: string | undefined, path: string): string {
@@ -93,23 +107,28 @@ export function registerGitIpc(ssh: SSHManager, getWindow: () => BrowserWindow |
     const key = cacheKey(target.sessionId, target.path)
     const now = Date.now()
     const cur = cache.get(key)
-    if (cur && now - cur.ts < CACHE_TTL_MS) return cur.status
+    // Share the in-flight git run first — the placeholder status written for
+    // the TTL window below must not be served to concurrent callers.
     if (cur?.inflight) return cur.inflight
+    if (cur && now - cur.ts < CACHE_TTL_MS) return cur.status
+    // Generation marker: a mutation that invalidates mid-flight deletes this
+    // entry, so the stale result must not be written back afterwards.
+    const entry: CacheEntry = {
+      status: { isRepo: false, branch: '', ahead: -1, behind: -1, entries: {} },
+      ts: now
+    }
     const inflight = (
       target.sessionId
         ? resolveRemote(ssh, target.sessionId, target.path)
         : resolveLocal(target.path)
     ).finally(() => {
-      const e = cache.get(key)
-      if (e) delete e.inflight
+      if (cache.get(key) === entry) delete entry.inflight
     })
-    cache.set(key, {
-      status: { isRepo: false, branch: '', ahead: -1, behind: -1, entries: {} },
-      ts: now,
-      inflight
-    })
+    entry.inflight = inflight
+    cache.set(key, entry)
+    sweepCache(now)
     const status = await inflight
-    cache.set(key, { status, ts: Date.now() })
+    if (cache.get(key) === entry) cache.set(key, { status, ts: Date.now() })
     return status
   })
 
@@ -545,37 +564,38 @@ export function registerGitIpc(ssh: SSHManager, getWindow: () => BrowserWindow |
 
   const watched = new Map<string, { sessionId?: string; path: string }>()
   const lastPushed = new Map<string, string>()
+  // A tick awaits one remote exec per target (up to 30s); never let ticks
+  // overlap — skip the interval if the previous sweep is still running.
+  let tickInFlight = false
   const interval = setInterval(() => void tick(), POLL_MS)
   const tick = async () => {
-    if (watched.size === 0) return
-    for (const [key, target] of [...watched]) {
-      try {
-        const next = target.sessionId
-          ? await resolveRemote(ssh, target.sessionId, target.path)
-          : await resolveLocal(target.path)
-        const sig = signature(next)
-        if (lastPushed.get(key) !== sig) {
-          lastPushed.set(key, sig)
-          send(`${IPC.gitOnChange}:${key}`, next)
-        }
-      } catch {
-        /* ignore — git is best-effort */
-      }
+    if (tickInFlight || watched.size === 0) return
+    tickInFlight = true
+    try {
+      await Promise.allSettled(
+        [...watched].map(async ([key, target]) => {
+          const next = target.sessionId
+            ? await resolveRemote(ssh, target.sessionId, target.path)
+            : await resolveLocal(target.path)
+          const sig = signature(next)
+          if (lastPushed.get(key) !== sig) {
+            lastPushed.set(key, sig)
+            send(`${IPC.gitOnChange}:${key}`, next)
+          }
+        })
+      )
+    } finally {
+      tickInFlight = false
     }
   }
-  ipcMain.handle(`${IPC.gitOnChange}:add`, (_e, target: { sessionId?: string; path: string }) => {
+  ipcMain.on(IPC.gitOnChangeAdd, (_e, target: { sessionId?: string; path: string }) => {
     watched.set(cacheKey(target.sessionId, target.path), target)
-    return true
   })
-  ipcMain.handle(
-    `${IPC.gitOnChange}:remove`,
-    (_e, target: { sessionId?: string; path: string }) => {
-      const k = cacheKey(target.sessionId, target.path)
-      watched.delete(k)
-      lastPushed.delete(k)
-      return true
-    }
-  )
+  ipcMain.on(IPC.gitOnChangeRemove, (_e, target: { sessionId?: string; path: string }) => {
+    const k = cacheKey(target.sessionId, target.path)
+    watched.delete(k)
+    lastPushed.delete(k)
+  })
 
   const cleanup = () => clearInterval(interval)
   process.once('before-quit', cleanup)

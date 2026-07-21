@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'http'
 import { randomBytes, randomUUID, timingSafeEqual } from 'crypto'
-import type { AddressInfo } from 'net'
+import type { AddressInfo, Socket } from 'net'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import type { AgentBridgeState, AgentBridgeStatus } from '@shared/types'
@@ -32,6 +32,8 @@ export class McpBridge {
   private heartbeat?: ReturnType<typeof setInterval>
   private heartbeatSeq = 0
   private stopped = false
+  /** Live sockets, so stop() can force-close the long-lived SSE stream. */
+  private sockets = new Set<Socket>()
   readonly token = randomBytes(24).toString('hex')
   port = 0
 
@@ -121,6 +123,8 @@ export class McpBridge {
       // and let us detect a genuinely dead peer; never time out on inactivity.
       socket.setKeepAlive(true, 15000)
       socket.setTimeout(0)
+      this.sockets.add(socket)
+      socket.once('close', () => this.sockets.delete(socket))
     })
 
     await new Promise<void>((resolve) => this.http!.listen(0, '127.0.0.1', resolve))
@@ -254,7 +258,10 @@ export class McpBridge {
     } else if (
       this.state === 'starting' ||
       this.state === 'listening' ||
-      this.state === 'disconnected'
+      this.state === 'disconnected' ||
+      // A transient transport/handle error must not pin the bridge red
+      // forever: a subsequent valid agent request proves liveness again.
+      this.state === 'error'
     ) {
       this.emit('connected', 'Agent MCP request received')
     }
@@ -285,7 +292,19 @@ export class McpBridge {
     } catch {
       /* ignore */
     }
-    this.http?.close()
+    // http.close() only resolves once every open connection drains — and the
+    // agent's long-lived SSE GET stream never does on its own. Destroy the
+    // tracked sockets first, then await the close with a bounded timeout so
+    // stop() can't hang the caller (closeOne awaits it).
+    if (this.http) {
+      const http = this.http
+      for (const socket of this.sockets) socket.destroy()
+      this.sockets.clear()
+      await Promise.race([
+        new Promise<void>((resolve) => http.close(() => resolve())),
+        new Promise<void>((resolve) => setTimeout(resolve, 2000))
+      ])
+    }
   }
 }
 

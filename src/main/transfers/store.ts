@@ -11,14 +11,33 @@ import type { TransferItemV2 } from '@shared/types'
  * The store is the single source of truth for the renderer; the queue in
  * `queue.ts` consults it on startup and pushes status changes back through it.
  */
+/** Cap finished rows so transfers.json can't grow without bound for heavy users. */
+const MAX_FINISHED = 200
+
 export class TransferStore {
   private items: TransferItemV2[] = []
   private file: string
   private writeTimer: NodeJS.Timeout | null = null
   private dirty = false
+  /** Serialize disk writes so overlapping flushNow calls can't race the .tmp path. */
+  private writeChain: Promise<void> = Promise.resolve()
 
   constructor(userData: string) {
     this.file = join(userData, 'transfers.json')
+  }
+
+  private pruneFinished(): void {
+    let finished = 0
+    for (const it of this.items) if (it.done) finished++
+    if (finished <= MAX_FINISHED) return
+    let drop = finished - MAX_FINISHED
+    // Drop oldest finished rows first (list is newest-first).
+    for (let i = this.items.length - 1; i >= 0 && drop > 0; i--) {
+      if (this.items[i].done) {
+        this.items.splice(i, 1)
+        drop--
+      }
+    }
   }
 
   /** Load from disk; mark in-flight items as canceled (interrupted by restart). */
@@ -66,6 +85,7 @@ export class TransferStore {
   /** Add a new item, persist, return the stored copy. */
   async add(item: TransferItemV2): Promise<TransferItemV2> {
     this.items.unshift(item)
+    this.pruneFinished()
     await this.flushNow()
     return { ...item }
   }
@@ -129,14 +149,23 @@ export class TransferStore {
       this.writeTimer = null
     }
     this.dirty = false
-    const tmp = this.file + '.tmp'
-    try {
-      await fs.mkdir(join(this.file, '..'), { recursive: true })
-      await fs.writeFile(tmp, JSON.stringify(this.items, null, 2), 'utf-8')
-      await fs.rename(tmp, this.file)
-    } catch (e) {
-      console.warn('transfers.json: failed to persist:', (e as Error).message)
-    }
+    const snapshot = JSON.stringify(this.items, null, 2)
+    const file = this.file
+    this.writeChain = this.writeChain
+      .catch(() => {
+        /* keep chain alive after a prior failure */
+      })
+      .then(async () => {
+        const tmp = file + '.tmp'
+        try {
+          await fs.mkdir(join(file, '..'), { recursive: true })
+          await fs.writeFile(tmp, snapshot, 'utf-8')
+          await fs.rename(tmp, file)
+        } catch (e) {
+          console.warn('transfers.json: failed to persist:', (e as Error).message)
+        }
+      })
+    await this.writeChain
   }
 
   /** Coalesce frequent patches (progress) into a single flush. */

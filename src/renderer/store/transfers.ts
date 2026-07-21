@@ -15,6 +15,11 @@ interface TransfersState {
   items: TransferItemV2[]
   /** Per-item throttled progress overlay; merged into `items` on done. */
   progress: Record<string, { transferred: number; total: number }>
+  /**
+   * Coarse clock (refreshed every minute) backing selectVisible's 24h cutoff,
+   * so finished items age out even when the queue itself is idle.
+   */
+  now: number
   setItems: (items: TransferItemV2[]) => void
   applyEvent: (id: string, ev: TransferEvent) => void
   clear: () => void
@@ -23,6 +28,7 @@ interface TransfersState {
 export const useTransfers = create<TransfersState>((set) => ({
   items: [],
   progress: {},
+  now: Date.now(),
   setItems: (items) => {
     // Don't blow away the live progress overlay for items the user can still see.
     set((cur) => {
@@ -67,6 +73,13 @@ export const useTransfers = create<TransfersState>((set) => ({
   clear: () => set({ items: [], progress: {} })
 }))
 
+// Refresh the cutoff clock once a minute. selectVisible consumers use
+// useShallow, so a tick that doesn't change membership is a no-op render-wise
+// (item references stay stable).
+if (typeof window !== 'undefined') {
+  setInterval(() => useTransfers.setState({ now: Date.now() }), 60 * 1000)
+}
+
 /** Open the live transfer store to a single item (the row the UI is rendering). */
 export function selectItem(id: string) {
   return (s: TransfersState) => s.items.find((x) => x.id === id) ?? null
@@ -76,7 +89,5 @@ export function selectItem(id: string) {
 export function selectVisible(s: TransfersState): TransferItemV2[] {
   // The store is already most-recent-first (we unshift on enqueue).
   const DAY = 24 * 60 * 60 * 1000
-  return s.items.filter(
-    (it) => !it.done || (it.finishedAt && Date.now() - it.finishedAt < DAY)
-  )
+  return s.items.filter((it) => !it.done || (it.finishedAt && s.now - it.finishedAt < DAY))
 }

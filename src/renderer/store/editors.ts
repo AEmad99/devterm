@@ -157,6 +157,29 @@ export const useEditors = create<EditorState>((set, get) => ({
     set((s) => ({ docs: s.docs.map((d) => (d.id === id ? { ...d, saving: true } : d)) }))
     const onDisk = doc.eol === '\r\n' ? doc.content.replace(/\n/g, '\r\n') : doc.content
     try {
+      // External-modification guard: no stat IPC exists, so re-read the file and
+      // compare mtime against what we loaded. If the read fails we can't verify
+      // — fall through and write (same behavior as before this guard).
+      let freshMtime: number | null = null
+      try {
+        freshMtime = (await read(doc)).mtimeMs
+      } catch {
+        freshMtime = null
+      }
+      if (freshMtime !== null && doc.mtimeMs !== 0 && freshMtime !== doc.mtimeMs) {
+        set((s) => ({
+          docs: s.docs.map((d) =>
+            d.id === id
+              ? {
+                  ...d,
+                  saving: false,
+                  error: 'file changed on disk since it was opened — not overwritten'
+                }
+              : d
+          )
+        }))
+        return
+      }
       const res = await write(doc, onDisk)
       set((s) => ({
         docs: s.docs.map((d) =>

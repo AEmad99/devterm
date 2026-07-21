@@ -21,6 +21,7 @@ export default function SnippetsManager({ onRun }: { onRun?: () => void }) {
   // A parameterised snippet awaiting placeholder values before it runs/inserts.
   const [params, setParams] = useState<Snippet | null>(null)
   const [values, setValues] = useState<Record<string, string>>({})
+  const [error, setError] = useState<string | null>(null)
 
   const refresh = () => window.devterm.snippets.list().then(setList)
   useEffect(() => {
@@ -33,7 +34,8 @@ export default function SnippetsManager({ onRun }: { onRun?: () => void }) {
   // Send a fully-resolved command to the active terminal, or warn if there's none.
   const dispatch = (command: string, execute: boolean) => {
     onRun?.()
-    if (!runInActive(command, execute)) alert('No active terminal to send the command to.')
+    if (!runInActive(command, execute)) setError('No active terminal to send the command to.')
+    else setError(null)
   }
 
   const run = (s: Snippet, execute: boolean) => {
@@ -62,6 +64,12 @@ export default function SnippetsManager({ onRun }: { onRun?: () => void }) {
           New snippet
         </Button>
       </div>
+
+      {error && (
+        <div className="palette-error" role="alert">
+          {error}
+        </div>
+      )}
 
       {list.length === 0 ? (
         <div className="manager-empty">

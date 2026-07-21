@@ -644,10 +644,10 @@ export const useSettings = create<SettingsState>((set, get) => ({
           : cur.remoteDetachedSessions,
       transfersPanelOpen:
         typeof s.transfersPanelOpen === 'boolean' ? s.transfersPanelOpen : cur.transfersPanelOpen,
-      defaultShell: normalizeDefaultShell(s.defaultShell),
+      defaultShell: s.defaultShell ? normalizeDefaultShell(s.defaultShell) : cur.defaultShell,
       gitPanelOpen: typeof s.gitPanelOpen === 'boolean' ? s.gitPanelOpen : cur.gitPanelOpen,
-      keybindings: normalizeKeybindings(s.keybindings),
-      stt: normalizeStt(s.stt),
+      keybindings: s.keybindings ? normalizeKeybindings(s.keybindings) : cur.keybindings,
+      stt: s.stt ? normalizeStt(s.stt) : cur.stt,
       searchPersist: typeof s.searchPersist === 'boolean' ? s.searchPersist : cur.searchPersist,
       // Local-only UI flag (not part of the export bundle): importing settings
       // must not resurrect the dismissed welcome hint.
@@ -679,6 +679,7 @@ export const useSettings = create<SettingsState>((set, get) => ({
       remoteDetachedSessions: DEFAULTS.remoteDetachedSessions,
       transfersPanelOpen: DEFAULTS.transfersPanelOpen,
       defaultShell: DEFAULTS.defaultShell,
+      gitPanelOpen: DEFAULTS.gitPanelOpen,
       keybindings: DEFAULTS.keybindings,
       stt: DEFAULTS.stt,
       searchPersist: DEFAULTS.searchPersist,

@@ -3,6 +3,42 @@
 All notable changes to DevTerm are documented here. The most recent section is
 at the top. Dates are ISO `YYYY-MM-DD`.
 
+## 1.3.4 — 2026-07-21
+
+### Fixed
+
+- **Git live status:** Preload `git:on-change` subscriptions now use matching
+  send/on channels so the 5s poll/push actually runs (StatusBar / Git panel).
+- **SOCKS5 dynamic (-D) forwards:** Handshake tracks greeting vs CONNECT across
+  TCP segments so well-behaved clients no longer get protocol-corrupted drops.
+- **SSH reconnect:** Port forwards suspend and rebind after transport recovery;
+  SFTP watches tolerate transient poll failures; reconnect keeps a profile
+  tombstone so "Reconnect now" still works; operations during reconnect reject
+  with a clear error instead of TypeError.
+- **PTY id-reuse race:** Agent auto-restart no longer lets a zombie `onExit`
+  delete the live PTY from the map.
+- **Git log / status:** Per-file history puts the revision before `-- path`;
+  conflict badges use real unmerged codes only (no false AM/AD conflicts);
+  status cache races and poll re-entrancy fixed.
+- **Local global search:** Output is indexed under the session id (not raw PTY
+  id) so hits jump correctly; exit clears the index.
+- **Transfers:** In-flight cancel no longer double-finishes; flush is serialized;
+  finished history is capped; quit awaits transfer/settings/search flush.
+- **MCP / agent:** Capped remote `read_file` reads; policy ignores `2>&1` as
+  mutation; bridge recovers from sticky `error` state; pending confirms cleaned
+  on session close; launches serialized; rate-limit failover cursor resets.
+- **Renderer:** Orphan SSH disconnect on connect race; StatusBar effect deps;
+  terminal input during PTY startup; Settings dialog a11y; STT capture cleanup
+  and stale transcript guard; createGrid partial remote failure handling.
+- **Packaging / setup:** Exclude unused onnxruntime-node/sharp from installer;
+  per-platform node-pty prebuild rules; setup-native ABI detection + integrity pin.
+
+### Security
+
+- **SSH TOFU:** First-use host keys prompt with fingerprint before trust.
+- **Markdown preview:** Heading ids only; `id` stripped from other elements to
+  reduce DOM clobbering risk.
+
 ## 1.3.3 — 2026-07-20
 
 ### Added

@@ -56,7 +56,7 @@ const api: DevTermApi = {
     kill: (id) => ipcRenderer.send(IPC.ptyKill, id),
     onData: (id, cb) => subscribe<string>(`${IPC.ptyData}:${id}`, cb),
     onExit: (id, cb) =>
-      subscribe<{ exitCode: number; signal?: number }>(`${IPC.ptyExit}:${id}`, cb),
+      subscribe<{ exitCode: number | undefined; signal?: number }>(`${IPC.ptyExit}:${id}`, cb),
     onStartupFailure: (id, cb) =>
       subscribe<import('@shared/types').PtyStartupFailure>(`${IPC.ptyStartupFailure}:${id}`, cb)
   },
@@ -254,7 +254,7 @@ const api: DevTermApi = {
   portForward: {
     list: (sessionId?: string): Promise<PortForward[]> =>
       ipcRenderer.invoke(IPC.portForwardList, sessionId),
-    // Real for local `-L` forwards; dynamic `-D` SOCKS throws in the manager.
+    // Works for both local `-L` and dynamic `-D` SOCKS forwards.
     add: (req: Omit<PortForward, 'id' | 'createdAt' | 'bytes'>): Promise<PortForward> =>
       ipcRenderer.invoke(IPC.portForwardAdd, req) as Promise<PortForward>,
     remove: (id: string): Promise<void> => ipcRenderer.invoke(IPC.portForwardRemove, id)
@@ -287,7 +287,7 @@ const api: DevTermApi = {
       const off = subscribe<GitStatus>(channel, cb)
       return () => {
         off()
-        ipcRenderer.send(`${IPC.gitOnChange}:remove`, target)
+        ipcRenderer.send(IPC.gitOnChangeRemove, target)
       }
     },
     /**
@@ -295,7 +295,7 @@ const api: DevTermApi = {
      * the directory; pair with the unsubscribe returned by `onChange`.
      */
     watch: (target: { sessionId?: string; path: string }): void => {
-      ipcRenderer.send(`${IPC.gitOnChange}:add`, target)
+      ipcRenderer.send(IPC.gitOnChangeAdd, target)
     },
 
     // Read-side additions
@@ -477,18 +477,30 @@ const api: DevTermApi = {
     onProgress: (id: string, cb: (e: TransferEvent) => void): (() => void) =>
       subscribe<TransferEvent>(`${IPC.transfersEvent}:${id}`, cb),
     onStatus: (cb: (items: TransferListResult) => void): (() => void) => {
-      // Match the existing namespaces' shape: subscribe to the broadcast
-      // channel, then ask for the initial snapshot.
-      const off = subscribe<void>(IPC.transfersStatus, () => {
+      // Broadcasts may carry the fresh snapshot as payload (preferred — no
+      // extra round trip); older senders fire the channel bare, in which case
+      // we fetch the list ourselves. A monotonic request counter guards the
+      // initial-snapshot race: a broadcast-triggered fetch that resolves
+      // after a newer one must not overwrite fresher state.
+      let seq = 0
+      const fetchSnapshot = () => {
+        const n = ++seq
         ipcRenderer
           .invoke(IPC.transfersList)
-          .then(cb)
+          .then((items) => {
+            if (n === seq) cb(items)
+          })
           .catch(() => undefined)
+      }
+      const off = subscribe<TransferListResult | undefined>(IPC.transfersStatus, (payload) => {
+        if (payload) {
+          seq++
+          cb(payload)
+        } else {
+          fetchSnapshot()
+        }
       })
-      ipcRenderer
-        .invoke(IPC.transfersList)
-        .then(cb)
-        .catch(() => undefined)
+      fetchSnapshot()
       return off
     }
   },

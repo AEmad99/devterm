@@ -183,8 +183,27 @@ function registerMcpTools(pi, tools, sessionIdRef) {
 function registerModelFailover(pi) {
   let nextFallback = 0
   let switching = false
+  // After all fallbacks are exhausted, allow another pass once this cooldown
+  // elapses (rate limits reset; a stuck session should not stay on the last
+  // fallback forever).
+  const FALLBACK_COOLDOWN_MS = 5 * 60 * 1000
+  let exhaustedAt = 0
   pi.on('after_provider_response', async (event, ctx) => {
+    const ok =
+      typeof event.status === 'number' && event.status >= 200 && event.status < 300
+    if (ok) {
+      // A successful response means the current model is healthy again — reset
+      // the cursor so a later rate-limit can walk the list from the top.
+      nextFallback = 0
+      exhaustedAt = 0
+      return
+    }
     if (switching || !(event.status === 408 || event.status === 429 || event.status >= 500)) return
+    if (nextFallback >= MODEL_FALLBACKS.length) {
+      if (exhaustedAt && Date.now() - exhaustedAt < FALLBACK_COOLDOWN_MS) return
+      nextFallback = 0
+      exhaustedAt = 0
+    }
     switching = true
     try {
       while (nextFallback < MODEL_FALLBACKS.length) {
@@ -204,6 +223,7 @@ function registerModelFailover(pi) {
           return
         }
       }
+      exhaustedAt = Date.now()
     } finally {
       switching = false
     }

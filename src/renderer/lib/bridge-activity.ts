@@ -41,7 +41,20 @@ export function useBridgeActivity(sessionId: string): BridgeActivityFeed {
       .list(sessionId, { limit: MAX_ROWS })
       .then((rows) => {
         if (cancelled) return
-        setEntries(rows.slice(-MAX_ROWS))
+        // Merge instead of replace: live entries that arrived while list() was
+        // in flight would otherwise be wiped out. Dedupe by the entry's stable
+        // id and re-sort chronologically.
+        setEntries((prev) => {
+          const seen = new Set<string>()
+          const merged: BridgeActivityEntry[] = []
+          for (const entry of [...rows, ...prev]) {
+            if (seen.has(entry.id)) continue
+            seen.add(entry.id)
+            merged.push(entry)
+          }
+          merged.sort((a, b) => a.ts - b.ts)
+          return merged.slice(-MAX_ROWS)
+        })
         setLoading(false)
       })
       .catch(() => {

@@ -3,12 +3,13 @@ import type { GitCommandResult, GitRemote } from '@shared/types'
 import type { GitScope } from './GitPanel'
 import { IconPlus, IconTrash } from '../common/Icons'
 import { IconFetch, IconPull, IconPush } from './GitIcons'
+import ConfirmDialog from '../common/ConfirmDialog'
 
 /**
  * The Remotes tab — list of git remotes with their URLs and per-row
  * fetch/pull/push actions. Adding a remote opens NewRemoteModal; removing
- * uses git's built-in `remote remove` (no confirmation needed beyond the
- * undo of re-adding it).
+ * asks first via ConfirmDialog (window.confirm is unreliable in the sandboxed
+ * renderer).
  */
 export default function GitRemotesPanel({
   scope,
@@ -27,6 +28,8 @@ export default function GitRemotesPanel({
   const [remotes, setRemotes] = useState<GitRemote[] | null>(null)
   const [tick, setTick] = useState(0)
   const [busy, setBusy] = useState(false)
+  // Remote name awaiting a remove confirmation.
+  const [confirmRemove, setConfirmRemove] = useState<string | null>(null)
 
   useEffect(() => {
     void window.devterm.git
@@ -108,13 +111,7 @@ export default function GitRemotesPanel({
             <button
               className="git-icon-btn small danger"
               disabled={busy}
-              onClick={async () => {
-                if (!window.confirm(`Remove remote "${r.name}"?`)) return
-                setBusy(true)
-                await run(() => window.devterm.git.removeRemote({ ...scope, name: r.name }))
-                setBusy(false)
-                setTick((t) => t + 1)
-              }}
+              onClick={() => setConfirmRemove(r.name)}
               title="Remove remote"
               aria-label="Remove"
             >
@@ -123,6 +120,28 @@ export default function GitRemotesPanel({
           </div>
         ))}
       </div>
+
+      {confirmRemove && (
+        <ConfirmDialog
+          open
+          title="Remove remote?"
+          message={
+            <>
+              Remove remote <b>{confirmRemove}</b>? You can re-add it later.
+            </>
+          }
+          confirmLabel="Remove"
+          onConfirm={async () => {
+            const name = confirmRemove
+            setConfirmRemove(null)
+            setBusy(true)
+            await run(() => window.devterm.git.removeRemote({ ...scope, name }))
+            setBusy(false)
+            setTick((t) => t + 1)
+          }}
+          onClose={() => setConfirmRemove(null)}
+        />
+      )}
     </div>
   )
 }
