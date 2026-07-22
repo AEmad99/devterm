@@ -22,13 +22,13 @@
 
 import { BrowserWindow, dialog, ipcMain } from 'electron'
 import { IPC } from '@shared/types'
-import type { SSHManager } from './ssh/manager'
-import * as bridgeActivity from './bridge-activity'
-import * as approvalRules from './approval-rules'
-import * as knownHosts from './ssh/knownHosts'
-import * as settingsIo from './settings-io'
-import * as quickConnect from './quick-connect'
-import { setPersistEnabled } from './search'
+import type { SSHManager } from '../ssh/manager'
+import * as bridgeActivity from '../agent/bridge-activity'
+import * as approvalRules from '../agent/approval-rules'
+import * as knownHosts from '../ssh/knownHosts'
+import * as settingsIo from '../settings/settings-io'
+import * as quickConnect from '../ssh/quick-connect'
+import { setPersistEnabled } from '../search'
 
 function pushBridgeActivity(
   getWindow: () => BrowserWindow | null,

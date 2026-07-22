@@ -15,7 +15,7 @@ import {
 import { McpBridge } from '../mcp/server'
 import type { ConfirmOutcome } from '../mcp/tools'
 import { Policy } from '../mcp/policy'
-import * as approvalRules from '../approval-rules'
+import * as approvalRules from '../agent/approval-rules'
 import {
   buildAgentsMd,
   getBuiltinAgentCapabilities,

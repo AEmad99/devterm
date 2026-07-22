@@ -10,7 +10,7 @@ import type { DownloadItem } from 'electron'
 import { existsSync } from 'fs'
 import { join } from 'path'
 import { IPC, type BrowserDownloadItem } from '@shared/types'
-import { BrowserZoomStore } from '../browser-zoom'
+import { BrowserZoomStore } from '../browser/browser-zoom'
 
 interface DownloadRecord {
   id: string

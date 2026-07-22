@@ -110,13 +110,13 @@ import { registerHistoryIpc } from './ipc/history'
 import { registerDialogIpc } from './ipc/dialog'
 import { registerClipboardIpc } from './ipc/clipboard'
 import { registerWindowIpc } from './ipc/window'
-import { registerFoundationIpc } from './foundation-ipc'
+import { registerFoundationIpc } from './ipc/foundation'
 import { registerGitIpc } from './ipc/git'
 import { registerTransfersIpc } from './ipc/transfers'
 import { registerBrowserIpc } from './ipc/browser'
 import { registerPerformanceIpc } from './ipc/performance'
 import { initAutoUpdater } from './updater'
-import { flushScheduledSnapshot } from './settings-io'
+import { flushScheduledSnapshot } from './settings/settings-io'
 import type { PtyManager } from './pty/manager'
 import type { SSHManager } from './ssh/manager'
 import type { FileController } from './ipc/files'
@@ -284,7 +284,7 @@ if (process.argv.includes('--self-test')) {
       console.error('SELFTEST WATCHDOG: timed out after 90s')
       app.exit(3)
     }, 90000)
-    const { runSelfTest } = await import('./selftest')
+    const { runSelfTest } = await import('./selftest/selftest')
     const ok = await runSelfTest()
     clearTimeout(watchdog)
     app.exit(ok ? 0 : 1)

@@ -5,7 +5,7 @@ import type { SSHManager } from '../ssh/manager'
 import { listRemote } from '../ssh/sftp'
 import { looksBinary } from '../fs/content'
 import { Policy } from './policy'
-import { recordBridgeActivity } from '../foundation-ipc'
+import { recordBridgeActivity } from '../ipc/foundation'
 import { sanitizeDetail } from './server'
 
 /** Why a guarded action did/didn't proceed — distinct so the agent can report the real cause. */

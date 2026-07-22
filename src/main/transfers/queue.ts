@@ -15,7 +15,7 @@ export type SftpResolver = (sessionId: string) => Promise<SFTPWrapper>
 /**
  * The streaming payload the queue asks the underlying transfer engine to run.
  * Mirrors the legacy `TransferStartOpts` shape; consumed by the same code
- * path that `TransferManager` in `../transfer.ts` uses (so the existing
+ * path that `TransferManager` in `./transfer.ts` uses (so the existing
  * SFTP read/write stream dance is reused without forking the network stack).
  */
 export interface QueueItem {

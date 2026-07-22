@@ -5,7 +5,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import type { AgentBridgeState, AgentBridgeStatus } from '@shared/types'
 import { registerTools, type ToolDeps } from './tools'
-import { recordBridgeActivity } from '../foundation-ipc'
+import { recordBridgeActivity } from '../ipc/foundation'
 
 const BRIDGE_HEARTBEAT_MS = 25000
 

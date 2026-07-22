@@ -11,7 +11,7 @@ export type RuleOutcome = 'allow' | 'deny' | 'ask'
 /**
  * Optional rule matcher supplied by the host environment. Returns the matched
  * approval rule for `(sessionId, command)`, or undefined if no rule applies.
- * The longest-prefix match is computed by the host (see `approval-rules.ts`).
+ * The longest-prefix match is computed by the host (see `agent/approval-rules.ts`).
  */
 export type RuleMatcher = (
   sessionId: string,

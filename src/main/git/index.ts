@@ -27,7 +27,7 @@ import type {
   GitStatus,
   GitTag
 } from '@shared/types'
-import { quoteRemotePath, shQuote } from './shell-quote'
+import { quoteRemotePath, shQuote } from '../utils/shell-quote'
 
 /** Cap how many file entries we expose per directory to keep the IPC payload sane. */
 const MAX_ENTRIES = 5000

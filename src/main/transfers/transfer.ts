@@ -3,7 +3,7 @@ import { createReadStream, createWriteStream, promises as fs } from 'fs'
 import type { Readable, Writable } from 'stream'
 import type { SFTPWrapper } from 'ssh2'
 import type { TransferProgress, TransferStartOpts } from '@shared/types'
-import { statRemote } from './ssh/sftp'
+import { statRemote } from '../ssh/sftp'
 
 export interface TransferDeps {
   getSftp: (sessionId: string) => Promise<SFTPWrapper>

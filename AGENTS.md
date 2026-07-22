@@ -22,16 +22,16 @@ Every renderer→main capability must be added in **all three places** together:
 | Area | Location |
 | --- | --- |
 | App / window | `src/main/index.ts` |
-| IPC registration | `src/main/ipc/*` (+ `foundation-ipc.ts` for settings sync / bridge activity) |
+| IPC registration | `src/main/ipc/*` (`foundation.ts` for settings sync / bridge activity) |
 | Local PTY | `src/main/pty/manager.ts` |
-| SSH / SFTP / reconnect / detached shells | `src/main/ssh/*` |
+| SSH / SFTP / reconnect / detached shells | `src/main/ssh/*` (incl. `quick-connect.ts`) |
 | Port forwards (`-L`, SOCKS `-D`) | `src/main/ssh/port-forward.ts`, UI `PortForwardPanel.tsx` |
 | MCP server / tools / policy | `src/main/mcp/server.ts`, `tools.ts`, `policy.ts` |
 | Agent launch (bundled + fallbacks) | `src/main/agent/launch.ts`, `*-launch.ts`, `context.ts`, `extension.ts` |
-| Approval rules | `src/main/approval-rules.ts` |
+| Approval rules & activity | `src/main/agent/approval-rules.ts`, `bridge-activity.ts` |
 | Search index | `src/main/search/*` (ANSI strip at ingest) |
-| Git | `src/main/git.ts`, UI `src/renderer/components/git/*` |
-| Transfers | `src/main/transfers/*` (persistent queue; `transfer.ts` is self-test only) |
+| Git | `src/main/git/*`, UI `src/renderer/components/git/*` |
+| Transfers | `src/main/transfers/*` (persistent queue; `transfer.ts` is self-test helper) |
 | Layout / sessions / settings | `src/renderer/store/{layout,sessions,settings}.ts` |
 | Terminal chrome | `TerminalLayout.tsx`, `TerminalView.tsx`, `RemoteSessionView.tsx`, `BrowserPane.tsx` |
 | Styles | `styles.css` imports `styles/{base,chrome,terminal,panels,motion}.css` |

@@ -31,7 +31,7 @@ import type {
   TerminalPrefs,
   Workspace
 } from '@shared/types'
-import * as approvalRules from './approval-rules'
+import * as approvalRules from '../agent/approval-rules'
 
 const userDataPath = () => app.getPath('userData')
 
