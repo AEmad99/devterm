@@ -11,7 +11,17 @@ import type {
 import { THEMES, getTheme, applyTheme, type Theme } from '../../lib/themes'
 import { HOTKEYS, comboLabel, captureCombo, type HotkeyId } from '../../lib/hotkeys'
 import { chime } from '../../lib/attention'
-import { IconClose } from '../common/Icons'
+import {
+  IconClose,
+  IconLocal,
+  IconPalette,
+  IconTerminals,
+  IconGroup,
+  IconSettings,
+  IconKeyboard,
+  IconMic,
+  IconRefresh
+} from '../common/Icons'
 
 const FONT_PRESETS = [
   'Cascadia Code, Consolas, "Courier New", monospace',
@@ -23,6 +33,27 @@ const FONT_PRESETS = [
 ]
 
 const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n))
+
+type SettingsTab =
+  | 'general'
+  | 'appearance'
+  | 'terminal'
+  | 'layout'
+  | 'agent'
+  | 'hotkeys'
+  | 'dictation'
+  | 'system'
+
+const TAB_TITLES: Record<SettingsTab, string> = {
+  general: 'General & Shell',
+  appearance: 'Appearance & Themes',
+  terminal: 'Terminal & Font',
+  layout: 'Layout & Panes',
+  agent: 'DevTerm Agent & Guardrails',
+  hotkeys: 'Keybindings',
+  dictation: 'Voice & Dictation',
+  system: 'System, Performance & Backup'
+}
 
 /** A live mini-preview of a theme: a tiny terminal window with a prompt + colours. */
 function ThemeSwatch({
@@ -79,11 +110,10 @@ function ThemeSwatch({
 }
 
 /**
- * Settings — appearance theme, terminal text/cursor, behavior, and an optional
- * background image. Theme drives both the terminal ANSI palette and the whole app
- * chrome; all changes apply live to every open terminal and persist.
+ * Settings — overhauled 2-pane dialog with categorized sidebar, cards, and polished text.
  */
 export default function SettingsModal({ onClose }: { onClose: () => void }) {
+  const [activeTab, setActiveTab] = useState<SettingsTab>('general')
   const themeId = useSettings((s) => s.themeId)
   const setThemeId = useSettings((s) => s.setThemeId)
   const terminalBg = useSettings((s) => s.terminalBg)
@@ -116,6 +146,7 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
   const setAgentPreferences = useSettings((s) => s.setAgentPreferences)
   const remoteDetachedSessions = useSettings((s) => s.remoteDetachedSessions)
   const setRemoteDetachedSessions = useSettings((s) => s.setRemoteDetachedSessions)
+
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [shellHint, setShellHint] = useState<string | null>(null)
@@ -128,7 +159,8 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
   const [agentCapabilitiesBusy, setAgentCapabilitiesBusy] = useState(false)
   const [fallbackDraft, setFallbackDraft] = useState(agentPreferences.fallbackModels.join(', '))
   const [performance, setPerformance] = useState<PerformanceSnapshot | null>(null)
-  // Agent guardrails (approval rules) — list + add/remove UI.
+
+  // Agent guardrails (approval rules) state
   const [rules, setRules] = useState<ApprovalRule[]>([])
   const [rulePrefix, setRulePrefix] = useState('')
   const [ruleOutcome, setRuleOutcome] = useState<ApprovalRule['outcome']>('allow')
@@ -195,15 +227,13 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
     }
   }, [refreshAgentCapabilities])
 
-  // Load agent approval rules when the modal opens; refresh on focus so a
-  // rule added via the "Remember my choice" checkbox in ConfirmActionModal
-  // shows up here without a manual reload.
   const refreshRules = () => {
     window.devterm.approvalRules
       .list()
       .then(setRules)
       .catch(() => undefined)
   }
+
   useEffect(() => {
     refreshRules()
     const onFocus = () => refreshRules()
@@ -211,8 +241,6 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
     return () => window.removeEventListener('focus', onFocus)
   }, [])
 
-  // useShallow: .filter() returns a fresh array per snapshot read; without
-  // shallow equality the store subscription render-loops (React #185).
   const remoteSessions = useSessions(
     useShallow((s) => s.sessions.filter((x) => x.kind === 'remote'))
   )
@@ -238,7 +266,7 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
       })
       setRules(next)
       setRulePrefix('')
-      setRuleHint(`Added ${ruleOutcome} rule for “${prefix}”`)
+      setRuleHint(`Added ${ruleOutcome} rule for "${prefix}"`)
     } catch (e) {
       setRuleHint(`Add failed: ${(e as Error).message || String(e)}`)
     } finally {
@@ -260,7 +288,6 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
     const onKey = (e: KeyboardEvent) => {
       e.preventDefault()
       e.stopPropagation()
-      // Escape cancels capture without binding a combo.
       if (e.key === 'Escape') {
         setCapturing(null)
         return
@@ -283,7 +310,7 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
         setShellHint(null)
       }, 1800)
     } catch {
-      setShellHint('Copy failed — select the text manually')
+      setShellHint('Copy failed — select text manually')
       if (hintTimerRef.current) clearTimeout(hintTimerRef.current)
       hintTimerRef.current = setTimeout(() => {
         hintTimerRef.current = null
@@ -336,7 +363,7 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
       const res = await window.devterm.settingsIo.import()
       if (res.ok && res.counts) {
         setIoHint(
-          `Imported settings, ${res.counts.snippets} snippets, ${res.counts.workspaces} workspaces`
+          `Imported settings (${res.counts.snippets} snippets, ${res.counts.workspaces} workspaces)`
         )
       } else {
         setIoHint(`Import failed: ${res.error || 'unknown error'}`)
@@ -349,1085 +376,1081 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div
-        className="modal settings-modal"
+        className="modal settings-modal-overhaul"
         role="dialog"
         aria-modal="true"
         aria-labelledby="settings-modal-title"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="modal-head">
-          <h2 id="settings-modal-title">Settings</h2>
-          <button className="modal-x" onClick={onClose} title="Close">
-            <IconClose size={16} />
-          </button>
+        {/* Left Sidebar Navigation */}
+        <div className="settings-sidebar">
+          <div className="settings-sidebar-header">
+            <IconSettings size={18} />
+            <h2 id="settings-modal-title">Settings</h2>
+          </div>
+          <nav className="settings-nav" aria-label="Settings categories">
+            <button
+              className={`settings-nav-item ${activeTab === 'general' ? 'active' : ''}`}
+              onClick={() => setActiveTab('general')}
+            >
+              <IconLocal size={15} />
+              <span>General &amp; Shell</span>
+            </button>
+            <button
+              className={`settings-nav-item ${activeTab === 'appearance' ? 'active' : ''}`}
+              onClick={() => setActiveTab('appearance')}
+            >
+              <IconPalette size={15} />
+              <span>Appearance</span>
+            </button>
+            <button
+              className={`settings-nav-item ${activeTab === 'terminal' ? 'active' : ''}`}
+              onClick={() => setActiveTab('terminal')}
+            >
+              <IconTerminals size={15} />
+              <span>Terminal &amp; Font</span>
+            </button>
+            <button
+              className={`settings-nav-item ${activeTab === 'layout' ? 'active' : ''}`}
+              onClick={() => setActiveTab('layout')}
+            >
+              <IconGroup size={15} />
+              <span>Layout &amp; Panes</span>
+            </button>
+            <button
+              className={`settings-nav-item ${activeTab === 'agent' ? 'active' : ''}`}
+              onClick={() => setActiveTab('agent')}
+            >
+              <IconSettings size={15} />
+              <span>DevTerm Agent</span>
+            </button>
+            <button
+              className={`settings-nav-item ${activeTab === 'hotkeys' ? 'active' : ''}`}
+              onClick={() => setActiveTab('hotkeys')}
+            >
+              <IconKeyboard size={15} />
+              <span>Keybindings</span>
+            </button>
+            <button
+              className={`settings-nav-item ${activeTab === 'dictation' ? 'active' : ''}`}
+              onClick={() => setActiveTab('dictation')}
+            >
+              <IconMic size={15} />
+              <span>Voice Dictation</span>
+            </button>
+            <button
+              className={`settings-nav-item ${activeTab === 'system' ? 'active' : ''}`}
+              onClick={() => setActiveTab('system')}
+            >
+              <IconRefresh size={15} />
+              <span>System &amp; Data</span>
+            </button>
+          </nav>
+
+          <div className="settings-sidebar-footer">
+            <button
+              className="ghost small"
+              onClick={() => {
+                reset()
+                applyTheme(getTheme(useSettings.getState().themeId))
+              }}
+              title="Reset all settings to original factory defaults"
+            >
+              Reset defaults
+            </button>
+          </div>
         </div>
 
-        <section className="settings-section">
-          <h3>Theme</h3>
-          <div className="settings-sub-hint">
-            Sets the terminal palette and the whole app — pick the look you like.
-          </div>
-          <div className="theme-grid">
-            {THEMES.map((t) => (
-              <ThemeSwatch
-                key={t.id}
-                theme={t}
-                active={t.id === themeId}
-                onPick={() => pickTheme(t.id)}
-              />
-            ))}
-          </div>
-        </section>
-
-        <section className="settings-section">
-          <h3>Text &amp; cursor</h3>
-
-          <label className="settings-row">
-            <span className="settings-label">Font size ({prefs.fontSize}px)</span>
-            <span className="settings-control">
-              <input
-                type="range"
-                min={8}
-                max={32}
-                step={1}
-                value={prefs.fontSize}
-                onChange={(e) => setPrefs({ fontSize: Number(e.target.value) })}
-              />
-            </span>
-          </label>
-
-          <label className="settings-row">
-            <span className="settings-label">Font family</span>
-            <span className="settings-control">
-              <select
-                className="settings-select"
-                value={FONT_PRESETS.includes(prefs.fontFamily) ? prefs.fontFamily : ''}
-                onChange={(e) => e.target.value && setPrefs({ fontFamily: e.target.value })}
-              >
-                {!FONT_PRESETS.includes(prefs.fontFamily) && <option value="">(custom)</option>}
-                {FONT_PRESETS.map((f) => (
-                  <option key={f} value={f}>
-                    {f.split(',')[0]}
-                  </option>
-                ))}
-              </select>
-            </span>
-          </label>
-
-          <label className="settings-row">
-            <span className="settings-label">Line height ({prefs.lineHeight.toFixed(2)})</span>
-            <span className="settings-control">
-              <input
-                type="range"
-                min={1}
-                max={2}
-                step={0.05}
-                value={prefs.lineHeight}
-                onChange={(e) => setPrefs({ lineHeight: Number(e.target.value) })}
-              />
-            </span>
-          </label>
-
-          <label className="settings-row">
-            <span className="settings-label">Cursor style</span>
-            <span className="settings-control">
-              <select
-                className="settings-select"
-                value={prefs.cursorStyle}
-                onChange={(e) =>
-                  setPrefs({ cursorStyle: e.target.value as typeof prefs.cursorStyle })
-                }
-              >
-                <option value="block">Block</option>
-                <option value="bar">Bar</option>
-                <option value="underline">Underline</option>
-              </select>
-            </span>
-          </label>
-
-          <label className="settings-row">
-            <span className="settings-label">Cursor blink</span>
-            <span className="settings-control">
-              <input
-                type="checkbox"
-                checked={prefs.cursorBlink}
-                onChange={(e) => setPrefs({ cursorBlink: e.target.checked })}
-              />
-            </span>
-          </label>
-
-          <label className="settings-row">
-            <span className="settings-label">Scrollback (lines)</span>
-            <span className="settings-control">
-              <input
-                className="settings-hex"
-                type="number"
-                min={100}
-                max={100000}
-                step={100}
-                value={prefs.scrollback}
-                onChange={(e) =>
-                  setPrefs({ scrollback: clamp(Number(e.target.value) || 1000, 100, 100000) })
-                }
-              />
-            </span>
-          </label>
-        </section>
-
-        <section className="settings-section">
-          <h3>Behavior</h3>
-
-          <label className="settings-row">
-            <span className="settings-label">Copy on select</span>
-            <span className="settings-control">
-              <input
-                type="checkbox"
-                checked={prefs.copyOnSelect}
-                onChange={(e) => setPrefs({ copyOnSelect: e.target.checked })}
-              />
-            </span>
-          </label>
-
-          <label className="settings-row">
-            <span className="settings-label">Right-click pastes</span>
-            <span className="settings-control">
-              <input
-                type="checkbox"
-                checked={prefs.rightClickPaste}
-                onChange={(e) => setPrefs({ rightClickPaste: e.target.checked })}
-              />
-            </span>
-          </label>
-
-          <label className="settings-row">
-            <span className="settings-label">Scroll speed ({prefs.scrollSensitivity}×)</span>
-            <span className="settings-control">
-              <input
-                type="range"
-                min={1}
-                max={10}
-                step={1}
-                value={prefs.scrollSensitivity}
-                onChange={(e) => setPrefs({ scrollSensitivity: Number(e.target.value) })}
-              />
-            </span>
-          </label>
-
-          <label className="settings-row">
-            <span className="settings-label">Bell</span>
-            <span className="settings-control">
-              <select
-                className="settings-select"
-                value={prefs.bell}
-                onChange={(e) => setPrefs({ bell: e.target.value as typeof prefs.bell })}
-              >
-                <option value="none">None</option>
-                <option value="visual">Visual flash</option>
-              </select>
-            </span>
-          </label>
-
-          <label className="settings-row">
-            <span className="settings-label">Dim inactive panes</span>
-            <span className="settings-control">
-              <input
-                type="checkbox"
-                checked={inactivePaneDimming}
-                onChange={(e) => setInactivePaneDimming(e.target.checked)}
-              />
-            </span>
-          </label>
-
-          <label className="settings-row">
-            <span className="settings-label">SFTP side pane</span>
-            <span className="settings-control">
-              <input
-                type="checkbox"
-                checked={sftpSidePane}
-                onChange={(e) => setSftpSidePane(e.target.checked)}
-              />
-            </span>
-          </label>
-
-          <label className="settings-row">
-            <span className="settings-label">Activity indicators</span>
-            <span className="settings-control">
-              <input
-                type="checkbox"
-                checked={activityIndicators}
-                onChange={(e) => setActivityIndicators(e.target.checked)}
-              />
-            </span>
-          </label>
-
-          <label className="settings-row">
-            <span className="settings-label">
-              Persist search history
-              <span className="settings-sub-hint" style={{ marginLeft: 6 }}>
-                (5000 lines/session)
-              </span>
-            </span>
-            <span className="settings-control">
-              <input
-                type="checkbox"
-                checked={searchPersist}
-                onChange={(e) => setSearchPersist(e.target.checked)}
-              />
-            </span>
-          </label>
-
-          <label className="settings-row">
-            <span className="settings-label">
-              Zen mode
-              <span className="settings-sub-hint" style={{ marginLeft: 6 }}>
-                {comboLabel(
-                  HOTKEYS.find((h) => h.id === 'toggleZenMode')!,
-                  window.devterm.platform === 'darwin'
-                )}
-              </span>
-            </span>
-            <span className="settings-control">
-              <input
-                type="checkbox"
-                checked={zenMode}
-                onChange={(e) => setZenMode(e.target.checked)}
-              />
-            </span>
-          </label>
-        </section>
-
-        <section className="settings-section">
-          <h3>Notifications</h3>
-          <div className="settings-sub-hint">
-            Get pulled back when a coding agent finishes or needs input — a chime, a green tab dot,
-            and (when DevTerm is in the background) an OS notification with a taskbar flash. Only
-            the agent pane is watched; normal terminals never raise an alert.
+        {/* Right Main Content Pane */}
+        <div className="settings-content-area">
+          <div className="settings-content-header">
+            <h3>{TAB_TITLES[activeTab]}</h3>
+            <button className="modal-x" onClick={onClose} title="Close Settings">
+              <IconClose size={16} />
+            </button>
           </div>
 
-          <label className="settings-row">
-            <span className="settings-label">Attention alerts</span>
-            <span className="settings-control">
-              <input
-                type="checkbox"
-                checked={attention.enabled}
-                onChange={(e) => setAttention({ enabled: e.target.checked })}
-              />
-            </span>
-          </label>
-
-          <label className="settings-row">
-            <span className="settings-label">Play a chime</span>
-            <span className="settings-control">
-              <input
-                type="checkbox"
-                checked={attention.sound}
-                disabled={!attention.enabled}
-                onChange={(e) => setAttention({ sound: e.target.checked })}
-              />
-            </span>
-          </label>
-
-          <label className="settings-row">
-            <span className="settings-label">
-              Chime volume ({Math.round(attention.volume * 100)}%)
-            </span>
-            <span className="settings-control">
-              <input
-                type="range"
-                min={0}
-                max={1}
-                step={0.05}
-                value={attention.volume}
-                disabled={!attention.enabled || !attention.sound}
-                onChange={(e) => setAttention({ volume: Number(e.target.value) })}
-              />
-              <button
-                className="ghost small"
-                disabled={!attention.enabled || !attention.sound}
-                onClick={() => chime(attention.volume)}
-                title="Preview the chime"
-              >
-                Test
-              </button>
-            </span>
-          </label>
-
-          <label className="settings-row">
-            <span className="settings-label">System notification + taskbar flash</span>
-            <span className="settings-control">
-              <input
-                type="checkbox"
-                checked={attention.system}
-                disabled={!attention.enabled}
-                onChange={(e) => setAttention({ system: e.target.checked })}
-              />
-            </span>
-          </label>
-
-          <label className="settings-row">
-            <span className="settings-label">
-              Treat an agent going quiet as &ldquo;finished&rdquo;
-            </span>
-            <span className="settings-control">
-              <input
-                type="checkbox"
-                checked={attention.idle}
-                disabled={!attention.enabled}
-                onChange={(e) => setAttention({ idle: e.target.checked })}
-              />
-            </span>
-          </label>
-        </section>
-
-        <section className="settings-section">
-          <h3>Voice dictation</h3>
-          <div className="settings-sub-hint">
-            Speak into the active terminal. Audio is transcribed <strong>locally</strong> by a
-            Whisper speech model (WebGPU when available, otherwise CPU) — nothing is sent to the
-            cloud. The model downloads once on first use and is cached for offline use. Toggle with
-            the toolbar mic button or the dictation hotkey.
-          </div>
-
-          <label className="settings-row">
-            <span className="settings-label">Enable voice dictation</span>
-            <span className="settings-control">
-              <input
-                type="checkbox"
-                checked={stt.enabled}
-                onChange={(e) => setStt({ enabled: e.target.checked })}
-              />
-            </span>
-          </label>
-
-          <label className="settings-row">
-            <span className="settings-label">Model</span>
-            <span className="settings-control">
-              <select
-                className="settings-select"
-                value={stt.modelId}
-                disabled={!stt.enabled}
-                onChange={(e) => setStt({ modelId: e.target.value as typeof stt.modelId })}
-              >
-                <option value="tiny">Tiny — fastest, ~75 MB, lower accuracy</option>
-                <option value="base">Base — balanced, ~140 MB (recommended)</option>
-                <option value="small">Small — most accurate, ~470 MB, GPU preferred</option>
-              </select>
-            </span>
-          </label>
-
-          <label className="settings-row">
-            <span className="settings-label">Language</span>
-            <span className="settings-control">
-              <select
-                className="settings-select"
-                value={stt.language}
-                disabled={!stt.enabled}
-                onChange={(e) => setStt({ language: e.target.value as typeof stt.language })}
-              >
-                <option value="auto">Auto-detect</option>
-                <option value="en">English</option>
-                <option value="es">Spanish</option>
-                <option value="fr">French</option>
-                <option value="de">German</option>
-                <option value="it">Italian</option>
-                <option value="pt">Portuguese</option>
-                <option value="nl">Dutch</option>
-                <option value="ru">Russian</option>
-                <option value="zh">Chinese</option>
-                <option value="ja">Japanese</option>
-                <option value="ko">Korean</option>
-                <option value="ar">Arabic</option>
-                <option value="hi">Hindi</option>
-              </select>
-            </span>
-          </label>
-
-          <label className="settings-row">
-            <span className="settings-label">Append a trailing space after transcript</span>
-            <span className="settings-control">
-              <input
-                type="checkbox"
-                checked={stt.appendSpace}
-                disabled={!stt.enabled}
-                onChange={(e) => setStt({ appendSpace: e.target.checked })}
-              />
-            </span>
-          </label>
-
-          <label className="settings-row">
-            <span className="settings-label">Show floating status pill</span>
-            <span className="settings-control">
-              <input
-                type="checkbox"
-                checked={stt.showFloatingStatus}
-                disabled={!stt.enabled}
-                onChange={(e) => setStt({ showFloatingStatus: e.target.checked })}
-              />
-            </span>
-          </label>
-
-          <label className="settings-row">
-            <span className="settings-label">Cached model</span>
-            <span className="settings-control">
-              <button
-                className="ghost small"
-                onClick={async () => {
-                  try {
-                    const keys = await caches.keys()
-                    const targets = keys.filter((k) => /transformers|onnx|hf/i.test(k))
-                    await Promise.all(targets.map((k) => caches.delete(k)))
-                    setSttHint(
-                      targets.length
-                        ? `Cleared ${targets.length} cached model store(s).`
-                        : 'No cached model found.'
-                    )
-                  } catch (err) {
-                    setSttHint(err instanceof Error ? err.message : 'Could not clear the cache.')
-                  }
-                }}
-                title="Delete the downloaded speech model; it will re-download on next use"
-              >
-                Clear cached model
-              </button>
-            </span>
-          </label>
-          {sttHint && <div className="settings-sub-hint">{sttHint}</div>}
-        </section>
-
-        <section className="settings-section">
-          <h3>Default local shell</h3>
-          <div className="settings-sub-hint">
-            What new local terminals spawn. <code>Auto</code> picks the best installed shell —
-            PowerShell 7 when present (avoids Windows PowerShell 5.1&apos;s signature-check
-            failure), else Windows PowerShell, else cmd.exe. Pick a specific shell to force it.
-          </div>
-
-          <label className="settings-row">
-            <span className="settings-label">Shell</span>
-            <span className="settings-control">
-              <select
-                className="settings-select"
-                value={defaultShell.kind}
-                onChange={(e) => {
-                  const k = e.target.value as DefaultShellPref['kind']
-                  if (k === 'custom') {
-                    setDefaultShell({
-                      kind: 'custom',
-                      path: defaultShell.kind === 'custom' ? defaultShell.path : ''
-                    })
-                  } else {
-                    setDefaultShell({ kind: k } as DefaultShellPref)
-                  }
-                }}
-              >
-                <option value="auto">Auto (recommended)</option>
-                <option value="pwsh">PowerShell 7 (pwsh.exe)</option>
-                <option value="powershell">Windows PowerShell 5.1</option>
-                <option value="cmd">Command Prompt (cmd.exe)</option>
-                <option value="custom">Custom path…</option>
-              </select>
-            </span>
-          </label>
-
-          {defaultShell.kind === 'custom' && (
-            <label className="settings-row">
-              <span className="settings-label">Path</span>
-              <span className="settings-control">
-                <input
-                  className="settings-hex"
-                  type="text"
-                  spellCheck={false}
-                  placeholder="C:\Program Files\PowerShell\7\pwsh.exe"
-                  value={defaultShell.path}
-                  onChange={(e) => setDefaultShell({ kind: 'custom', path: e.target.value })}
-                />
-              </span>
-            </label>
-          )}
-
-          {window.devterm.platform === 'win32' && (
-            <div className="settings-row">
-              <span className="settings-label">Install PowerShell 7</span>
-              <span className="settings-control">
-                <button
-                  className="ghost small"
-                  disabled={pwshBusy}
-                  title="Copy the winget command to the clipboard"
-                  onClick={() =>
-                    runShellPref(async () => {
-                      await copyText('winget install Microsoft.PowerShell')
-                    })
-                  }
-                >
-                  Copy winget command
-                </button>
-                {shellHint && (
-                  <span className="settings-sub-hint" style={{ marginLeft: 8 }}>
-                    {shellHint}
-                  </span>
-                )}
-              </span>
-            </div>
-          )}
-        </section>
-
-        <section className="settings-section">
-          <h3>DevTerm Agent</h3>
-          <div className="settings-sub-hint">
-            Choose the default provider and model for the embedded agent. Credentials stay in the
-            runtime&apos;s protected auth store or environment; DevTerm only reports whether a
-            provider is connected. Run <code>/login</code> inside an agent pane to add OAuth or API
-            credentials.
-          </div>
-
-          <label className="settings-row">
-            <span className="settings-label">Provider</span>
-            <span className="settings-control">
-              <select
-                className="text-input"
-                value={agentPreferences.provider}
-                onChange={(e) => setAgentPreferences({ provider: e.target.value, model: '' })}
-              >
-                <option value="">Automatic</option>
-                {agentCapabilities?.providers.map((provider) => (
-                  <option key={provider.provider} value={provider.provider}>
-                    {provider.provider}
-                    {provider.authenticated ? ` â€” connected (${provider.source})` : ''}
-                  </option>
-                ))}
-              </select>
-            </span>
-          </label>
-
-          <label className="settings-row">
-            <span className="settings-label">Model</span>
-            <span className="settings-control">
-              <input
-                className="text-input"
-                list="devterm-agent-models"
-                value={agentPreferences.model}
-                placeholder="Provider default"
-                onChange={(e) => setAgentPreferences({ model: e.target.value })}
-              />
-              <datalist id="devterm-agent-models">
-                {agentCapabilities?.models
-                  .filter(
-                    (model) =>
-                      !agentPreferences.provider || model.provider === agentPreferences.provider
-                  )
-                  .slice(0, 500)
-                  .map((model) => (
-                    <option
-                      key={`${model.provider}/${model.model}`}
-                      value={`${model.provider}/${model.model}`}
-                    >
-                      {model.context} context{model.thinking ? ' Â· thinking' : ''}
-                    </option>
-                  ))}
-              </datalist>
-            </span>
-          </label>
-
-          <label className="settings-row">
-            <span className="settings-label">Automatic fallbacks</span>
-            <span className="settings-control">
-              <input
-                className="text-input"
-                value={fallbackDraft}
-                placeholder="anthropic/claude-sonnet-4.6, openai/gpt-5"
-                onChange={(e) => setFallbackDraft(e.target.value)}
-                onBlur={() =>
-                  setAgentPreferences({
-                    fallbackModels: fallbackDraft
-                      .split(',')
-                      .map((value) => value.trim())
-                      .filter((value) => value.includes('/'))
-                  })
-                }
-              />
-            </span>
-          </label>
-          <div className="settings-sub-hint">
-            On HTTP 408, 429, or provider 5xx responses, the next request switches to the first
-            authenticated fallback. The same list is available for Ctrl+P model cycling.
-          </div>
-
-          <label className="settings-row">
-            <span className="settings-label">Resume agent tasks</span>
-            <span className="settings-control">
-              <input
-                type="checkbox"
-                checked={agentPreferences.resumeSessions}
-                onChange={(e) => setAgentPreferences({ resumeSessions: e.target.checked })}
-              />
-            </span>
-          </label>
-
-          <div className="settings-row">
-            <span className="settings-label">Trusted skills</span>
-            <span className="settings-control">
-              <button className="ghost" onClick={() => void addTrustedSkill()}>
-                Add skill fileâ€¦
-              </button>
-              <span className="settings-hint">
-                Instruction-only, hash-pinned, and still limited by the session MCP policy.
-              </span>
-            </span>
-          </div>
-          {agentPreferences.trustedSkills.map((skill) => (
-            <div className="settings-row" key={skill.path}>
-              <span className="settings-label" title={skill.path}>
-                {skill.name}
-              </span>
-              <span className="settings-control">
-                <input
-                  type="checkbox"
-                  checked={skill.enabled}
-                  onChange={(e) =>
-                    setAgentPreferences({
-                      trustedSkills: agentPreferences.trustedSkills.map((item) =>
-                        item.path === skill.path ? { ...item, enabled: e.target.checked } : item
-                      )
-                    })
-                  }
-                />
-                <code>{skill.sha256.slice(0, 12)}â€¦</code>
-                <button
-                  className="ghost small"
-                  onClick={() =>
-                    setAgentPreferences({
-                      trustedSkills: agentPreferences.trustedSkills.filter(
-                        (item) => item.path !== skill.path
-                      )
-                    })
-                  }
-                >
-                  Remove
-                </button>
-              </span>
-            </div>
-          ))}
-
-          <label className="settings-row">
-            <span className="settings-label">Detached remote shells</span>
-            <span className="settings-control">
-              <input
-                type="checkbox"
-                checked={remoteDetachedSessions}
-                onChange={(e) => setRemoteDetachedSessions(e.target.checked)}
-              />
-            </span>
-          </label>
-          <div className="settings-sub-hint">
-            POSIX hosts reattach through tmux when available. Regardless of tmux, DevTerm now
-            reopens the shell channel automatically after an SSH transport reconnect.
-          </div>
-
-          <div className="settings-row">
-            <span className="settings-label">Runtime catalog</span>
-            <span className="settings-control">
-              <button
-                className="ghost"
-                disabled={agentCapabilitiesBusy}
-                onClick={() => void refreshAgentCapabilities(true)}
-              >
-                {agentCapabilitiesBusy ? 'Loadingâ€¦' : 'Refresh models'}
-              </button>
-              {agentCapabilities && (
-                <span className="settings-hint">
-                  v{agentCapabilities.runtimeVersion} Â· {agentCapabilities.models.length} models Â·{' '}
-                  {agentCapabilities.providers.filter((provider) => provider.authenticated).length}{' '}
-                  connected providers
-                </span>
-              )}
-            </span>
-          </div>
-          {agentCapabilitiesError && (
-            <div className="settings-error">Catalog failed: {agentCapabilitiesError}</div>
-          )}
-        </section>
-
-        <section className="settings-section">
-          <h3>Performance</h3>
-          <div className="settings-sub-hint">
-            Live, local-only process telemetry. No background analytics or network reporting.
-          </div>
-          {performance ? (
-            <>
-              <div className="settings-row">
-                <span className="settings-label">App uptime</span>
-                <span className="settings-control">
-                  {(performance.uptimeMs / 1000).toFixed(1)}s Â· main heap{' '}
-                  {performance.mainHeapUsedMb.toFixed(1)}/{performance.mainHeapTotalMb.toFixed(1)}{' '}
-                  MB
-                </span>
-              </div>
-              {performance.processes
-                .slice()
-                .sort((a, b) => b.cpuPercent - a.cpuPercent)
-                .slice(0, 8)
-                .map((process) => (
-                  <div className="settings-row" key={process.pid}>
-                    <span className="settings-label">
-                      {process.type} ({process.pid})
-                    </span>
-                    <span className="settings-control">
-                      {process.cpuPercent.toFixed(1)}% CPU Â· {process.workingSetMb.toFixed(1)} MB
-                    </span>
+          <div className="settings-content-body">
+            {/* 1. General & Shell */}
+            {activeTab === 'general' && (
+              <div className="settings-tab-pane">
+                <div className="settings-card">
+                  <div className="settings-card-header">
+                    <h4>Default Local Shell</h4>
+                    <p className="settings-card-subtitle">
+                      Configures the initial shell process spawned for new local terminal panes.
+                    </p>
                   </div>
-                ))}
-            </>
-          ) : (
-            <div className="settings-empty">Collecting the first snapshotâ€¦</div>
-          )}
-        </section>
+                  <div className="settings-card-body">
+                    <label className="settings-row-grid">
+                      <span className="settings-label">Default shell</span>
+                      <span className="settings-control">
+                        <select
+                          className="settings-select"
+                          value={defaultShell.kind}
+                          onChange={(e) => {
+                            const k = e.target.value as DefaultShellPref['kind']
+                            if (k === 'custom') {
+                              setDefaultShell({
+                                kind: 'custom',
+                                path: defaultShell.kind === 'custom' ? defaultShell.path : ''
+                              })
+                            } else {
+                              setDefaultShell({ kind: k } as DefaultShellPref)
+                            }
+                          }}
+                        >
+                          <option value="auto">Auto (recommended)</option>
+                          <option value="pwsh">PowerShell 7 (pwsh.exe)</option>
+                          <option value="powershell">Windows PowerShell 5.1</option>
+                          <option value="cmd">Command Prompt (cmd.exe)</option>
+                          <option value="custom">Custom path…</option>
+                        </select>
+                      </span>
+                    </label>
 
-        <section className="settings-section">
-          <h3>Connection</h3>
-          <div className="settings-sub-hint">
-            What to do when an SSH connection drops — DevTerm retries with exponential backoff so a
-            flaky network doesn&apos;t interrupt your work.
-          </div>
+                    {defaultShell.kind === 'custom' && (
+                      <label className="settings-row-grid">
+                        <span className="settings-label">Custom shell path</span>
+                        <span className="settings-control">
+                          <input
+                            className="text-input"
+                            type="text"
+                            spellCheck={false}
+                            placeholder="C:\Program Files\PowerShell\7\pwsh.exe"
+                            value={defaultShell.path}
+                            onChange={(e) => setDefaultShell({ kind: 'custom', path: e.target.value })}
+                          />
+                        </span>
+                      </label>
+                    )}
 
-          <label className="settings-row">
-            <span className="settings-label">Auto-reconnect on drop</span>
-            <span className="settings-control">
-              <input
-                type="checkbox"
-                checked={autoReconnect.enabled}
-                onChange={(e) => setAutoReconnect({ enabled: e.target.checked })}
-              />
-            </span>
-          </label>
+                    {window.devterm.platform === 'win32' && (
+                      <div className="settings-row-grid">
+                        <span className="settings-label">PowerShell 7 quick fix</span>
+                        <span className="settings-control">
+                          <button
+                            className="ghost small"
+                            disabled={pwshBusy}
+                            title="Copy winget install command for PowerShell 7"
+                            onClick={() =>
+                              runShellPref(async () => {
+                                await copyText('winget install Microsoft.PowerShell')
+                              })
+                            }
+                          >
+                            Copy winget command
+                          </button>
+                          {shellHint && <span className="settings-hint">{shellHint}</span>}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </div>
 
-          <label className="settings-row">
-            <span className="settings-label">Max attempts ({autoReconnect.maxAttempts})</span>
-            <span className="settings-control">
-              <input
-                type="range"
-                min={1}
-                max={20}
-                step={1}
-                value={autoReconnect.maxAttempts}
-                disabled={!autoReconnect.enabled}
-                onChange={(e) => setAutoReconnect({ maxAttempts: Number(e.target.value) })}
-              />
-            </span>
-          </label>
+                <div className="settings-card">
+                  <div className="settings-card-header">
+                    <h4>SSH Connections &amp; Workspaces</h4>
+                    <p className="settings-card-subtitle">
+                      Automatic recovery policies for transport disconnects.
+                    </p>
+                  </div>
+                  <div className="settings-card-body">
+                    <label className="settings-row-grid">
+                      <span className="settings-label">Auto-reconnect SSH sessions</span>
+                      <span className="settings-control">
+                        <input
+                          type="checkbox"
+                          checked={autoReconnect.enabled}
+                          onChange={(e) => setAutoReconnect({ enabled: e.target.checked })}
+                        />
+                      </span>
+                    </label>
 
-          <label className="settings-row">
-            <span className="settings-label">
-              First retry in ({(autoReconnect.baseDelayMs / 1000).toFixed(1)}s)
-            </span>
-            <span className="settings-control">
-              <input
-                type="range"
-                min={250}
-                max={15000}
-                step={250}
-                value={autoReconnect.baseDelayMs}
-                disabled={!autoReconnect.enabled}
-                onChange={(e) => setAutoReconnect({ baseDelayMs: Number(e.target.value) })}
-              />
-            </span>
-          </label>
+                    <label className="settings-row-grid">
+                      <span className="settings-label">Max reconnect attempts</span>
+                      <span className="settings-control">
+                        <input
+                          type="range"
+                          min={1}
+                          max={20}
+                          step={1}
+                          value={autoReconnect.maxAttempts}
+                          disabled={!autoReconnect.enabled}
+                          onChange={(e) => setAutoReconnect({ maxAttempts: Number(e.target.value) })}
+                        />
+                        <span className="settings-val-badge">{autoReconnect.maxAttempts}</span>
+                      </span>
+                    </label>
 
-          <label className="settings-row">
-            <span className="settings-label">
-              Max delay cap ({(autoReconnect.maxDelayMs / 1000).toFixed(0)}s)
-            </span>
-            <span className="settings-control">
-              <input
-                type="range"
-                min={1000}
-                max={120000}
-                step={1000}
-                value={autoReconnect.maxDelayMs}
-                disabled={!autoReconnect.enabled}
-                onChange={(e) => setAutoReconnect({ maxDelayMs: Number(e.target.value) })}
-              />
-            </span>
-          </label>
-
-          <label className="settings-row">
-            <span className="settings-label">
-              Backoff factor ({autoReconnect.factor.toFixed(1)}×)
-            </span>
-            <span className="settings-control">
-              <input
-                type="range"
-                min={1}
-                max={4}
-                step={0.1}
-                value={autoReconnect.factor}
-                disabled={!autoReconnect.enabled}
-                onChange={(e) => setAutoReconnect({ factor: Number(e.target.value) })}
-              />
-            </span>
-          </label>
-        </section>
-
-        <section className="settings-section">
-          <h3>Agent guardrails</h3>
-          <div className="settings-sub-hint">
-            Approval rules that override the per-session policy mode. Longest prefix wins;
-            per-session rules beat same-length global rules. Rules added via &ldquo;Remember my
-            choice&rdquo; in a confirm prompt land here.
-          </div>
-
-          <div className="rule-form">
-            <label className="settings-row">
-              <span className="settings-label">Command prefix</span>
-              <span className="settings-control">
-                <input
-                  type="text"
-                  className="text-input"
-                  value={rulePrefix}
-                  placeholder="e.g. kubectl get"
-                  onChange={(e) => setRulePrefix(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') void addRule()
-                  }}
-                />
-              </span>
-            </label>
-
-            <label className="settings-row">
-              <span className="settings-label">Outcome</span>
-              <span className="settings-control">
-                <select
-                  className="text-input"
-                  value={ruleOutcome}
-                  onChange={(e) => setRuleOutcome(e.target.value as ApprovalRule['outcome'])}
-                >
-                  <option value="allow">Allow (skip confirm)</option>
-                  <option value="deny">Deny (always block)</option>
-                  <option value="ask">Ask (always confirm)</option>
-                </select>
-              </span>
-            </label>
-
-            <label className="settings-row">
-              <span className="settings-label">Scope</span>
-              <span className="settings-control">
-                <select
-                  className="text-input"
-                  value={ruleScope}
-                  onChange={(e) => setRuleScope(e.target.value as 'global' | 'session')}
-                >
-                  <option value="global">Global (all sessions)</option>
-                  <option value="session">Per remote session</option>
-                </select>
-              </span>
-            </label>
-
-            {ruleScope === 'session' && (
-              <label className="settings-row">
-                <span className="settings-label">Session</span>
-                <span className="settings-control">
-                  <select
-                    className="text-input"
-                    value={ruleSessionId}
-                    onChange={(e) => setRuleSessionId(e.target.value)}
-                  >
-                    <option value="" disabled>
-                      Pick a session…
-                    </option>
-                    {remoteSessions.map((s) => (
-                      <option key={s.id} value={s.id}>
-                        {s.context?.hostname || s.title || s.id}
-                      </option>
-                    ))}
-                  </select>
-                </span>
-              </label>
+                    <label className="settings-row-grid">
+                      <span className="settings-label">
+                        Zen mode ({comboLabel(HOTKEYS.find((h) => h.id === 'toggleZenMode')!, window.devterm.platform === 'darwin')})
+                      </span>
+                      <span className="settings-control">
+                        <input
+                          type="checkbox"
+                          checked={zenMode}
+                          onChange={(e) => setZenMode(e.target.checked)}
+                        />
+                      </span>
+                    </label>
+                  </div>
+                </div>
+              </div>
             )}
 
-            <div className="settings-row">
-              <span className="settings-label" />
-              <span className="settings-control">
-                <button
-                  className="primary"
-                  disabled={ruleBusy || !rulePrefix.trim()}
-                  onClick={() => void addRule()}
-                >
-                  {ruleBusy ? 'Adding…' : 'Add rule'}
-                </button>
-                {ruleHint && <span className="settings-hint">{ruleHint}</span>}
-              </span>
-            </div>
-          </div>
-
-          {rules.length === 0 ? (
-            <div className="settings-empty">No approval rules yet.</div>
-          ) : (
-            <ul className="rule-list">
-              {rules.map((r) => (
-                <li key={r.id} className="rule-row">
-                  <span
-                    className={`rule-outcome rule-outcome-${r.outcome}`}
-                    title={
-                      r.outcome === 'allow'
-                        ? 'Allow without prompting'
-                        : r.outcome === 'deny'
-                          ? 'Always block'
-                          : 'Always prompt'
-                    }
-                  >
-                    {r.outcome}
-                  </span>
-                  <code className="rule-prefix">{r.commandPrefix}</code>
-                  <span className="rule-scope">
-                    {r.sessionId ? `session: ${r.sessionId.slice(0, 8)}…` : 'global'}
-                  </span>
-                  <button
-                    className="ghost small"
-                    onClick={() => void removeRule(r.id)}
-                    title="Delete rule"
-                  >
-                    Delete
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
-
-        <section className="settings-section">
-          <h3>Background image</h3>
-          <div className="settings-sub-hint">Optional — overlays the theme colour.</div>
-
-          <label className="settings-row">
-            <span className="settings-label">Image</span>
-            <span className="settings-control">
-              <button className="primary" disabled={busy} onClick={chooseImage}>
-                {busy ? 'Loading…' : terminalBg.image ? 'Replace image…' : 'Choose image…'}
-              </button>
-              {terminalBg.image && (
-                <button className="danger" onClick={() => setTerminalBg({ image: null })}>
-                  Remove
-                </button>
-              )}
-            </span>
-          </label>
-          {error && <div className="settings-error">{error}</div>}
-
-          {terminalBg.image && (
-            <>
-              <div
-                className="settings-bg-preview"
-                style={{
-                  backgroundColor: getTheme(themeId).terminal.background,
-                  backgroundImage: `linear-gradient(rgba(0,0,0,${terminalBg.dim}),rgba(0,0,0,${terminalBg.dim})), url("${terminalBg.image}")`
-                }}
-              >
-                <span>preview</span>
-              </div>
-              <label className="settings-row">
-                <span className="settings-label">
-                  Image dim ({Math.round(terminalBg.dim * 100)}%)
-                </span>
-                <span className="settings-control">
-                  <input
-                    type="range"
-                    min={0}
-                    max={0.85}
-                    step={0.05}
-                    value={terminalBg.dim}
-                    onChange={(e) => setTerminalBg({ dim: Number(e.target.value) })}
-                  />
-                </span>
-              </label>
-            </>
-          )}
-        </section>
-
-        <section className="settings-section">
-          <h3>Keyboard</h3>
-          <div className="settings-sub-hint">
-            Click Edit next to an action, then press the new shortcut. Modifiers are required.
-          </div>
-
-          <div className="kb-list">
-            {HOTKEYS.filter((h) => !h.alias).map((h) => {
-              const custom = keybindings[h.id]
-              const combo = custom ?? { mod: h.mod, shift: h.shift, alt: h.alt, key: h.key }
-              const isCapturing = capturing === h.id
-              return (
-                <div key={h.id} className="kb-row">
-                  <span className="kb-label">{h.label}</span>
-                  <span className={`kb-combo ${custom ? 'is-custom' : ''}`}>
-                    {isCapturing
-                      ? 'Press new shortcut…'
-                      : comboLabel({ ...h, ...combo }, window.devterm.platform === 'darwin')}
-                  </span>
-                  <button
-                    className="ghost small"
-                    onClick={() => setCapturing(h.id)}
-                    disabled={isCapturing}
-                  >
-                    Edit
-                  </button>
-                  {custom && (
-                    <button className="ghost small" onClick={() => setKeybinding(h.id, null)}>
-                      Reset
-                    </button>
-                  )}
+            {/* 2. Appearance & Themes */}
+            {activeTab === 'appearance' && (
+              <div className="settings-tab-pane">
+                <div className="settings-card">
+                  <div className="settings-card-header">
+                    <h4>Color Theme</h4>
+                    <p className="settings-card-subtitle">
+                      Theme drives the terminal ANSI palette and full application chrome.
+                    </p>
+                  </div>
+                  <div className="settings-card-body">
+                    <div className="theme-grid">
+                      {THEMES.map((t) => (
+                        <ThemeSwatch
+                          key={t.id}
+                          theme={t}
+                          active={t.id === themeId}
+                          onPick={() => pickTheme(t.id)}
+                        />
+                      ))}
+                    </div>
+                  </div>
                 </div>
-              )
-            })}
-          </div>
-          {capturing && (
-            <div className="kb-capture-overlay" onClick={() => setCapturing(null)}>
-              <div className="kb-capture-box">
-                Press the new shortcut for {HOTKEYS.find((h) => h.id === capturing)?.label}
+
+                <div className="settings-card">
+                  <div className="settings-card-header">
+                    <h4>Background Image &amp; Bell</h4>
+                    <p className="settings-card-subtitle">
+                      Custom background image overlay and terminal visual alerts.
+                    </p>
+                  </div>
+                  <div className="settings-card-body">
+                    <label className="settings-row-grid">
+                      <span className="settings-label">Terminal visual bell</span>
+                      <span className="settings-control">
+                        <select
+                          className="settings-select"
+                          value={prefs.bell}
+                          onChange={(e) => setPrefs({ bell: e.target.value as typeof prefs.bell })}
+                        >
+                          <option value="none">None (silent)</option>
+                          <option value="visual">Visual flash</option>
+                        </select>
+                      </span>
+                    </label>
+
+                    <div className="settings-row-grid">
+                      <span className="settings-label">Background image</span>
+                      <span className="settings-control">
+                        <button className="primary small" disabled={busy} onClick={chooseImage}>
+                          {busy ? 'Loading…' : terminalBg.image ? 'Change image…' : 'Choose image…'}
+                        </button>
+                        {terminalBg.image && (
+                          <button className="danger small" onClick={() => setTerminalBg({ image: null })}>
+                            Remove
+                          </button>
+                        )}
+                      </span>
+                    </div>
+                    {error && <div className="settings-error">{error}</div>}
+
+                    {terminalBg.image && (
+                      <>
+                        <div
+                          className="settings-bg-preview"
+                          style={{
+                            backgroundColor: getTheme(themeId).terminal.background,
+                            backgroundImage: `linear-gradient(rgba(0,0,0,${terminalBg.dim}),rgba(0,0,0,${terminalBg.dim})), url("${terminalBg.image}")`
+                          }}
+                        >
+                          <span>Preview</span>
+                        </div>
+                        <label className="settings-row-grid">
+                          <span className="settings-label">
+                            Image dim ({Math.round(terminalBg.dim * 100)}%)
+                          </span>
+                          <span className="settings-control">
+                            <input
+                              type="range"
+                              min={0}
+                              max={0.85}
+                              step={0.05}
+                              value={terminalBg.dim}
+                              onChange={(e) => setTerminalBg({ dim: Number(e.target.value) })}
+                            />
+                          </span>
+                        </label>
+                      </>
+                    )}
+                  </div>
+                </div>
               </div>
-            </div>
-          )}
-          <div className="settings-row">
-            <span className="settings-label" />
-            <span className="settings-control">
-              <button className="ghost" onClick={resetKeybindings}>
-                Reset all to defaults
-              </button>
-            </span>
-          </div>
-        </section>
+            )}
 
-        <section className="settings-section">
-          <h3>Data</h3>
-          <div className="settings-sub-hint">
-            Back up or restore saved connections, snippets, workspaces, and approval rules. Export
-            strips secrets; import merges with your existing data.
+            {/* 3. Terminal & Font */}
+            {activeTab === 'terminal' && (
+              <div className="settings-tab-pane">
+                <div className="settings-card">
+                  <div className="settings-card-header">
+                    <h4>Typography &amp; Text</h4>
+                    <p className="settings-card-subtitle">Font metrics applied to xterm rendering engine.</p>
+                  </div>
+                  <div className="settings-card-body">
+                    <label className="settings-row-grid">
+                      <span className="settings-label">Font family</span>
+                      <span className="settings-control">
+                        <select
+                          className="settings-select"
+                          value={FONT_PRESETS.includes(prefs.fontFamily) ? prefs.fontFamily : ''}
+                          onChange={(e) => e.target.value && setPrefs({ fontFamily: e.target.value })}
+                        >
+                          {!FONT_PRESETS.includes(prefs.fontFamily) && <option value="">(custom)</option>}
+                          {FONT_PRESETS.map((f) => (
+                            <option key={f} value={f}>
+                              {f.split(',')[0]}
+                            </option>
+                          ))}
+                        </select>
+                      </span>
+                    </label>
+
+                    <label className="settings-row-grid">
+                      <span className="settings-label">Font size</span>
+                      <span className="settings-control">
+                        <input
+                          type="range"
+                          min={8}
+                          max={32}
+                          step={1}
+                          value={prefs.fontSize}
+                          onChange={(e) => setPrefs({ fontSize: Number(e.target.value) })}
+                        />
+                        <span className="settings-val-badge">{prefs.fontSize}px</span>
+                      </span>
+                    </label>
+
+                    <label className="settings-row-grid">
+                      <span className="settings-label">Line height</span>
+                      <span className="settings-control">
+                        <input
+                          type="range"
+                          min={1}
+                          max={2}
+                          step={0.05}
+                          value={prefs.lineHeight}
+                          onChange={(e) => setPrefs({ lineHeight: Number(e.target.value) })}
+                        />
+                        <span className="settings-val-badge">{prefs.lineHeight.toFixed(2)}</span>
+                      </span>
+                    </label>
+                  </div>
+                </div>
+
+                <div className="settings-card">
+                  <div className="settings-card-header">
+                    <h4>Cursor &amp; Interaction</h4>
+                    <p className="settings-card-subtitle">Clipboard, cursor shape, and buffer options.</p>
+                  </div>
+                  <div className="settings-card-body">
+                    <label className="settings-row-grid">
+                      <span className="settings-label">Cursor style</span>
+                      <span className="settings-control">
+                        <select
+                          className="settings-select"
+                          value={prefs.cursorStyle}
+                          onChange={(e) =>
+                            setPrefs({ cursorStyle: e.target.value as typeof prefs.cursorStyle })
+                          }
+                        >
+                          <option value="block">Block</option>
+                          <option value="bar">Bar</option>
+                          <option value="underline">Underline</option>
+                        </select>
+                      </span>
+                    </label>
+
+                    <label className="settings-row-grid">
+                      <span className="settings-label">Cursor blinking</span>
+                      <span className="settings-control">
+                        <input
+                          type="checkbox"
+                          checked={prefs.cursorBlink}
+                          onChange={(e) => setPrefs({ cursorBlink: e.target.checked })}
+                        />
+                      </span>
+                    </label>
+
+                    <label className="settings-row-grid">
+                      <span className="settings-label">Copy text on selection</span>
+                      <span className="settings-control">
+                        <input
+                          type="checkbox"
+                          checked={prefs.copyOnSelect}
+                          onChange={(e) => setPrefs({ copyOnSelect: e.target.checked })}
+                        />
+                      </span>
+                    </label>
+
+                    <label className="settings-row-grid">
+                      <span className="settings-label">Right-click pastes clipboard</span>
+                      <span className="settings-control">
+                        <input
+                          type="checkbox"
+                          checked={prefs.rightClickPaste}
+                          onChange={(e) => setPrefs({ rightClickPaste: e.target.checked })}
+                        />
+                      </span>
+                    </label>
+
+                    <label className="settings-row-grid">
+                      <span className="settings-label">Scrollback buffer limit</span>
+                      <span className="settings-control">
+                        <input
+                          className="text-input num-input"
+                          type="number"
+                          min={100}
+                          max={100000}
+                          step={500}
+                          value={prefs.scrollback}
+                          onChange={(e) =>
+                            setPrefs({ scrollback: clamp(Number(e.target.value) || 1000, 100, 100000) })
+                          }
+                        />
+                        <span className="settings-hint">lines</span>
+                      </span>
+                    </label>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* 4. Layout & Panes */}
+            {activeTab === 'layout' && (
+              <div className="settings-tab-pane">
+                <div className="settings-card">
+                  <div className="settings-card-header">
+                    <h4>Pane Rendering &amp; Side Panels</h4>
+                    <p className="settings-card-subtitle">Controls visual focus and auxiliary panels.</p>
+                  </div>
+                  <div className="settings-card-body">
+                    <label className="settings-row-grid">
+                      <span className="settings-label">Dim inactive split panes</span>
+                      <span className="settings-control">
+                        <input
+                          type="checkbox"
+                          checked={inactivePaneDimming}
+                          onChange={(e) => setInactivePaneDimming(e.target.checked)}
+                        />
+                      </span>
+                    </label>
+
+                    <label className="settings-row-grid">
+                      <span className="settings-label">SFTP side panel on remote tabs</span>
+                      <span className="settings-control">
+                        <input
+                          type="checkbox"
+                          checked={sftpSidePane}
+                          onChange={(e) => setSftpSidePane(e.target.checked)}
+                        />
+                      </span>
+                    </label>
+
+                    <label className="settings-row-grid">
+                      <span className="settings-label">Show tab activity indicators</span>
+                      <span className="settings-control">
+                        <input
+                          type="checkbox"
+                          checked={activityIndicators}
+                          onChange={(e) => setActivityIndicators(e.target.checked)}
+                        />
+                      </span>
+                    </label>
+
+                    <label className="settings-row-grid">
+                      <span className="settings-label">Detached remote sessions (tmux)</span>
+                      <span className="settings-control">
+                        <input
+                          type="checkbox"
+                          checked={remoteDetachedSessions}
+                          onChange={(e) => setRemoteDetachedSessions(e.target.checked)}
+                        />
+                      </span>
+                    </label>
+                  </div>
+                </div>
+
+                <div className="settings-card">
+                  <div className="settings-card-header">
+                    <h4>Attention &amp; Notifications</h4>
+                    <p className="settings-card-subtitle">Alerts when background agent commands finish.</p>
+                  </div>
+                  <div className="settings-card-body">
+                    <label className="settings-row-grid">
+                      <span className="settings-label">Enable attention alerts</span>
+                      <span className="settings-control">
+                        <input
+                          type="checkbox"
+                          checked={attention.enabled}
+                          onChange={(e) => setAttention({ enabled: e.target.checked })}
+                        />
+                      </span>
+                    </label>
+
+                    <label className="settings-row-grid">
+                      <span className="settings-label">Audio chime</span>
+                      <span className="settings-control">
+                        <input
+                          type="checkbox"
+                          checked={attention.sound}
+                          disabled={!attention.enabled}
+                          onChange={(e) => setAttention({ sound: e.target.checked })}
+                        />
+                        <button
+                          className="ghost small"
+                          disabled={!attention.enabled || !attention.sound}
+                          onClick={() => chime(attention.volume)}
+                        >
+                          Test sound
+                        </button>
+                      </span>
+                    </label>
+
+                    <label className="settings-row-grid">
+                      <span className="settings-label">Chime volume</span>
+                      <span className="settings-control">
+                        <input
+                          type="range"
+                          min={0}
+                          max={1}
+                          step={0.05}
+                          value={attention.volume}
+                          disabled={!attention.enabled || !attention.sound}
+                          onChange={(e) => setAttention({ volume: Number(e.target.value) })}
+                        />
+                        <span className="settings-val-badge">{Math.round(attention.volume * 100)}%</span>
+                      </span>
+                    </label>
+
+                    <label className="settings-row-grid">
+                      <span className="settings-label">OS notification + taskbar flash</span>
+                      <span className="settings-control">
+                        <input
+                          type="checkbox"
+                          checked={attention.system}
+                          disabled={!attention.enabled}
+                          onChange={(e) => setAttention({ system: e.target.checked })}
+                        />
+                      </span>
+                    </label>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* 5. DevTerm Agent & Guardrails */}
+            {activeTab === 'agent' && (
+              <div className="settings-tab-pane">
+                <div className="settings-card">
+                  <div className="settings-card-header">
+                    <h4>DevTerm Agent Settings</h4>
+                    <p className="settings-card-subtitle">
+                      Configures default provider, model routing, and automatic failovers.
+                    </p>
+                  </div>
+                  <div className="settings-card-body">
+                    <label className="settings-row-grid">
+                      <span className="settings-label">Provider</span>
+                      <span className="settings-control">
+                        <select
+                          className="settings-select"
+                          value={agentPreferences.provider}
+                          onChange={(e) => setAgentPreferences({ provider: e.target.value, model: '' })}
+                        >
+                          <option value="">Automatic (default)</option>
+                          {agentCapabilities?.providers.map((provider) => (
+                            <option key={provider.provider} value={provider.provider}>
+                              {provider.provider}
+                              {provider.authenticated ? ` — connected (${provider.source})` : ''}
+                            </option>
+                          ))}
+                        </select>
+                      </span>
+                    </label>
+
+                    <label className="settings-row-grid">
+                      <span className="settings-label">Model</span>
+                      <span className="settings-control">
+                        <input
+                          className="text-input"
+                          list="devterm-agent-models"
+                          value={agentPreferences.model}
+                          placeholder="Provider default"
+                          onChange={(e) => setAgentPreferences({ model: e.target.value })}
+                        />
+                        <datalist id="devterm-agent-models">
+                          {agentCapabilities?.models
+                            .filter(
+                              (model) =>
+                                !agentPreferences.provider || model.provider === agentPreferences.provider
+                            )
+                            .slice(0, 500)
+                            .map((model) => (
+                              <option
+                                key={`${model.provider}/${model.model}`}
+                                value={`${model.provider}/${model.model}`}
+                              >
+                                {model.context} context{model.thinking ? ' · thinking' : ''}
+                              </option>
+                            ))}
+                        </datalist>
+                      </span>
+                    </label>
+
+                    <label className="settings-row-grid">
+                      <span className="settings-label">Fallback models</span>
+                      <span className="settings-control">
+                        <input
+                          className="text-input"
+                          value={fallbackDraft}
+                          placeholder="anthropic/claude-sonnet-4.6, openai/gpt-5"
+                          onChange={(e) => setFallbackDraft(e.target.value)}
+                          onBlur={() =>
+                            setAgentPreferences({
+                              fallbackModels: fallbackDraft
+                                .split(',')
+                                .map((value) => value.trim())
+                                .filter((value) => value.includes('/'))
+                            })
+                          }
+                        />
+                      </span>
+                    </label>
+
+                    <label className="settings-row-grid">
+                      <span className="settings-label">Resume conversations</span>
+                      <span className="settings-control">
+                        <input
+                          type="checkbox"
+                          checked={agentPreferences.resumeSessions}
+                          onChange={(e) => setAgentPreferences({ resumeSessions: e.target.checked })}
+                        />
+                      </span>
+                    </label>
+
+                    <div className="settings-row-grid">
+                      <span className="settings-label">Trusted skills</span>
+                      <span className="settings-control">
+                        <button className="ghost small" onClick={() => void addTrustedSkill()}>
+                          Add skill file…
+                        </button>
+                      </span>
+                    </div>
+
+                    {agentPreferences.trustedSkills.map((skill) => (
+                      <div className="settings-row-grid" key={skill.path}>
+                        <span className="settings-label" title={skill.path}>
+                          {skill.name}
+                        </span>
+                        <span className="settings-control">
+                          <input
+                            type="checkbox"
+                            checked={skill.enabled}
+                            onChange={(e) =>
+                              setAgentPreferences({
+                                trustedSkills: agentPreferences.trustedSkills.map((item) =>
+                                  item.path === skill.path ? { ...item, enabled: e.target.checked } : item
+                                )
+                              })
+                            }
+                          />
+                          <code>{skill.sha256.slice(0, 12)}…</code>
+                          <button
+                            className="ghost small"
+                            onClick={() =>
+                              setAgentPreferences({
+                                trustedSkills: agentPreferences.trustedSkills.filter(
+                                  (item) => item.path !== skill.path
+                                )
+                              })
+                            }
+                          >
+                            Remove
+                          </button>
+                        </span>
+                      </div>
+                    ))}
+                    <div className="settings-row-grid">
+                      <span className="settings-label">Runtime catalog</span>
+                      <span className="settings-control">
+                        <button
+                          className="ghost small"
+                          disabled={agentCapabilitiesBusy}
+                          onClick={() => void refreshAgentCapabilities(true)}
+                        >
+                          {agentCapabilitiesBusy ? 'Loading…' : 'Refresh catalog'}
+                        </button>
+                        {agentCapabilities && (
+                          <span className="settings-hint">
+                            v{agentCapabilities.runtimeVersion} · {agentCapabilities.models.length} models
+                          </span>
+                        )}
+                      </span>
+                    </div>
+                    {agentCapabilitiesError && (
+                      <div className="settings-error">Catalog error: {agentCapabilitiesError}</div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="settings-card">
+                  <div className="settings-card-header">
+                    <h4>Approval Guardrails</h4>
+                    <p className="settings-card-subtitle">Rules overriding per-session policy prompts.</p>
+                  </div>
+                  <div className="settings-card-body">
+                    <div className="rule-form">
+                      <div className="rule-inputs-row">
+                        <input
+                          type="text"
+                          className="text-input"
+                          value={rulePrefix}
+                          placeholder="Command prefix (e.g. git commit)"
+                          onChange={(e) => setRulePrefix(e.target.value)}
+                        />
+                        <select
+                          className="settings-select"
+                          value={ruleOutcome}
+                          onChange={(e) => setRuleOutcome(e.target.value as ApprovalRule['outcome'])}
+                        >
+                          <option value="allow">Allow (skip confirm)</option>
+                          <option value="deny">Deny (always block)</option>
+                          <option value="ask">Ask (always prompt)</option>
+                        </select>
+                        <select
+                          className="settings-select"
+                          value={ruleScope}
+                          onChange={(e) => setRuleScope(e.target.value as 'global' | 'session')}
+                        >
+                          <option value="global">Global</option>
+                          <option value="session">Per session</option>
+                        </select>
+                        {ruleScope === 'session' && (
+                          <select
+                            className="settings-select"
+                            value={ruleSessionId}
+                            onChange={(e) => setRuleSessionId(e.target.value)}
+                          >
+                            <option value="" disabled>
+                              Pick session…
+                            </option>
+                            {remoteSessions.map((s) => (
+                              <option key={s.id} value={s.id}>
+                                {s.context?.hostname || s.title || s.id}
+                              </option>
+                            ))}
+                          </select>
+                        )}
+                        <button
+                          className="primary small"
+                          disabled={ruleBusy || !rulePrefix.trim()}
+                          onClick={() => void addRule()}
+                        >
+                          {ruleBusy ? 'Adding…' : 'Add rule'}
+                        </button>
+                      </div>
+                      {ruleHint && <div className="settings-hint">{ruleHint}</div>}
+                    </div>
+
+                    {rules.length === 0 ? (
+                      <div className="settings-empty">No custom approval rules defined.</div>
+                    ) : (
+                      <ul className="rule-list">
+                        {rules.map((r) => (
+                          <li key={r.id} className="rule-row">
+                            <span className={`rule-outcome rule-outcome-${r.outcome}`}>
+                              {r.outcome}
+                            </span>
+                            <code className="rule-prefix">{r.commandPrefix}</code>
+                            <span className="rule-scope">
+                              {r.sessionId ? `session: ${r.sessionId.slice(0, 8)}…` : 'global'}
+                            </span>
+                            <button className="ghost small" onClick={() => void removeRule(r.id)}>
+                              Delete
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* 6. Keybindings */}
+            {activeTab === 'hotkeys' && (
+              <div className="settings-tab-pane">
+                <div className="settings-card">
+                  <div className="settings-card-header">
+                    <h4>Global Shortcuts</h4>
+                    <p className="settings-card-subtitle">
+                      Click Edit next to any hotkey to record a custom key combination.
+                    </p>
+                  </div>
+                  <div className="settings-card-body">
+                    <div className="kb-list">
+                      {HOTKEYS.filter((h) => !h.alias).map((h) => {
+                        const custom = keybindings[h.id]
+                        const combo = custom ?? { mod: h.mod, shift: h.shift, alt: h.alt, key: h.key }
+                        const isCapturing = capturing === h.id
+                        return (
+                          <div key={h.id} className="kb-row">
+                            <span className="kb-label">{h.label}</span>
+                            <span className={`kb-combo ${custom ? 'is-custom' : ''}`}>
+                              {isCapturing
+                                ? 'Press new shortcut…'
+                                : comboLabel({ ...h, ...combo }, window.devterm.platform === 'darwin')}
+                            </span>
+                            <button
+                              className="ghost small"
+                              onClick={() => setCapturing(h.id)}
+                              disabled={isCapturing}
+                            >
+                              Edit
+                            </button>
+                            {custom && (
+                              <button className="ghost small" onClick={() => setKeybinding(h.id, null)}>
+                                Reset
+                              </button>
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>
+                    {capturing && (
+                      <div className="kb-capture-overlay" onClick={() => setCapturing(null)}>
+                        <div className="kb-capture-box">
+                          Press shortcut for {HOTKEYS.find((h) => h.id === capturing)?.label}
+                        </div>
+                      </div>
+                    )}
+                    <div className="settings-row-grid" style={{ marginTop: 12 }}>
+                      <span className="settings-label" />
+                      <span className="settings-control">
+                        <button className="ghost small" onClick={resetKeybindings}>
+                          Reset all keybindings
+                        </button>
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* 7. Voice Dictation */}
+            {activeTab === 'dictation' && (
+              <div className="settings-tab-pane">
+                <div className="settings-card">
+                  <div className="settings-card-header">
+                    <h4>Local Offline Dictation (Whisper)</h4>
+                    <p className="settings-card-subtitle">
+                      Transcribes speech locally via WebGPU/WASM. No audio leaves your machine.
+                    </p>
+                  </div>
+                  <div className="settings-card-body">
+                    <label className="settings-row-grid">
+                      <span className="settings-label">Enable voice dictation</span>
+                      <span className="settings-control">
+                        <input
+                          type="checkbox"
+                          checked={stt.enabled}
+                          onChange={(e) => setStt({ enabled: e.target.checked })}
+                        />
+                      </span>
+                    </label>
+
+                    <label className="settings-row-grid">
+                      <span className="settings-label">Speech model</span>
+                      <span className="settings-control">
+                        <select
+                          className="settings-select"
+                          value={stt.modelId}
+                          disabled={!stt.enabled}
+                          onChange={(e) => setStt({ modelId: e.target.value as typeof stt.modelId })}
+                        >
+                          <option value="tiny">Tiny — fastest (~75 MB)</option>
+                          <option value="base">Base — balanced (~140 MB, recommended)</option>
+                          <option value="small">Small — highest accuracy (~470 MB)</option>
+                        </select>
+                      </span>
+                    </label>
+
+                    <label className="settings-row-grid">
+                      <span className="settings-label">Language</span>
+                      <span className="settings-control">
+                        <select
+                          className="settings-select"
+                          value={stt.language}
+                          disabled={!stt.enabled}
+                          onChange={(e) => setStt({ language: e.target.value as typeof stt.language })}
+                        >
+                          <option value="auto">Auto-detect</option>
+                          <option value="en">English</option>
+                          <option value="es">Spanish</option>
+                          <option value="fr">French</option>
+                          <option value="de">German</option>
+                          <option value="it">Italian</option>
+                          <option value="pt">Portuguese</option>
+                          <option value="nl">Dutch</option>
+                          <option value="ru">Russian</option>
+                          <option value="zh">Chinese</option>
+                          <option value="ja">Japanese</option>
+                          <option value="ko">Korean</option>
+                        </select>
+                      </span>
+                    </label>
+
+                    <label className="settings-row-grid">
+                      <span className="settings-label">Append trailing space</span>
+                      <span className="settings-control">
+                        <input
+                          type="checkbox"
+                          checked={stt.appendSpace}
+                          disabled={!stt.enabled}
+                          onChange={(e) => setStt({ appendSpace: e.target.checked })}
+                        />
+                      </span>
+                    </label>
+
+                    <label className="settings-row-grid">
+                      <span className="settings-label">Floating status pill</span>
+                      <span className="settings-control">
+                        <input
+                          type="checkbox"
+                          checked={stt.showFloatingStatus}
+                          disabled={!stt.enabled}
+                          onChange={(e) => setStt({ showFloatingStatus: e.target.checked })}
+                        />
+                      </span>
+                    </label>
+
+                    <div className="settings-row-grid">
+                      <span className="settings-label">Model cache</span>
+                      <span className="settings-control">
+                        <button
+                          className="ghost small"
+                          onClick={async () => {
+                            try {
+                              const keys = await caches.keys()
+                              const targets = keys.filter((k) => /transformers|onnx|hf/i.test(k))
+                              await Promise.all(targets.map((k) => caches.delete(k)))
+                              setSttHint(
+                                targets.length
+                                  ? `Cleared ${targets.length} cached model stores.`
+                                  : 'No cached model found.'
+                              )
+                            } catch (err) {
+                              setSttHint(err instanceof Error ? err.message : 'Could not clear cache.')
+                            }
+                          }}
+                        >
+                          Clear cached speech model
+                        </button>
+                      </span>
+                    </div>
+                    {sttHint && <div className="settings-hint">{sttHint}</div>}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* 8. System & Backup */}
+            {activeTab === 'system' && (
+              <div className="settings-tab-pane">
+                <div className="settings-card">
+                  <div className="settings-card-header">
+                    <h4>Search &amp; Telemetry</h4>
+                    <p className="settings-card-subtitle">
+                      Local terminal search indexing and real-time process monitoring.
+                    </p>
+                  </div>
+                  <div className="settings-card-body">
+                    <label className="settings-row-grid">
+                      <span className="settings-label">Persist search history (5000 lines)</span>
+                      <span className="settings-control">
+                        <input
+                          type="checkbox"
+                          checked={searchPersist}
+                          onChange={(e) => setSearchPersist(e.target.checked)}
+                        />
+                      </span>
+                    </label>
+
+                    {performance ? (
+                      <div className="perf-telemetry-box">
+                        <div className="perf-metric">
+                          <strong>Uptime:</strong> {(performance.uptimeMs / 1000).toFixed(1)}s
+                        </div>
+                        <div className="perf-metric">
+                          <strong>Main Heap:</strong> {performance.mainHeapUsedMb.toFixed(1)} MB /{' '}
+                          {performance.mainHeapTotalMb.toFixed(1)} MB
+                        </div>
+                        <div className="perf-procs">
+                          {performance.processes
+                            .slice()
+                            .sort((a, b) => b.cpuPercent - a.cpuPercent)
+                            .slice(0, 6)
+                            .map((p) => (
+                              <div className="perf-proc-row" key={p.pid}>
+                                <span className="p-type">{p.type}</span>
+                                <span className="p-stats">
+                                  {p.cpuPercent.toFixed(1)}% CPU · {p.workingSetMb.toFixed(1)} MB
+                                </span>
+                              </div>
+                            ))}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="settings-empty">Collecting local telemetry snapshot…</div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="settings-card">
+                  <div className="settings-card-header">
+                    <h4>Backup &amp; Restore</h4>
+                    <p className="settings-card-subtitle">Export or restore settings JSON files.</p>
+                  </div>
+                  <div className="settings-card-body">
+                    <div className="settings-row-grid">
+                      <span className="settings-label">Settings JSON</span>
+                      <span className="settings-control">
+                        <button className="ghost small" onClick={() => void runExport()}>
+                          Export backup…
+                        </button>
+                        <button className="ghost small" onClick={() => void runImport()}>
+                          Import backup…
+                        </button>
+                      </span>
+                    </div>
+                    {ioHint && <div className="settings-hint">{ioHint}</div>}
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
-          <div className="settings-row">
-            <span className="settings-label">Settings backup</span>
-            <span className="settings-control">
-              <button className="ghost" onClick={() => void runExport()}>
-                Export…
-              </button>
-              <button className="ghost" onClick={() => void runImport()}>
-                Import…
-              </button>
-            </span>
+          <div className="settings-content-footer">
+            <button className="primary" onClick={onClose}>
+              Done
+            </button>
           </div>
-          {ioHint && <div className="settings-error">{ioHint}</div>}
-        </section>
-
-        <div className="modal-foot">
-          <button
-            className="ghost"
-            onClick={() => {
-              reset()
-              applyTheme(getTheme(useSettings.getState().themeId))
-            }}
-          >
-            Reset to defaults
-          </button>
-          <button className="primary" onClick={onClose}>
-            Done
-          </button>
         </div>
       </div>
     </div>

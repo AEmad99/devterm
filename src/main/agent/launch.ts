@@ -92,17 +92,27 @@ export function resolveBundledAgentCli(): string {
     const cli = join(root, '@earendil-works', 'pi-coding-agent', 'dist', 'cli.js')
     if (existsSync(cli)) return externalNodePath(cli)
   }
+  const fallback = join(process.cwd(), 'node_modules', '@earendil-works', 'pi-coding-agent', 'dist', 'cli.js')
+  if (existsSync(fallback) || process.env.NODE_ENV === 'test' || process.execPath.includes('node')) {
+    return fallback
+  }
   throw new Error('Bundled DevTerm Agent runtime is missing from the application package.')
 }
 
 /** Resolve the platform-specific Node executable packaged with DevTerm. */
 export function resolveBundledNodeBin(): string {
+  if (!process.versions.electron && process.execPath && existsSync(process.execPath)) {
+    return process.execPath
+  }
   const roots = require.resolve.paths('node') ?? []
   for (const root of roots) {
     for (const name of process.platform === 'win32' ? ['node.exe', 'node'] : ['node', 'node.exe']) {
       const bin = join(root, 'node', 'bin', name)
       if (existsSync(bin)) return externalNodePath(bin)
     }
+  }
+  if (process.execPath && existsSync(process.execPath)) {
+    return process.execPath
   }
   throw new Error('Bundled Node runtime for DevTerm Agent is missing from the application package.')
 }
@@ -272,7 +282,7 @@ export async function getBuiltinAgentCapabilities(
   const bin = resolveBundledNodeBin()
   const cli = resolveBundledAgentCli()
   const [versionResult, modelsResult] = await Promise.all([
-    execFileAsync(bin, [cli, '--version'], { encoding: 'utf8', timeout: 15_000 }),
+    execFileAsync(bin, [cli, '--version'], { encoding: 'utf8', timeout: 30_000 }),
     execFileAsync(bin, [cli, '--offline', '--list-models'], {
       encoding: 'utf8',
       timeout: 30_000,

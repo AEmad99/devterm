@@ -219,7 +219,8 @@ export default function App() {
           el &&
           (el.tagName === 'TEXTAREA' ||
             el.tagName === 'INPUT' ||
-            el.closest?.('[contenteditable="true"]') != null)
+            el.isContentEditable ||
+            el.closest?.('[contenteditable]') != null)
         ) {
           return
         }

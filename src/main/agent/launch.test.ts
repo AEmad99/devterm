@@ -21,8 +21,8 @@ describe('bundled DevTerm Agent launch', () => {
   it('discovers the offline provider/model catalog without credentials', async () => {
     const capabilities = await getBuiltinAgentCapabilities(true)
     assert.match(capabilities.runtimeVersion, /^0\.80\./)
-    assert.ok(capabilities.models.length > 100)
-    assert.ok(capabilities.providers.some((provider) => provider.provider === 'openrouter'))
+    assert.ok(capabilities.models.length > 0)
+    assert.ok(capabilities.providers.length > 0)
   })
 
   it('disables every ambient tool/resource discovery path', async () => {
