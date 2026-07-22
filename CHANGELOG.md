@@ -3,6 +3,18 @@
 All notable changes to DevTerm are documented here. The most recent section is
 at the top. Dates are ISO `YYYY-MM-DD`.
 
+## 1.3.6 — 2026-07-22
+
+### Fixed
+
+- **Windows installer reinstall (elevated / Program Files):** The 1.3.5 close
+  hook only ran on the non-elevated outer NSIS process. Assisted all-users
+  installs elevate an inner process that stock electron-builder *skips*
+  `CHECK_APP_RUNNING` for — so locks were never cleared and extract showed
+  "DevTerm cannot be closed" during Installing. Unlock now runs from
+  `customInit` (outer + elevated inner), and a failed old uninstaller no longer
+  aborts the upgrade.
+
 ## 1.3.5 — 2026-07-22
 
 ### Fixed
