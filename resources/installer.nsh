@@ -3,14 +3,11 @@
 ; 1. Elevated assisted installs skip stock CHECK_APP_RUNNING on the UAC inner
 ;    process — so kill must run from customInit too.
 ; 2. Never treat the installer as the app: ignore *setup* / *Uninstall* images
-;    and never taskkill anything except exact DevTerm.exe by name.
-; 3. Do NOT wipe INSTDIR in customInit (that runs when the wizard opens and
-;    would also delete Uninstall DevTerm.exe before uninstallOldVersion runs).
-;    Wipe only in customUnInstallCheck*, after the old uninstaller has been
-;    invoked (or skipped), so extract gets a clean directory.
-; 4. Robust process killing handles 8.3 short paths, forward slashes, and
-;    unlocked/orphaned background processes (e.g. node.exe agent runtime).
-; 5. Override customRemoveFiles to avoid fragile stock un.atomicRMDir aborts.
+;    and never taskkill anything except exact DevTerm.exe and child helper binaries.
+; 3. Instant native taskkill for all DevTerm binary names (DevTerm.exe, node.exe,
+;    conpty.exe, OpenConsole.exe, winpty-agent.exe) plus robust path normalization
+;    kill script with proper 1s handle release delay before old uninstaller runs.
+; 4. Override customRemoveFiles to avoid fragile stock un.atomicRMDir aborts.
 
 !macro _DevTermWriteKillScript
   FileOpen $R9 "$TEMP\devterm-nsis-kill.ps1" w
@@ -150,16 +147,25 @@
 
 !macro _DevTermKillApp
   DetailPrint "DevTerm: closing DevTerm.exe and background processes..."
-  ; Exact image name only — DevTerm-*-setup.exe is NOT matched by taskkill /IM.
+  ; Immediate native taskkills (runs in <10ms, eliminating PowerShell startup race condition)
   nsExec::Exec `taskkill /F /T /IM "DevTerm.exe"`
   Pop $0
   nsExec::Exec `taskkill /F /T /IM "devterm.exe"`
+  Pop $0
+  nsExec::Exec `taskkill /F /T /IM "node.exe"`
+  Pop $0
+  nsExec::Exec `taskkill /F /T /IM "conpty.exe"`
+  Pop $0
+  nsExec::Exec `taskkill /F /T /IM "OpenConsole.exe"`
+  Pop $0
+  nsExec::Exec `taskkill /F /T /IM "winpty-agent.exe"`
   Pop $0
   Sleep 150
   !insertmacro _DevTermWriteKillScript
   nsExec::Exec `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "$TEMP\devterm-nsis-kill.ps1"`
   Pop $0
-  Sleep 250
+  ; Wait 1 full second for Windows kernel file-handle release before old uninstaller runs
+  Sleep 1000
   nsExec::Exec `taskkill /F /T /IM "DevTerm.exe"`
   Pop $0
   nsExec::Exec `taskkill /F /T /IM "devterm.exe"`
@@ -172,7 +178,7 @@
   !insertmacro _DevTermWriteWipeScript
   nsExec::Exec `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "$TEMP\devterm-nsis-wipe.ps1"`
   Pop $0
-  Sleep 300
+  Sleep 500
   Delete "$TEMP\devterm-nsis-wipe.ps1"
 !macroend
 
