@@ -3,6 +3,17 @@
 All notable changes to DevTerm are documented here. The most recent section is
 at the top. Dates are ISO `YYYY-MM-DD`.
 
+## 1.3.7 — 2026-07-22
+
+### Fixed
+
+- **Windows installer self-false-positive / dirty INSTDIR:** Unlock never kills
+  `*setup*` / `*Uninstall*` processes (installer window is not DevTerm). Uses a
+  temp PowerShell script (not a fragile one-liner), only targets exact
+  `DevTerm.exe` plus processes loaded from a safe install root (leaf name
+  `DevTerm`), then wipes that root so extract is not blocked by leftover
+  files or stray setup copies under Program Files.
+
 ## 1.3.6 — 2026-07-22
 
 ### Fixed
