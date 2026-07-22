@@ -330,10 +330,19 @@ export type PolicyMode = 'read_only' | 'confirm' | 'full'
  * (Moonshot AI) wired through a per-session `.kimi-code/mcp.json`; `grok` runs
  * the Grok CLI wired to the bridge through a per-session `.grok/config.toml`
  * HTTP MCP entry; `codex` runs the OpenAI Codex CLI wired through a per-session
- * isolated `CODEX_HOME/config.toml` HTTP MCP entry. Every agent reaches this host only
- * through DevTerm's MCP bridge.
+ * isolated `CODEX_HOME/config.toml` HTTP MCP entry; `antigravity` runs the Google
+ * Antigravity CLI (agy) wired through a per-session `.antigravity/mcp.json` HTTP MCP
+ * entry. Every agent reaches this host only through DevTerm's MCP bridge.
  */
-export type AgentKind = 'devterm' | 'claude' | 'pi' | 'opencode' | 'kimi' | 'grok' | 'codex'
+export type AgentKind =
+  | 'devterm'
+  | 'claude'
+  | 'pi'
+  | 'opencode'
+  | 'kimi'
+  | 'grok'
+  | 'codex'
+  | 'antigravity'
 
 export interface AgentTrustedSkill {
   name: string

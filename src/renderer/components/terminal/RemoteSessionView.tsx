@@ -67,7 +67,9 @@ function RemoteSessionView({ session }: { session: Session }) {
               ? 'Grok'
               : agentKind === 'codex'
                 ? 'Codex'
-                : 'Pi'
+                : agentKind === 'antigravity'
+                  ? 'Antigravity'
+                  : 'Pi'
   const [agentWidth, setAgentWidth] = useState(480)
   const [filesSideOpen, setFilesSideOpen] = useState(false)
   const [filesWidth, setFilesWidth] = useState(420)
@@ -204,6 +206,7 @@ function RemoteSessionView({ session }: { session: Session }) {
               <option value="kimi">Kimi</option>
               <option value="grok">Grok</option>
               <option value="codex">Codex</option>
+              <option value="antigravity">Antigravity (agy)</option>
             </optgroup>
           </select>
         </label>

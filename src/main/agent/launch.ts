@@ -363,7 +363,7 @@ export { buildAgentsMd }
 export function sweepStaleAgentTempDirs(maxAgeMs = 24 * 60 * 60 * 1000): void {
   try {
     for (const entry of readdirSync(tmpdir())) {
-      if (!/^devterm-(agent|pi|claude|kimi|opencode|grok|codex)-/.test(entry)) continue
+      if (!/^devterm-(agent|pi|claude|kimi|opencode|grok|codex|antigravity)-/.test(entry)) continue
       const full = join(tmpdir(), entry)
       try {
         const stat = statSync(full)

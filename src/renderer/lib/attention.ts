@@ -207,6 +207,8 @@ const AGENT_COMMAND_NAMES = new Set([
   'opencode', // OpenCode (sst/opencode → opencode-ai)
   'kimi', // Kimi Code CLI (Moonshot AI)
   'grok', // xAI Grok CLI
+  'antigravity', // Google Antigravity CLI (agy)
+  'agy', // Google Antigravity CLI alias
   'goose', // Block Goose (@block/goose)
   'crush', // Charm Crush (@charmland/crush)
   'kiro' // AWS Kiro CLI (rebranded from Amazon Q Developer)

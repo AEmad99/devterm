@@ -11,7 +11,8 @@ const AGENT_DISPLAY: Record<AgentKind, string> = {
   opencode: 'OpenCode',
   kimi: 'Kimi',
   grok: 'Grok',
-  codex: 'Codex'
+  codex: 'Codex',
+  antigravity: 'Antigravity'
 }
 
 function agentName(kind: AgentKind | undefined): string {

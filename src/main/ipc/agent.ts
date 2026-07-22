@@ -28,6 +28,7 @@ import { buildKimiMd, prepareKimiLaunch } from '../agent/kimi-launch'
 import { buildOpencodeMd, prepareOpencodeLaunch } from '../agent/opencode-launch'
 import { buildGrokMd, prepareGrokLaunch } from '../agent/grok-launch'
 import { buildCodexMd, prepareCodexLaunch } from '../agent/codex-launch'
+import { buildAntigravityMd, prepareAntigravityLaunch } from '../agent/antigravity-launch'
 import type { SSHManager } from '../ssh/manager'
 import type { PtyManager } from '../pty/manager'
 
@@ -302,10 +303,16 @@ export function registerAgentIpc(
                         info,
                         opts.mode
                       )
-                    : await prepareAgentLaunch(
-                        buildAgentsMd(context, airGapped, cwds.get(opts.sessionId)),
-                        info
-                      )
+                    : opts.kind === 'antigravity'
+                      ? await prepareAntigravityLaunch(
+                          buildAntigravityMd(context, airGapped, cwds.get(opts.sessionId)),
+                          info,
+                          opts.mode
+                        )
+                      : await prepareAgentLaunch(
+                          buildAgentsMd(context, airGapped, cwds.get(opts.sessionId)),
+                          info
+                        )
       const { id: ptyId } = pty.create(
         {
           shell: spec.bin,

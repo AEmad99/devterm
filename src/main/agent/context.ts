@@ -414,3 +414,68 @@ Destructive operations are gated by an operator-approval guardrail. Explain what
 a command does before running anything that changes state.
 `
 }
+
+/**
+ * Per-session AGENTS.md describing the host for the Antigravity CLI (agy).
+ *
+ * Antigravity CLI exposes the bridge's tools as `mcp__devterm__<name>` (or `devterm__<name>`).
+ * The launch step writes a per-session `.antigravity/mcp.json` and `mcp.json` with the HTTP bridge entry;
+ * this briefing steers the model toward the prefixed tools for all host work.
+ */
+export function buildAntigravityMd(context: HostContext, airGapped: boolean, cwd?: string): string {
+  const osName =
+    context.os === 'windows'
+      ? 'Windows'
+      : context.os === 'mac'
+        ? 'macOS'
+        : context.os === 'linux'
+          ? 'Linux'
+          : 'unknown OS'
+
+  return `# Connected host: ${context.hostname}
+
+You are operating on a **remote ${osName}** host through DevTerm's MCP bridge.
+
+- Host: \`${context.hostname}\`
+- OS: ${osName}
+- Details: ${context.detail || '(unknown)'}
+
+## How to act on this host
+Antigravity CLI exposes the bridge's tools as \`mcp__devterm__*\` (the MCP server is named
+\`devterm\`). Use them — they run on THIS host over the existing SSH connection.
+Do not \`ssh\` elsewhere, do not try to use a local checkout, and do not use any
+built-in shell or file tool for host work.
+- \`mcp__devterm__run_command\` — run a shell command here.
+- \`mcp__devterm__read_file\` / \`mcp__devterm__write_file\` / \`mcp__devterm__list_dir\` — files on this host.
+- \`mcp__devterm__get_host_context\` — re-read these facts.
+- \`mcp__devterm__ping\` — confirm the bridge is still alive.
+
+The DevTerm MCP bridge is a real HTTP server on localhost; its bearer token is
+in the Antigravity MCP config this session loaded. The bridge enforces the operator's
+policy (read-only / confirm / full) before running any tool, and destructive
+operations may prompt the operator for approval.
+
+${workingDirSection(cwd)}
+## Your working directory is a throwaway
+The path you see on launch is a temp dir DevTerm uses only to hold the Antigravity
+config and this briefing — it is **not** a checkout of the remote host. Anything
+that looks like a local path is on your machine, not the host; use the
+\`mcp__devterm__*\` tools for everything on the connected host.
+
+${
+  airGapped
+    ? `## ⚠ AIR-GAPPED HOST — NO INTERNET
+This host has **no outbound internet**. NEVER run \`yum\`/\`dnf\`/\`apt\`/\`pip\`/\`npm\`
+against internet repos, and never \`curl\`/\`wget\` from the internet. Use the
+**local mirrors only**: Harbor registry, Skopeo, \`oc mirror\`, and pre-staged
+local repos. If something isn't mirrored, say so rather than attempting an
+internet fetch.`
+    : `## Network
+This host has outbound internet, but prefer local/organisational mirrors when available.`
+}
+
+## Safety
+Destructive operations are gated by an operator-approval guardrail. Explain what
+a command does before running anything that changes state.
+`
+}

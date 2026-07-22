@@ -79,7 +79,9 @@ export default function AgentPane({
               ? 'Grok'
               : kind === 'codex'
                 ? 'Codex'
-                : 'Pi'
+                : kind === 'antigravity'
+                  ? 'Antigravity'
+                  : 'Pi'
   const hostRef = useRef<HTMLDivElement>(null)
   const [bridge, setBridge] = useState<BridgeState>('connecting')
   const [bridgeMessage, setBridgeMessage] = useState<string | undefined>()
@@ -195,7 +197,9 @@ export default function AgentPane({
                     ? 'built-in tools off, MCP devterm server'
                     : kind === 'codex'
                       ? 'built-in tools off, MCP devterm server'
-                      : 'built-in tools off'
+                      : kind === 'antigravity'
+                        ? 'use mcp__devterm__* tools for host work'
+                        : 'built-in tools off'
         term.write(
           `\x1b[90mMCP bridge: ${mcpUrl} | policy: ${mode} | agent: ${kind} (${toolNote})\x1b[0m\r\n`
         )

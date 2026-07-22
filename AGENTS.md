@@ -2,9 +2,9 @@
 
 Guidance for coding agents working in the DevTerm repository.
 
-DevTerm is an Electron 29 desktop terminal: local shells (prebuilt node-pty), SSH/SFTP sessions, workspaces, file browsing/editing (CodeMirror 6), an in-app browser, snippets, a Warp-style Git panel, a persistent transfer queue, offline Whisper dictation, global terminal search, and an embedded multi-provider **DevTerm Agent** with six external CLI fallbacks (`pi`, `claude`, `opencode`, `kimi`, `grok`, `codex`). Every agent runs in a local PTY and reaches the remote host only through DevTerm's in-process MCP bridge. Stack: electron-vite, TypeScript strict, React 18, Zustand, xterm.js, ssh2, marked + DOMPurify, `@huggingface/transformers`, `@earendil-works/pi-coding-agent` (bundled runtime), dedicated `node` binary for the agent, electron-updater, zod.
+DevTerm is an Electron 29 desktop terminal: local shells (prebuilt node-pty), SSH/SFTP sessions, workspaces, file browsing/editing (CodeMirror 6), an in-app browser, snippets, a Warp-style Git panel, a persistent transfer queue, offline Whisper dictation, global terminal search, and an embedded multi-provider **DevTerm Agent** with seven external CLI fallbacks (`pi`, `claude`, `opencode`, `kimi`, `grok`, `codex`, `antigravity`). Every agent runs in a local PTY and reaches the remote host only through DevTerm's in-process MCP bridge. Stack: electron-vite, TypeScript strict, React 18, Zustand, xterm.js, ssh2, marked + DOMPurify, `@huggingface/transformers`, `@earendil-works/pi-coding-agent` (bundled runtime), dedicated `node` binary for the agent, electron-updater, zod.
 
-**Current version:** `package.json` → `1.3.8`. Top-level views: **Terminals** (always-mounted workspace: group tabs, split panes, local/remote/browser sessions), **Connections**, **Workspaces**, **Snippets**. DevTerm is a normal framed desktop app; the first screen is the terminal, not a marketing page.
+**Current version:** `package.json` → `1.3.9`. Top-level views: **Terminals** (always-mounted workspace: group tabs, split panes, local/remote/browser sessions), **Connections**, **Workspaces**, **Snippets**. DevTerm is a normal framed desktop app; the first screen is the terminal, not a marketing page.
 
 ## Architecture
 
@@ -184,6 +184,7 @@ Bridge & tools:
 
 ## Recent release notes (for context)
 
+- **1.3.9** — Google Antigravity CLI (`agy`) support: binary resolution, per-session `.antigravity/mcp.json` HTTP MCP bridge config, host briefings, and UI fallback options.
 - **1.3.7** — Installer never treats `*setup*` as the app; safe-root wipe before extract; temp PS unlock script.
 - **1.3.6** — Installer elevated/UAC fix: unlock runs in `customInit` on the elevated inner process; old-uninstall failures no longer abort upgrade.
 - **1.3.5** — Windows installer reinstall: force-close DevTerm + install-dir orphans (agent node.exe); quit tree-kills local PTYs.
