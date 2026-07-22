@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto'
+import { execFileSync } from 'child_process'
 import os from 'os'
 import { existsSync } from 'fs'
 import { dirname, join } from 'path'
@@ -327,7 +328,28 @@ export class PtyManager {
     const p = this.ptys.get(id)
     if (p) {
       try {
-        p.kill()
+        // Windows: kill the full process tree. Agent panes spawn the bundled
+        // node.exe (or an external CLI) under ConPTY; a plain p.kill() often
+        // leaves those children alive with open handles under the install dir,
+        // which makes the NSIS reinstaller report "DevTerm cannot be closed".
+        if (process.platform === 'win32' && typeof p.pid === 'number' && p.pid > 0) {
+          try {
+            execFileSync('taskkill', ['/F', '/T', '/PID', String(p.pid)], {
+              windowsHide: true,
+              stdio: 'ignore',
+              timeout: 4000
+            })
+          } catch {
+            // taskkill fails when the pid is already gone — fall through.
+            try {
+              p.kill()
+            } catch {
+              /* already gone */
+            }
+          }
+        } else {
+          p.kill()
+        }
       } catch {
         /* already gone */
       }

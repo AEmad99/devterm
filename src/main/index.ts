@@ -425,16 +425,18 @@ if (process.argv.includes('--self-test')) {
   // store, settings snapshot, and search tail all persist asynchronously, and
   // fire-and-forget promises lose those writes when Electron quits. Intercept
   // the first before-quit, await every async shutdown behind a watchdog, then
-  // exit for real. `quitPrepared` guards against re-entry (app.exit re-fires
-  // before-quit).
+  // quit for real. `quitPrepared` guards against re-entry (the second
+  // before-quit from app.quit() falls through so electron-updater's
+  // autoInstallOnAppQuit can run).
   let quitPrepared = false
   app.on('before-quit', (event) => {
     if (quitPrepared) return
     quitPrepared = true
     event.preventDefault()
-    // Fast synchronous teardown stays synchronous.
+    // Agents first (async bridge + temp dir), then every local PTY — including
+    // agent shells — so bundled node.exe children are tree-killed before the
+    // process exits and cannot block the next installer.
     fileController?.stopWatches()
-    ptyManager?.killAll()
     sshManager?.disconnectAll()
     const watchdog = setTimeout(() => app.exit(0), 5000)
     void (async () => {
@@ -446,8 +448,13 @@ if (process.argv.includes('--self-test')) {
         flushPersist(),
         flushScheduledSnapshot()
       ])
+      // Tree-kill any remaining local PTYs after agents have been closed so we
+      // do not race agent closeOne's own pty.kill().
+      ptyManager?.killAll()
       clearTimeout(watchdog)
-      app.exit(0)
+      // Prefer app.quit() over app.exit() so autoInstallOnAppQuit / quit hooks
+      // still fire (quitPrepared makes this before-quit a no-op).
+      app.quit()
     })()
   })
 }

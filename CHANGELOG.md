@@ -3,6 +3,17 @@
 All notable changes to DevTerm are documented here. The most recent section is
 at the top. Dates are ISO `YYYY-MM-DD`.
 
+## 1.3.5 — 2026-07-22
+
+### Fixed
+
+- **Windows installer reinstall:** NSIS no longer gets stuck on "DevTerm is
+  running / cannot be closed" when the UI is already closed. The installer now
+  force-kills `DevTerm.exe` *and* any process loaded from the install directory
+  (bundled agent `node.exe` / PTY children that hold file locks), and continues
+  instead of aborting after retries. App quit tree-kills local PTYs so agent
+  orphans are less likely to linger.
+
 ## 1.3.4 — 2026-07-21
 
 ### Fixed

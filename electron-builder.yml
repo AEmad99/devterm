@@ -92,6 +92,10 @@ nsis:
   oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: true
+  # Force-close DevTerm.exe and install-dir orphans (agent node.exe) before
+  # overwrite. Stock check only targets the main exe and aborts reinstalls.
+  include: resources/installer.nsh
+
 linux:
   icon: resources/icon.png
   target:
