@@ -226,6 +226,10 @@ export class SSHManager {
     return { ...this.policy }
   }
 
+  getProfile(sessionId: string): SSHProfile | undefined {
+    return this.sessions.get(sessionId)?.profile
+  }
+
   async connect(profile: SSHProfile): Promise<SSHConnectResult> {
     const id = profile.id || randomUUID()
     const onStatus = (s: SSHStatus) => this.fireStatus(id, s)

@@ -5,7 +5,7 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, w
 import { homedir, tmpdir } from 'os'
 import { join, sep } from 'path'
 import type { BridgeInfo } from '../mcp/server'
-import type { AgentCapabilities, AgentPreferences, AgentProviderStatus } from '@shared/types'
+import type { AgentCapabilities, AgentPreferences, AgentProviderStatus, SSHProfile } from '@shared/types'
 import { buildAgentsMd } from './context'
 import { PI_EXTENSION_SOURCE } from './extension'
 
@@ -334,13 +334,14 @@ export async function getBuiltinAgentCapabilities(
  */
 export async function prepareAgentLaunch(
   hostContextMd: string,
-  bridge: BridgeInfo
+  bridge: BridgeInfo,
+  options?: BuiltinLaunchOptions
 ): Promise<AgentLaunchSpec> {
   const files = prepareAgentFiles(hostContextMd)
 
   return {
     bin: await resolvePiBin(),
-    args: isolatedAgentArgs(files.extensionPath),
+    args: isolatedAgentArgs(files.extensionPath, options),
     cwd: files.cwd,
     env: {
       DEVTERM_BRIDGE_URL: bridge.url,
@@ -377,3 +378,20 @@ export function sweepStaleAgentTempDirs(maxAgeMs = 24 * 60 * 60 * 1000): void {
     /* tmpdir unreadable — nothing to sweep */
   }
 }
+
+/**
+ * Derive a stable, persistent session ID for remote agent conversations so
+ * sessions persist per connection profile or host identity across tab opens
+ * and app restarts.
+ */
+export function deriveAgentSessionId(sessionId: string, profile?: SSHProfile): string {
+  if (profile?.id) {
+    return `remote-${profile.id.replace(/[^a-zA-Z0-9_-]/g, '-')}`
+  }
+  if (profile?.host && profile?.username) {
+    const key = `${profile.username}@${profile.host}:${profile.port || 22}`
+    return `remote-${key.replace(/[^a-zA-Z0-9_-]/g, '-')}`
+  }
+  return sessionId.replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 128)
+}
+

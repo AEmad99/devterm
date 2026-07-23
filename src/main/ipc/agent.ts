@@ -18,6 +18,7 @@ import { Policy } from '../mcp/policy'
 import * as approvalRules from '../agent/approval-rules'
 import {
   buildAgentsMd,
+  deriveAgentSessionId,
   getBuiltinAgentCapabilities,
   prepareAgentLaunch,
   prepareBuiltinAgentLaunch,
@@ -261,6 +262,8 @@ export function registerAgentIpc(
     let spec: Awaited<ReturnType<typeof prepareAgentLaunch>> | undefined
     try {
       const info = await bridge.start()
+      const profile = ssh.getProfile(opts.sessionId)
+      const persistentSessionId = deriveAgentSessionId(opts.sessionId, profile)
       spec =
         opts.kind === 'devterm'
           ? await (async () => {
@@ -272,7 +275,7 @@ export function registerAgentIpc(
                 {
                   preferences: opts.preferences,
                   sessionDir,
-                  sessionId: opts.sessionId.replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 128)
+                  sessionId: persistentSessionId
                 }
               )
             })()
@@ -309,10 +312,19 @@ export function registerAgentIpc(
                           info,
                           opts.mode
                         )
-                      : await prepareAgentLaunch(
-                          buildAgentsMd(context, airGapped, cwds.get(opts.sessionId)),
-                          info
-                        )
+                      : await (async () => {
+                          const sessionDir = join(app.getPath('userData'), 'agent-sessions')
+                          mkdirSync(sessionDir, { recursive: true })
+                          return prepareAgentLaunch(
+                            buildAgentsMd(context, airGapped, cwds.get(opts.sessionId)),
+                            info,
+                            {
+                              preferences: opts.preferences,
+                              sessionDir,
+                              sessionId: persistentSessionId
+                            }
+                          )
+                        })()
       const { id: ptyId } = pty.create(
         {
           shell: spec.bin,

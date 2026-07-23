@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, it } from 'node:test'
 import {
+  deriveAgentSessionId,
   getBuiltinAgentCapabilities,
   prepareBuiltinAgentLaunch,
   resolveBundledAgentCli,
@@ -101,5 +102,25 @@ describe('bundled DevTerm Agent launch', () => {
       spec.cleanup()
       rmSync(sessionDir, { recursive: true, force: true })
     }
+  })
+
+  it('derives stable agent session IDs for saved connections and ad-hoc hosts', () => {
+    // Saved connection profile
+    assert.equal(
+      deriveAgentSessionId('session-999', { id: 'conn-prod-db-1', host: 'db.prod', port: 22, username: 'admin' }),
+      'remote-conn-prod-db-1'
+    )
+
+    // Ad-hoc connection profile (no saved ID)
+    assert.equal(
+      deriveAgentSessionId('session-999', { host: '192.168.1.50', port: 2222, username: 'root' }),
+      'remote-root-192-168-1-50-2222'
+    )
+
+    // Fallback when profile is undefined
+    assert.equal(
+      deriveAgentSessionId('session-12345-abc', undefined),
+      'session-12345-abc'
+    )
   })
 })

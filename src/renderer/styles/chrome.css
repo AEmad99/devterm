@@ -1,8 +1,9 @@
 .titlebar {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 7px 12px;
+  gap: 12px;
+  padding: 7px 16px;
+  min-height: 42px;
   background: linear-gradient(
     180deg,
     color-mix(in srgb, var(--panel) 96%, var(--fg)),
@@ -529,8 +530,9 @@
 .statusbar {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 5px 12px;
+  gap: 14px;
+  padding: 6px 16px;
+  min-height: 28px;
   background: color-mix(in srgb, var(--panel) 80%, var(--bg));
   border-top: 1px solid var(--border);
   font-size: 11px;

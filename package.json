@@ -1,6 +1,6 @@
 {
   "name": "devterm",
-  "version": "1.3.10",
+  "version": "1.3.11",
   "description": "DevTerm — fast SSH/SFTP terminal with a built-in multi-provider coding agent",
   "main": "out/main/index.js",
   "author": "DevTerm",

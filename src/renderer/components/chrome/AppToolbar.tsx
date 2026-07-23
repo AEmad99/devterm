@@ -6,26 +6,13 @@ import MicButton from '../dictation/MicButton'
 import type { HostContext } from '@shared/types'
 import type { View, BottomPanelMode } from './types'
 
-function osLabel(os?: string): string {
-  switch (os) {
-    case 'windows':
-      return 'Windows'
-    case 'linux':
-      return 'Linux'
-    case 'mac':
-      return 'macOS'
-    default:
-      return 'unknown'
-  }
-}
-
 interface AppToolbarProps {
   view: View
   setView: (view: View) => void
   setShowSidebar: (v: boolean | ((prev: boolean) => boolean)) => void
   bottomPanelMode: BottomPanelMode
   setBottomPanelMode: (mode: BottomPanelMode) => void
-  local: HostContext | null
+  local?: HostContext | null
   gitPanelOpen: boolean
   setGitPanelOpen: (v: boolean | ((prev: boolean) => boolean)) => void
   onSettings: () => void
@@ -39,7 +26,6 @@ export default function AppToolbar({
   setShowSidebar,
   bottomPanelMode,
   setBottomPanelMode,
-  local,
   gitPanelOpen,
   setGitPanelOpen,
   onSettings,
@@ -59,7 +45,6 @@ export default function AppToolbar({
         <LogoMark size={20} />
         <span className="brand-name">DevTerm</span>
       </span>
-      <span className="badge">{local ? `${local.hostname} · ${osLabel(local.os)}` : ''}</span>
       <TopNav view={view} setView={setView} />
       <span className="spacer" />
       <button

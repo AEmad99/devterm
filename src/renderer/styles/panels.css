@@ -194,20 +194,21 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  padding: 24px;
   z-index: 100;
 }
 .modal {
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 8px;
-  padding: 18px 20px;
+  padding: 20px 22px 24px;
   width: 420px;
-  max-width: 92vw;
-  max-height: 90vh;
+  max-width: calc(100vw - 48px);
+  max-height: calc(100vh - 48px);
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
 }
 .modal--sm {
   width: 380px;
@@ -343,6 +344,13 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
+  padding-bottom: 8px;
+}
+.modal-body::after {
+  content: '';
+  display: block;
+  height: 8px;
+  flex-shrink: 0;
 }
 .modal-foot {
   margin-top: 4px;
@@ -1479,7 +1487,7 @@
   position: absolute;
   inset: 0;
   overflow: auto;
-  padding: 22px 26px;
+  padding: 24px 30px 36px;
 }
 .manager-head {
   display: flex;
@@ -1513,7 +1521,14 @@
 .manager-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
+  padding-bottom: 24px;
+}
+.manager-list::after {
+  content: '';
+  display: block;
+  height: 16px;
+  flex-shrink: 0;
 }
 .manager-row {
   display: flex;
@@ -1779,13 +1794,13 @@
 
 /* --- Settings modal overhaul --- */
 .settings-modal-overhaul {
-  width: 780px;
+  width: 800px;
   max-width: 94vw;
-  height: 600px;
-  max-height: 88vh;
+  height: 640px;
+  max-height: 90vh;
   padding: 0;
   display: grid;
-  grid-template-columns: 210px 1fr;
+  grid-template-columns: 220px 1fr;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
@@ -1887,7 +1902,7 @@
 .settings-content-body {
   flex: 1;
   overflow-y: auto;
-  padding: 16px 20px;
+  padding: 16px 20px 24px;
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -1897,6 +1912,14 @@
   display: flex;
   flex-direction: column;
   gap: 16px;
+  padding-bottom: 20px;
+}
+
+.settings-tab-pane::after {
+  content: '';
+  display: block;
+  height: 16px;
+  flex-shrink: 0;
 }
 
 .settings-card {
