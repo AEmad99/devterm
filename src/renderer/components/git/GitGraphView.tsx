@@ -106,10 +106,7 @@ export default function GitGraphView({
               ))}
               {/* Curve to first parent when the parent is on a different lane. */}
               {row.firstParentLane >= 0 && row.firstParentLane !== row.lane && (
-                <path
-                  className="git-graph-curve"
-                  d={curvePath(row.lane, row.firstParentLane)}
-                />
+                <path className="git-graph-curve" d={curvePath(row.lane, row.firstParentLane)} />
               )}
               {/* Dashed curves for non-first parents on merge commits. */}
               {row.mergeLanes.map((ml) => (

@@ -191,7 +191,9 @@ export class TransferQueue {
       if (!item) continue
       if (item.done || item.canceled) continue
       this.active.add(id)
-      this.cancelers.set(id, () => { /* placeholder */ })
+      this.cancelers.set(id, () => {
+        /* placeholder */
+      })
       void this.runOne(item).catch((err) => {
         // The run path catches its own errors; this is the safety net for
         // a synchronous throw before the first await.

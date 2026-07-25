@@ -40,10 +40,7 @@ describe('extractPlaceholders', () => {
   })
 
   it('deduplicates repeated placeholders', () => {
-    assert.deepStrictEqual(extractPlaceholders('{{name}} {{name}} {{other}}'), [
-      'name',
-      'other'
-    ])
+    assert.deepStrictEqual(extractPlaceholders('{{name}} {{name}} {{other}}'), ['name', 'other'])
   })
 
   it('ignores empty placeholders', () => {
@@ -57,17 +54,11 @@ describe('extractPlaceholders', () => {
 
 describe('applyPlaceholders', () => {
   it('substitutes every occurrence of a token', () => {
-    assert.strictEqual(
-      applyPlaceholders('echo {{msg}} {{msg}}', { msg: 'hi' }),
-      'echo hi hi'
-    )
+    assert.strictEqual(applyPlaceholders('echo {{msg}} {{msg}}', { msg: 'hi' }), 'echo hi hi')
   })
 
   it('leaves unfilled tokens intact', () => {
-    assert.strictEqual(
-      applyPlaceholders('echo {{a}} {{b}}', { a: 'x' }),
-      'echo x {{b}}'
-    )
+    assert.strictEqual(applyPlaceholders('echo {{a}} {{b}}', { a: 'x' }), 'echo x {{b}}')
   })
 
   it('returns the original command when there are no placeholders', () => {

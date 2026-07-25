@@ -377,7 +377,7 @@
 .terminal-host {
   width: 100%;
   height: 100%;
-  padding: 6px 8px;
+  padding: 0;
   background: var(--bg-term);
   overflow: hidden;
 }
@@ -422,6 +422,8 @@
 
 .terminal-host .xterm {
   height: 100%;
+  padding: 6px 8px;
+  box-sizing: border-box;
 }
 /* The canvas renderer's `.xterm-screen` div stacks above `.xterm-viewport`
    and spans the full host width, so its transparent surface swallows clicks

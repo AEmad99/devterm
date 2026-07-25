@@ -43,7 +43,9 @@ async function writeAll(rules: ApprovalRule[]): Promise<void> {
   await fs.rename(tmp, storeFile()) // atomic replace so a crash mid-write can't corrupt the store
 }
 
-function enqueueWrite(mutate: (all: ApprovalRule[]) => ApprovalRule[] | Promise<ApprovalRule[]>): Promise<void> {
+function enqueueWrite(
+  mutate: (all: ApprovalRule[]) => ApprovalRule[] | Promise<ApprovalRule[]>
+): Promise<void> {
   const run = writeChain.then(async () => {
     const all = await readAll()
     const next = await mutate(all.slice())

@@ -11,14 +11,7 @@ import CommitModal from './CommitModal'
 import NewBranchModal from './NewBranchModal'
 import NewRemoteModal from './NewRemoteModal'
 import NewTagModal from './NewTagModal'
-import {
-  IconBranch,
-  IconCommit,
-  IconHistory,
-  IconPull,
-  IconStash,
-  IconTag
-} from './GitIcons'
+import { IconBranch, IconCommit, IconHistory, IconPull, IconStash, IconTag } from './GitIcons'
 import { IconRefresh } from '../common/Icons'
 
 /** A scope is the resolved target for git commands — either a local cwd or
@@ -126,7 +119,11 @@ export default function GitPanel({ className = '' }: { className?: string }) {
           <span className="git-panel-title">Git</span>
         </div>
         <div className="git-panel-empty">
-          {isBrowser ? 'Git is unavailable in browser tabs.' : active ? 'connecting…' : 'No active session'}
+          {isBrowser
+            ? 'Git is unavailable in browser tabs.'
+            : active
+              ? 'connecting…'
+              : 'No active session'}
         </div>
       </div>
     )
@@ -145,12 +142,7 @@ export default function GitPanel({ className = '' }: { className?: string }) {
           </span>
         )}
         <span className="spacer" />
-        <button
-          className="git-icon-btn"
-          title="Refresh"
-          onClick={refresh}
-          aria-label="Refresh"
-        >
+        <button className="git-icon-btn" title="Refresh" onClick={refresh} aria-label="Refresh">
           <IconRefresh size={14} />
         </button>
       </div>

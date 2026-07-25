@@ -224,7 +224,7 @@ export const useSessions = create<SessionState>((set, get) => ({
             : s.activeId
           : s.sessions.some((x) => x.id === s.activeId)
             ? s.activeId
-            : s.sessions[0]?.id ?? null
+            : (s.sessions[0]?.id ?? null)
         if (!stillPending) {
           // The tab was closed while connect was in flight (pending- close skips
           // disconnect): tear down the ssh2 client we just established.
@@ -452,7 +452,11 @@ export const useSessions = create<SessionState>((set, get) => ({
               ? remaining[0].id
               : null
           : st.activeId
-      return { sessions: remaining, activeId, lastActiveId: st.lastActiveId === id ? null : st.lastActiveId }
+      return {
+        sessions: remaining,
+        activeId,
+        lastActiveId: st.lastActiveId === id ? null : st.lastActiveId
+      }
     })
   }
 }))

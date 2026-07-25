@@ -98,12 +98,17 @@ export function registerBrowserIpc(getWindow: () => BrowserWindow | null): {
         if (finalTotal > 0) rec.total = finalTotal
         else if (rec.received > 0) rec.total = rec.received
         rec.path = item.getSavePath() || rec.path
-        if (broadcastTimer) { clearTimeout(broadcastTimer); broadcastTimer = null }
+        if (broadcastTimer) {
+          clearTimeout(broadcastTimer)
+          broadcastTimer = null
+        }
         broadcast()
         if (rec.state === 'cancelled' || rec.state === 'interrupted') {
           records.delete(id)
         } else {
-          setTimeout(() => { records.delete(id) }, 300_000)
+          setTimeout(() => {
+            records.delete(id)
+          }, 300_000)
         }
       })
     })

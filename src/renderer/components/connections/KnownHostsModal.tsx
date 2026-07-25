@@ -52,9 +52,8 @@ export default function KnownHostsModal({ onClose }: { onClose: () => void }) {
       footer={<Button onClick={onClose}>Close</Button>}
     >
       <div className="kh-hint">
-        Hosts DevTerm has trusted on first connect. Forgetting a host means the
-        next connection will re-prompt for the key (useful when a host was
-        legitimately re-provisioned).
+        Hosts DevTerm has trusted on first connect. Forgetting a host means the next connection will
+        re-prompt for the key (useful when a host was legitimately re-provisioned).
       </div>
 
       {error && <div className="settings-error">{error}</div>}

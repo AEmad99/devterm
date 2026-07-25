@@ -49,7 +49,11 @@ test('rejects a non-positive input rate', () => {
 })
 
 test('concatFloat32 joins frames in order', () => {
-  const out = concatFloat32([new Float32Array([1, 2]), new Float32Array([3]), new Float32Array([4, 5])])
+  const out = concatFloat32([
+    new Float32Array([1, 2]),
+    new Float32Array([3]),
+    new Float32Array([4, 5])
+  ])
   assert.deepEqual(Array.from(out), [1, 2, 3, 4, 5])
 })
 

@@ -204,9 +204,7 @@ function ShowDetail({ show }: { show: GitShowResult }) {
           ))}
         </div>
       )}
-      {show.patch && (
-        <pre className="git-diff-pre">{show.patch}</pre>
-      )}
+      {show.patch && <pre className="git-diff-pre">{show.patch}</pre>}
     </div>
   )
 }

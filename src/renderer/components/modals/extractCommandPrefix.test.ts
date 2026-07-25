@@ -28,17 +28,11 @@ describe('extractCommandPrefix', () => {
   })
 
   it('keeps path-like tokens (bin/migrate)', () => {
-    assert.strictEqual(
-      extractCommandPrefix('run_command', 'bin/migrate --to=2'),
-      'bin/migrate'
-    )
+    assert.strictEqual(extractCommandPrefix('run_command', 'bin/migrate --to=2'), 'bin/migrate')
   })
 
   it('keeps scripts/run style paths', () => {
-    assert.strictEqual(
-      extractCommandPrefix('run_command', 'scripts/run --verbose'),
-      'scripts/run'
-    )
+    assert.strictEqual(extractCommandPrefix('run_command', 'scripts/run --verbose'), 'scripts/run')
   })
 
   it('drops flag-like arguments', () => {

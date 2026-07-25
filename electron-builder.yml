@@ -11,6 +11,16 @@ files:
   # Build artifacts and unused native/runtime packages that bloat every installer:
   # agent .js.map/.d.ts.map sources maps are never needed at runtime.
   - '!**/*.map'
+  - '!**/*.d.ts'
+  - '!**/*.d.mts'
+  - '!**/*.d.cts'
+  - '!**/*.test.ts'
+  - '!**/*.spec.ts'
+  - '!**/*.test.js'
+  - '!**/*.spec.js'
+  - '!**/tests/**'
+  - '!**/test/**'
+  - '!**/__tests__/**'
   # STT runs entirely in the renderer on onnxruntime-web's wasm (served from
   # out/renderer/ort, copied by scripts/setup-native.mjs). @huggingface/transformers
   # hard-depends on onnxruntime-node (~208MB) and sharp/@img (~19MB), but neither

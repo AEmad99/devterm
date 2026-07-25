@@ -190,10 +190,7 @@ export function on(sessionId: string, cb: (entry: BridgeActivityEntry) => void):
 export async function exportSession(sessionId: string, targetPath: string): Promise<number> {
   const entries = await listAsync(sessionId)
   const tmp = targetPath + '.tmp'
-  const body =
-    entries.length > 0
-      ? entries.map((e) => JSON.stringify(e)).join('\n') + '\n'
-      : ''
+  const body = entries.length > 0 ? entries.map((e) => JSON.stringify(e)).join('\n') + '\n' : ''
   await fs.writeFile(tmp, body, 'utf8')
   await fs.rename(tmp, targetPath)
   return entries.length

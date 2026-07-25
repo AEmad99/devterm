@@ -95,7 +95,10 @@ export default function ConnectionForm({
 
   useEffect(() => {
     window.devterm.connections.list().then(setSaved)
-    window.devterm.quickConnect.list().then(setRecent).catch(() => undefined)
+    window.devterm.quickConnect
+      .list()
+      .then(setRecent)
+      .catch(() => undefined)
   }, [])
 
   const set = (k: keyof FormState) => (e: React.ChangeEvent<HTMLInputElement>) =>

@@ -107,7 +107,12 @@ describe('bundled DevTerm Agent launch', () => {
   it('derives stable agent session IDs for saved connections and ad-hoc hosts', () => {
     // Saved connection profile
     assert.equal(
-      deriveAgentSessionId('session-999', { id: 'conn-prod-db-1', host: 'db.prod', port: 22, username: 'admin' }),
+      deriveAgentSessionId('session-999', {
+        id: 'conn-prod-db-1',
+        host: 'db.prod',
+        port: 22,
+        username: 'admin'
+      }),
       'remote-conn-prod-db-1'
     )
 
@@ -118,9 +123,6 @@ describe('bundled DevTerm Agent launch', () => {
     )
 
     // Fallback when profile is undefined
-    assert.equal(
-      deriveAgentSessionId('session-12345-abc', undefined),
-      'session-12345-abc'
-    )
+    assert.equal(deriveAgentSessionId('session-12345-abc', undefined), 'session-12345-abc')
   })
 })

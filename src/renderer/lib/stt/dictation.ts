@@ -71,7 +71,13 @@ class DictationController {
     const worker = this.ensureWorker(stt.modelId)
     const id = ++this.reqId
     this.lastTranscribeId = id
-    const req: STTRequest = { type: 'transcribe', id, modelId: stt.modelId, audio, language: stt.language }
+    const req: STTRequest = {
+      type: 'transcribe',
+      id,
+      modelId: stt.modelId,
+      audio,
+      language: stt.language
+    }
     // Transfer the audio buffer to avoid a copy; it's freshly allocated per
     // utterance by the resampler so detaching it is safe.
     worker.postMessage(req, [audio.buffer])

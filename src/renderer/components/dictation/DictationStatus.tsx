@@ -18,7 +18,8 @@ export default function DictationStatus() {
   let action: { text: string; onClick: () => void } | null = null
   switch (status) {
     case 'loading':
-      label = progress != null ? `Downloading model ${Math.round(progress * 100)}%` : 'Loading model…'
+      label =
+        progress != null ? `Downloading model ${Math.round(progress * 100)}%` : 'Loading model…'
       break
     case 'requesting-mic':
       label = 'Allow microphone…'

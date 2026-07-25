@@ -1,11 +1,24 @@
 import { execFile } from 'child_process'
 import { createHash } from 'crypto'
 import { promisify } from 'util'
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs'
+import {
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync
+} from 'fs'
 import { homedir, tmpdir } from 'os'
 import { join, sep } from 'path'
 import type { BridgeInfo } from '../mcp/server'
-import type { AgentCapabilities, AgentPreferences, AgentProviderStatus, SSHProfile } from '@shared/types'
+import type {
+  AgentCapabilities,
+  AgentPreferences,
+  AgentProviderStatus,
+  SSHProfile
+} from '@shared/types'
 import { buildAgentsMd } from './context'
 import { PI_EXTENSION_SOURCE } from './extension'
 
@@ -92,8 +105,19 @@ export function resolveBundledAgentCli(): string {
     const cli = join(root, '@earendil-works', 'pi-coding-agent', 'dist', 'cli.js')
     if (existsSync(cli)) return externalNodePath(cli)
   }
-  const fallback = join(process.cwd(), 'node_modules', '@earendil-works', 'pi-coding-agent', 'dist', 'cli.js')
-  if (existsSync(fallback) || process.env.NODE_ENV === 'test' || process.execPath.includes('node')) {
+  const fallback = join(
+    process.cwd(),
+    'node_modules',
+    '@earendil-works',
+    'pi-coding-agent',
+    'dist',
+    'cli.js'
+  )
+  if (
+    existsSync(fallback) ||
+    process.env.NODE_ENV === 'test' ||
+    process.execPath.includes('node')
+  ) {
     return fallback
   }
   throw new Error('Bundled DevTerm Agent runtime is missing from the application package.')
@@ -394,4 +418,3 @@ export function deriveAgentSessionId(sessionId: string, profile?: SSHProfile): s
   }
   return sessionId.replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 128)
 }
-

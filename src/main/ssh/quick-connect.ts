@@ -52,18 +52,12 @@ export async function list(): Promise<QuickConnectEntry[]> {
   return [...(await load())].sort((a, b) => b.lastUsedAt - a.lastUsedAt)
 }
 
-export async function record(
-  host: string,
-  port: number,
-  username: string
-): Promise<void> {
+export async function record(host: string, port: number, username: string): Promise<void> {
   const entries = await load()
   const dedupKey = `${host}|${port}|${username}`
   // Bump lastUsedAt and dedupe by host/port/username.
   const next: QuickConnectEntry = { host, port, username, lastUsedAt: Date.now() }
-  const idx = entries.findIndex(
-    (e) => `${e.host}|${e.port}|${e.username}` === dedupKey
-  )
+  const idx = entries.findIndex((e) => `${e.host}|${e.port}|${e.username}` === dedupKey)
   if (idx >= 0) entries.splice(idx, 1)
   entries.push(next)
   // Cap at MAX_ENTRIES, dropping the oldest.

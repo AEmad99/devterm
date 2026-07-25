@@ -38,9 +38,7 @@ if (onnxWasm) {
   // worker bundles into assets/, with ort/ a sibling one level up). Trailing
   // slash matters: ORT appends the filename.
   onnxWasm.wasmPaths =
-    self.location.protocol === 'file:'
-      ? new URL('../ort/', self.location.href).href
-      : '/ort/'
+    self.location.protocol === 'file:' ? new URL('../ort/', self.location.href).href : '/ort/'
   // The .jsep build bundles single- and multi-threaded in one file; cross-origin
   // isolation isn't guaranteed in Electron, so keep ORT to a single thread rather
   // than risk a SharedArrayBuffer failure.

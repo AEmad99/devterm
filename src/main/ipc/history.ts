@@ -52,7 +52,9 @@ function enqueueMutation<T>(op: () => Promise<T>): Promise<T> {
   return next
 }
 
-/** Read a text file (best-effort); empty if missing/unreadable. */async function readText(path: string): Promise<string> {
+/** Read a text file (best-effort); empty if missing/unreadable. */ async function readText(
+  path: string
+): Promise<string> {
   try {
     return await fs.readFile(path, 'utf8')
   } catch {

@@ -136,9 +136,12 @@ describe('Policy.evaluateCommand — benign commands', () => {
 describe('Policy.evaluateCommand — heredocs and pipes', () => {
   it('flags a heredoc to a sensitive file as destructive (dd of=)', () => {
     // Heredocs themselves aren't blocked, but destructive patterns inside still match.
-    const v = r(`cat <<EOF | dd of=/dev/sda
+    const v = r(
+      `cat <<EOF | dd of=/dev/sda
 stuff
-EOF`, 'read_only')
+EOF`,
+      'read_only'
+    )
     assert.strictEqual(v.allow, false)
   })
 

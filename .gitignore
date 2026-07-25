@@ -25,6 +25,7 @@ dist/
 .codex/
 .doc-build/
 docs/
+devterm-commercial/
 
 # local runtime terminal session state
 terminals/

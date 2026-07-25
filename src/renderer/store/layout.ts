@@ -145,7 +145,8 @@ export function computeLayout(root: LayoutNode | null): {
       leaves.push({ leaf: n, rect: r })
       return
     }
-    let sizes = n.sizes.length === n.children.length ? n.sizes : n.children.map(() => 1 / n.children.length)
+    let sizes =
+      n.sizes.length === n.children.length ? n.sizes : n.children.map(() => 1 / n.children.length)
     let total = sizes.reduce((a, b) => a + b, 0)
     if (total < 0.001) {
       sizes = n.children.map(() => 1 / n.children.length)
@@ -429,25 +430,29 @@ export const useLayout = create<LayoutState>((set) => ({
     return id
   },
 
-  setActiveGroup: (id) => set((s) => {
-    if (!s.groups.some((g) => g.id === id)) return s
-    return { activeGroupId: id, focusedId: null }
-  }),
+  setActiveGroup: (id) =>
+    set((s) => {
+      if (!s.groups.some((g) => g.id === id)) return s
+      return { activeGroupId: id, focusedId: null }
+    }),
 
   setActiveTab: (leafId, sid) =>
     set((s) =>
       patchActive(s, (g) => ({
-        root: g.root ? updateLeaf(g.root, leafId, (l) => (l.tabs.includes(sid) ? { ...l, active: sid } : l)) : g.root,
+        root: g.root
+          ? updateLeaf(g.root, leafId, (l) => (l.tabs.includes(sid) ? { ...l, active: sid } : l))
+          : g.root,
         activeLeaf: leafId
       }))
     ),
 
-  focusLeaf: (leafId) => set((s) =>
-    patchActive(s, (g) => {
-      if (!g.root || !findLeaf(g.root, leafId)) return null
-      return { root: g.root, activeLeaf: leafId }
-    })
-  ),
+  focusLeaf: (leafId) =>
+    set((s) =>
+      patchActive(s, (g) => {
+        if (!g.root || !findLeaf(g.root, leafId)) return null
+        return { root: g.root, activeLeaf: leafId }
+      })
+    ),
 
   reorderTab: (sid, targetLeafId, index) =>
     set((s) =>
@@ -462,7 +467,8 @@ export const useLayout = create<LayoutState>((set) => ({
                 ...l,
                 tabs: l.tabs.filter((t) => t !== sid)
               }))
-        if (!root || !findLeaf(root, targetLeafId)) return { root, activeLeaf: root ? firstLeaf(root).id : null }
+        if (!root || !findLeaf(root, targetLeafId))
+          return { root, activeLeaf: root ? firstLeaf(root).id : null }
         root = updateLeaf(root, targetLeafId, (l) => {
           const tabs = [...l.tabs]
           tabs.splice(Math.max(0, Math.min(index, tabs.length)), 0, sid)
@@ -487,7 +493,8 @@ export const useLayout = create<LayoutState>((set) => ({
                   ...l,
                   tabs: l.tabs.filter((t) => t !== sid)
                 }))
-          if (!root || !findLeaf(root, targetLeafId)) return { root, activeLeaf: root ? firstLeaf(root).id : null }
+          if (!root || !findLeaf(root, targetLeafId))
+            return { root, activeLeaf: root ? firstLeaf(root).id : null }
           root = updateLeaf(root, targetLeafId, (l) => ({
             ...l,
             tabs: [...l.tabs, sid],

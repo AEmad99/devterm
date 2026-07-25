@@ -194,8 +194,7 @@ export function registerGitIpc(ssh: SSHManager, getWindow: () => BrowserWindow |
   ipcMain.handle(
     IPC.gitTags,
     async (_e, target: { sessionId?: string; path: string }): Promise<GitTag[]> => {
-      if (target.sessionId)
-        return git.gitTagsRemote(execFor(ssh, target.sessionId), target.path)
+      if (target.sessionId) return git.gitTagsRemote(execFor(ssh, target.sessionId), target.path)
       return git.gitTagsLocal(target.path)
     }
   )
@@ -204,14 +203,22 @@ export function registerGitIpc(ssh: SSHManager, getWindow: () => BrowserWindow |
     IPC.gitFileAt,
     async (_e, target: { sessionId?: string; path: string; file: string; ref?: string }) => {
       if (target.sessionId)
-        return git.gitFileAtRemote(execFor(ssh, target.sessionId), target.path, target.file, target.ref)
+        return git.gitFileAtRemote(
+          execFor(ssh, target.sessionId),
+          target.path,
+          target.file,
+          target.ref
+        )
       return git.gitFileAtLocal(target.path, target.file, target.ref)
     }
   )
 
   ipcMain.handle(
     IPC.gitBlame,
-    async (_e, target: { sessionId?: string; path: string; file: string }): Promise<GitBlameLine[]> => {
+    async (
+      _e,
+      target: { sessionId?: string; path: string; file: string }
+    ): Promise<GitBlameLine[]> => {
       if (target.sessionId)
         return git.gitBlameRemote(execFor(ssh, target.sessionId), target.path, target.file)
       return git.gitBlameLocal(target.path, target.file)

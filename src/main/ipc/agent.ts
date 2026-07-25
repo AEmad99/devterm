@@ -83,10 +83,7 @@ export function registerAgentIpc(
   // auto-restart so a concurrent pair never runs two launchAgent calls (the
   // loser would leak a bridge port, heartbeat interval, and temp dir).
   const launchChains = new Map<string, Promise<unknown>>()
-  const enqueueLaunch = <T>(
-    sessionId: string,
-    fn: () => Promise<T>
-  ): Promise<T> => {
+  const enqueueLaunch = <T>(sessionId: string, fn: () => Promise<T>): Promise<T> => {
     const prev = launchChains.get(sessionId) ?? Promise.resolve()
     const next = prev.catch(() => undefined).then(fn)
     launchChains.set(

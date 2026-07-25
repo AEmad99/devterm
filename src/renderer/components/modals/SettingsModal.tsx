@@ -519,7 +519,9 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                             spellCheck={false}
                             placeholder="C:\Program Files\PowerShell\7\pwsh.exe"
                             value={defaultShell.path}
-                            onChange={(e) => setDefaultShell({ kind: 'custom', path: e.target.value })}
+                            onChange={(e) =>
+                              setDefaultShell({ kind: 'custom', path: e.target.value })
+                            }
                           />
                         </span>
                       </label>
@@ -577,7 +579,9 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                           step={1}
                           value={autoReconnect.maxAttempts}
                           disabled={!autoReconnect.enabled}
-                          onChange={(e) => setAutoReconnect({ maxAttempts: Number(e.target.value) })}
+                          onChange={(e) =>
+                            setAutoReconnect({ maxAttempts: Number(e.target.value) })
+                          }
                         />
                         <span className="settings-val-badge">{autoReconnect.maxAttempts}</span>
                       </span>
@@ -585,7 +589,12 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
 
                     <label className="settings-row-grid">
                       <span className="settings-label">
-                        Zen mode ({comboLabel(HOTKEYS.find((h) => h.id === 'toggleZenMode')!, window.devterm.platform === 'darwin')})
+                        Zen mode (
+                        {comboLabel(
+                          HOTKEYS.find((h) => h.id === 'toggleZenMode')!,
+                          window.devterm.platform === 'darwin'
+                        )}
+                        )
                       </span>
                       <span className="settings-control">
                         <input
@@ -653,7 +662,10 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                           {busy ? 'Loading…' : terminalBg.image ? 'Change image…' : 'Choose image…'}
                         </button>
                         {terminalBg.image && (
-                          <button className="danger small" onClick={() => setTerminalBg({ image: null })}>
+                          <button
+                            className="danger small"
+                            onClick={() => setTerminalBg({ image: null })}
+                          >
                             Remove
                           </button>
                         )}
@@ -700,7 +712,9 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                 <div className="settings-card">
                   <div className="settings-card-header">
                     <h4>Typography &amp; Text</h4>
-                    <p className="settings-card-subtitle">Font metrics applied to xterm rendering engine.</p>
+                    <p className="settings-card-subtitle">
+                      Font metrics applied to xterm rendering engine.
+                    </p>
                   </div>
                   <div className="settings-card-body">
                     <label className="settings-row-grid">
@@ -709,9 +723,13 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                         <select
                           className="settings-select"
                           value={FONT_PRESETS.includes(prefs.fontFamily) ? prefs.fontFamily : ''}
-                          onChange={(e) => e.target.value && setPrefs({ fontFamily: e.target.value })}
+                          onChange={(e) =>
+                            e.target.value && setPrefs({ fontFamily: e.target.value })
+                          }
                         >
-                          {!FONT_PRESETS.includes(prefs.fontFamily) && <option value="">(custom)</option>}
+                          {!FONT_PRESETS.includes(prefs.fontFamily) && (
+                            <option value="">(custom)</option>
+                          )}
                           {FONT_PRESETS.map((f) => (
                             <option key={f} value={f}>
                               {f.split(',')[0]}
@@ -756,7 +774,9 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                 <div className="settings-card">
                   <div className="settings-card-header">
                     <h4>Cursor &amp; Interaction</h4>
-                    <p className="settings-card-subtitle">Clipboard, cursor shape, and buffer options.</p>
+                    <p className="settings-card-subtitle">
+                      Clipboard, cursor shape, and buffer options.
+                    </p>
                   </div>
                   <div className="settings-card-body">
                     <label className="settings-row-grid">
@@ -820,7 +840,9 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                           step={500}
                           value={prefs.scrollback}
                           onChange={(e) =>
-                            setPrefs({ scrollback: clamp(Number(e.target.value) || 1000, 100, 100000) })
+                            setPrefs({
+                              scrollback: clamp(Number(e.target.value) || 1000, 100, 100000)
+                            })
                           }
                         />
                         <span className="settings-hint">lines</span>
@@ -837,7 +859,9 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                 <div className="settings-card">
                   <div className="settings-card-header">
                     <h4>Pane Rendering &amp; Side Panels</h4>
-                    <p className="settings-card-subtitle">Controls visual focus and auxiliary panels.</p>
+                    <p className="settings-card-subtitle">
+                      Controls visual focus and auxiliary panels.
+                    </p>
                   </div>
                   <div className="settings-card-body">
                     <label className="settings-row-grid">
@@ -889,7 +913,9 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                 <div className="settings-card">
                   <div className="settings-card-header">
                     <h4>Attention &amp; Notifications</h4>
-                    <p className="settings-card-subtitle">Alerts when background agent commands finish.</p>
+                    <p className="settings-card-subtitle">
+                      Alerts when background agent commands finish.
+                    </p>
                   </div>
                   <div className="settings-card-body">
                     <label className="settings-row-grid">
@@ -934,7 +960,9 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                           disabled={!attention.enabled || !attention.sound}
                           onChange={(e) => setAttention({ volume: Number(e.target.value) })}
                         />
-                        <span className="settings-val-badge">{Math.round(attention.volume * 100)}%</span>
+                        <span className="settings-val-badge">
+                          {Math.round(attention.volume * 100)}%
+                        </span>
                       </span>
                     </label>
 
@@ -971,7 +999,9 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                         <select
                           className="settings-select"
                           value={agentPreferences.provider}
-                          onChange={(e) => setAgentPreferences({ provider: e.target.value, model: '' })}
+                          onChange={(e) =>
+                            setAgentPreferences({ provider: e.target.value, model: '' })
+                          }
                         >
                           <option value="">Automatic (default)</option>
                           {agentCapabilities?.providers.map((provider) => (
@@ -998,7 +1028,8 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                           {agentCapabilities?.models
                             .filter(
                               (model) =>
-                                !agentPreferences.provider || model.provider === agentPreferences.provider
+                                !agentPreferences.provider ||
+                                model.provider === agentPreferences.provider
                             )
                             .slice(0, 500)
                             .map((model) => (
@@ -1039,7 +1070,9 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                         <input
                           type="checkbox"
                           checked={agentPreferences.resumeSessions}
-                          onChange={(e) => setAgentPreferences({ resumeSessions: e.target.checked })}
+                          onChange={(e) =>
+                            setAgentPreferences({ resumeSessions: e.target.checked })
+                          }
                         />
                       </span>
                     </label>
@@ -1065,7 +1098,9 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                             onChange={(e) =>
                               setAgentPreferences({
                                 trustedSkills: agentPreferences.trustedSkills.map((item) =>
-                                  item.path === skill.path ? { ...item, enabled: e.target.checked } : item
+                                  item.path === skill.path
+                                    ? { ...item, enabled: e.target.checked }
+                                    : item
                                 )
                               })
                             }
@@ -1098,7 +1133,8 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                         </button>
                         {agentCapabilities && (
                           <span className="settings-hint">
-                            v{agentCapabilities.runtimeVersion} · {agentCapabilities.models.length} models
+                            v{agentCapabilities.runtimeVersion} · {agentCapabilities.models.length}{' '}
+                            models
                           </span>
                         )}
                       </span>
@@ -1112,7 +1148,9 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                 <div className="settings-card">
                   <div className="settings-card-header">
                     <h4>Approval Guardrails</h4>
-                    <p className="settings-card-subtitle">Rules overriding per-session policy prompts.</p>
+                    <p className="settings-card-subtitle">
+                      Rules overriding per-session policy prompts.
+                    </p>
                   </div>
                   <div className="settings-card-body">
                     <div className="rule-form">
@@ -1127,7 +1165,9 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                         <select
                           className="settings-select"
                           value={ruleOutcome}
-                          onChange={(e) => setRuleOutcome(e.target.value as ApprovalRule['outcome'])}
+                          onChange={(e) =>
+                            setRuleOutcome(e.target.value as ApprovalRule['outcome'])
+                          }
                         >
                           <option value="allow">Allow (skip confirm)</option>
                           <option value="deny">Deny (always block)</option>
@@ -1207,7 +1247,12 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                     <div className="kb-list">
                       {HOTKEYS.filter((h) => !h.alias).map((h) => {
                         const custom = keybindings[h.id]
-                        const combo = custom ?? { mod: h.mod, shift: h.shift, alt: h.alt, key: h.key }
+                        const combo = custom ?? {
+                          mod: h.mod,
+                          shift: h.shift,
+                          alt: h.alt,
+                          key: h.key
+                        }
                         const isCapturing = capturing === h.id
                         return (
                           <div key={h.id} className="kb-row">
@@ -1215,7 +1260,10 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                             <span className={`kb-combo ${custom ? 'is-custom' : ''}`}>
                               {isCapturing
                                 ? 'Press new shortcut…'
-                                : comboLabel({ ...h, ...combo }, window.devterm.platform === 'darwin')}
+                                : comboLabel(
+                                    { ...h, ...combo },
+                                    window.devterm.platform === 'darwin'
+                                  )}
                             </span>
                             <button
                               className="ghost small"
@@ -1225,7 +1273,10 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                               Edit
                             </button>
                             {custom && (
-                              <button className="ghost small" onClick={() => setKeybinding(h.id, null)}>
+                              <button
+                                className="ghost small"
+                                onClick={() => setKeybinding(h.id, null)}
+                              >
                                 Reset
                               </button>
                             )}
@@ -1282,7 +1333,9 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                           className="settings-select"
                           value={stt.modelId}
                           disabled={!stt.enabled}
-                          onChange={(e) => setStt({ modelId: e.target.value as typeof stt.modelId })}
+                          onChange={(e) =>
+                            setStt({ modelId: e.target.value as typeof stt.modelId })
+                          }
                         >
                           <option value="tiny">Tiny — fastest (~75 MB)</option>
                           <option value="base">Base — balanced (~140 MB, recommended)</option>
@@ -1298,7 +1351,9 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                           className="settings-select"
                           value={stt.language}
                           disabled={!stt.enabled}
-                          onChange={(e) => setStt({ language: e.target.value as typeof stt.language })}
+                          onChange={(e) =>
+                            setStt({ language: e.target.value as typeof stt.language })
+                          }
                         >
                           <option value="auto">Auto-detect</option>
                           <option value="en">English</option>
@@ -1356,7 +1411,9 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                                   : 'No cached model found.'
                               )
                             } catch (err) {
-                              setSttHint(err instanceof Error ? err.message : 'Could not clear cache.')
+                              setSttHint(
+                                err instanceof Error ? err.message : 'Could not clear cache.'
+                              )
                             }
                           }}
                         >

@@ -59,7 +59,11 @@ export default function CommitModal({
             Amend
           </label>
           <label className="git-check">
-            <input type="checkbox" checked={signOff} onChange={(e) => setSignOff(e.target.checked)} />
+            <input
+              type="checkbox"
+              checked={signOff}
+              onChange={(e) => setSignOff(e.target.checked)}
+            />
             Sign-off
           </label>
           <span className="spacer" />
@@ -78,9 +82,7 @@ export default function CommitModal({
         value={message}
         onChange={(e) => setMessage(e.target.value)}
         placeholder={
-          amend
-            ? 'New commit message (leave blank to keep existing message)'
-            : 'Commit message'
+          amend ? 'New commit message (leave blank to keep existing message)' : 'Commit message'
         }
         spellCheck
         rows={amend ? 4 : 8}

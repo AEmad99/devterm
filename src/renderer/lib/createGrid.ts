@@ -1,6 +1,12 @@
 import { useSessions } from '../store/sessions'
 import { useLayout } from '../store/layout'
-import { buildGridSnapshot, clampGridSpec, gridCellCount, packIdsAsGrid, validateGridSpec } from './grid'
+import {
+  buildGridSnapshot,
+  clampGridSpec,
+  gridCellCount,
+  packIdsAsGrid,
+  validateGridSpec
+} from './grid'
 import { sendToSession } from './input'
 import { focusTerminal } from './terms'
 
@@ -151,11 +157,7 @@ export function createTerminalGrid(req: CreateGridRequest): CreateGridResult {
  * command exactly once per terminal. Used by both local and remote grids.
  * History is recorded once (not per cell). Total wait capped at 5s.
  */
-function maybeBroadcast(
-  ids: string[],
-  req: CreateGridRequest,
-  scope: 'local' | 'remote'
-): void {
+function maybeBroadcast(ids: string[], req: CreateGridRequest, scope: 'local' | 'remote'): void {
   if (!req.broadcast?.command.trim() || ids.length === 0) return
   const command = req.broadcast.command
   const execute = req.broadcast.execute
