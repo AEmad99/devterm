@@ -4,7 +4,7 @@ Guidance for coding agents working in the DevTerm repository.
 
 DevTerm is an Electron 29 desktop terminal: local shells (prebuilt node-pty), SSH/SFTP sessions, workspaces, file browsing/editing (CodeMirror 6), an in-app browser, snippets, a Warp-style Git panel, a persistent transfer queue, offline Whisper dictation, global terminal search, and an embedded multi-provider **DevTerm Agent** with seven external CLI fallbacks (`pi`, `claude`, `opencode`, `kimi`, `grok`, `codex`, `antigravity`). Every agent runs in a local PTY and reaches the remote host only through DevTerm's in-process MCP bridge. Stack: electron-vite, TypeScript strict, React 18, Zustand, xterm.js, ssh2, marked + DOMPurify, `@huggingface/transformers`, `@earendil-works/pi-coding-agent` (bundled runtime), dedicated `node` binary for the agent, electron-updater, zod.
 
-**Current version:** `package.json` → `1.3.12`. Top-level views: **Terminals** (always-mounted workspace: group tabs, split panes, local/remote/browser sessions), **Connections**, **Workspaces**, **Snippets**. DevTerm is a normal framed desktop app; the first screen is the terminal, not a marketing page.
+**Current version:** `package.json` → `1.3.13`. Top-level views: **Terminals** (always-mounted workspace: group tabs, split panes, local/remote/browser sessions), **Connections**, **Workspaces**, **Snippets**. DevTerm is a normal framed desktop app; the first screen is the terminal, not a marketing page.
 
 ## Architecture
 
@@ -160,7 +160,7 @@ Bridge & tools:
 
 ## Packaging
 
-- Version = `package.json` `version` (currently **1.3.12**).
+- Version = `package.json` `version` (currently **1.3.13**).
 - electron-builder: `appId com.devterm.app`, `productName DevTerm`, NSIS x64 (`oneClick: false`, `perMachine: false`, `allowToChangeInstallationDirectory: true`), unsigned (`verifyUpdateCodeSignature: false`), `npmRebuild: false`, GitHub publish provider `AEmad99/devterm`.
 - NSIS reinstall close logic: `resources/installer.nsh` (`nsis.include`) — `customInit` + `customCheckAppRunning` force-kill install-dir processes (required because elevated UAC inner installs skip stock `CHECK_APP_RUNNING`); `customUnInstallCheck*` lets upgrades continue if the old uninstaller fails.
 - `asarUnpack` must include: `node-pty`, `ort/*.wasm`, bundled agent Node binary (`node/bin/**`), `@earendil-works/**`, and the listed agent runtime dependency packages in `electron-builder.yml`. Do not drop those entries or the built-in agent fails to start from the installed app.
@@ -184,6 +184,7 @@ Bridge & tools:
 
 ## Recent release notes (for context)
 
+- **1.3.13** — Remote detached sessions: probe `tmux -V` before `exec` so hosts with a broken tmux install (e.g. missing `libncurses.so.5`) fall back to a normal shell instead of killing the SSH channel.
 - **1.3.12** — Terminal host padding fix: moved xterm padding to inner `.xterm` element so `FitAddon` accurately calculates row height without clipping bottom prompt lines at the status bar.
 - **1.3.11** — Persistent remote agent task memory, stable per-connection/per-host session keys across tab opens and app restarts, titlebar badge cleanup, and modal scroll padding overflow fix.
 - **1.3.10** — Robust NSIS installer process termination: normalize 8.3 short paths, tree-kill lingering agent processes (node.exe), and override customRemoveFiles to eliminate 'DevTerm can't be closed' prompt during reinstalls/upgrades.
