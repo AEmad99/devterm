@@ -107,6 +107,32 @@ export const DEFAULT_RECONNECT_POLICY: ReconnectPolicy = {
 }
 
 /**
+ * Remote shell one-liner for detached POSIX sessions.
+ *
+ * `command -v tmux` alone is not enough: some hosts ship a tmux binary that
+ * fails at load time (missing libncurses.so.5, wrong ABI, etc.). In that case
+ * a bare `exec tmux …` leaves the operator looking at a dynamic-linker error
+ * with no usable shell. We probe with `tmux -V` first, only exec when the
+ * binary actually runs, and fall through to a normal interactive shell with a
+ * clear message otherwise. Echo is suppressed so the bootstrap line does not
+ * clutter the terminal.
+ */
+export function buildDetachedSessionBootstrap(sessionId: string): string {
+  const tmuxName = `devterm-${sessionId.replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 48)}`
+  return (
+    `stty -echo 2>/dev/null; ` +
+    `if command -v tmux >/dev/null 2>&1 && tmux -V >/dev/null 2>&1; then ` +
+    `exec tmux new-session -A -s '${tmuxName}' || ` +
+    `printf '\\r\\n[DevTerm: tmux failed to start; using a normal shell]\\r\\n'; ` +
+    `elif command -v tmux >/dev/null 2>&1; then ` +
+    `printf '\\r\\n[DevTerm: tmux is installed but not usable (missing libraries?); using a normal shell]\\r\\n'; ` +
+    `else ` +
+    `printf '\\r\\n[DevTerm: tmux is not installed; using a normal shell]\\r\\n'; ` +
+    `fi; stty echo 2>/dev/null\n`
+  )
+}
+
+/**
  * Detect whether the open shell on a Windows remote is PowerShell. The probe
  * is `echo $PSVersionTable` (PowerShell evaluates the variable, cmd.exe
  * echoes it literally). Wrapped in a timeout so a misbehaving host can't
@@ -548,11 +574,7 @@ export class SSHManager {
         })
 
         if (s.shellRequest?.detached && (s.context.os === 'linux' || s.context.os === 'mac')) {
-          const tmuxName = `devterm-${sessionId.replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 48)}`
-          channel.write(
-            `if command -v tmux >/dev/null 2>&1; then exec tmux new-session -A -s '${tmuxName}'; ` +
-              `else printf '\\r\\n[DevTerm: tmux is not installed; using a normal shell]\\r\\n'; fi\n`
-          )
+          channel.write(buildDetachedSessionBootstrap(sessionId))
         }
 
         // Best-effort OSC 7 cwd reporting for POSIX remotes so the file explorer
