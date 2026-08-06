@@ -1216,55 +1216,84 @@
   font-size: 13px;
 }
 .new-term-modal {
-  width: 560px;
-  gap: 12px;
+  width: 440px;
+  gap: 10px;
 }
-.nt-choices {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
-  margin: 4px 0 2px;
-}
-/* Scoped under `.modal` so these win over the generic `.modal button`
-   accent-pill style — otherwise the cards paint solid accent and the
-   accent-coloured icons become invisible against it. */
-.modal .nt-choice {
+.nt-list {
   display: flex;
   flex-direction: column;
+  gap: 6px;
+  margin: 6px 0 2px;
+}
+/* Scoped under `.modal` so these win over the generic `.modal button`
+   accent-pill style — otherwise the rows paint solid accent and the
+   accent-coloured icons become invisible against it. */
+.modal .nt-row {
+  display: flex;
   align-items: center;
-  gap: 5px;
-  padding: 22px 14px;
+  gap: 12px;
+  padding: 9px 12px;
   background: linear-gradient(180deg, var(--panel-2), var(--panel));
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: 10px;
   color: var(--fg);
   font-weight: 400;
+  text-align: left;
   cursor: pointer;
   transition:
     border-color 0.12s ease,
     transform 0.06s ease,
     box-shadow 0.12s ease;
 }
-.modal .nt-choice:hover {
+.modal .nt-row:hover {
   border-color: var(--accent);
   filter: none;
   transform: translateY(-1px);
   box-shadow: var(--shadow-2);
 }
-.modal .nt-choice:active {
-  transform: translateY(-1px);
+.modal .nt-row:active {
+  transform: translateY(0);
 }
-.nt-ico {
-  font-size: 30px;
+.nt-tile {
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-term);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--accent);
+}
+.nt-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 .nt-label {
-  font-weight: 700;
-  font-size: 14px;
+  font-weight: 600;
+  font-size: 13.5px;
+  color: var(--fg);
 }
 .nt-desc {
-  font-size: 11px;
+  font-size: 11.5px;
   color: var(--muted);
-  text-align: center;
+}
+.nt-go {
+  flex: 0 0 auto;
+  font-size: 16px;
+  line-height: 1;
+  color: var(--muted);
+  transition:
+    transform 0.12s ease,
+    color 0.12s ease;
+}
+.modal .nt-row:hover .nt-go {
+  transform: translateX(2px);
+  color: var(--accent);
 }
 
 /* --- Create grid modal --- */
@@ -1801,6 +1830,12 @@
   padding: 0;
   display: grid;
   grid-template-columns: 220px 1fr;
+  /* The single row must track the modal's own height, not the content: with an
+     implicit auto row the track grows to the tallest item's content (~2000px on
+     a full tab), both columns overflow the dialog, and `overflow: hidden` clips
+     the bottom — leaving the inner scrollers at scrollHeight == clientHeight
+     (never scrollable) and every option below the fold unreachable. */
+  grid-template-rows: minmax(0, 1fr);
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
@@ -1815,6 +1850,10 @@
   flex-direction: column;
   padding: 16px 12px;
   user-select: none;
+  /* Grid items default to a content-based minimum height, which would let the
+     sidebar burst past the row and clip its footer on short windows; 0 lets
+     `.settings-nav` (flex:1 + overflow-y:auto) do the scrolling instead. */
+  min-height: 0;
 }
 
 .settings-sidebar-header {
@@ -1837,16 +1876,37 @@
 .settings-nav {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 2px;
   flex: 1;
   overflow-y: auto;
+}
+
+/* Categories are grouped under a small caps section label so the sidebar reads
+   as a table of contents instead of a flat list of eight. */
+.settings-nav-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.settings-nav-group + .settings-nav-group {
+  margin-top: 12px;
+}
+.settings-nav-label {
+  padding: 0 10px 4px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--muted);
+  opacity: 0.85;
+  user-select: none;
 }
 
 .settings-nav-item {
   display: flex;
   align-items: center;
   gap: 9px;
-  padding: 7px 10px;
+  padding: 6px 10px;
   border-radius: 6px;
   background: transparent;
   color: var(--muted);
@@ -1856,6 +1916,13 @@
   cursor: pointer;
   text-align: left;
   transition: background 0.12s ease, color 0.12s ease;
+}
+.settings-nav-item svg {
+  flex: 0 0 auto;
+  opacity: 0.8;
+}
+.settings-nav-item.active svg {
+  opacity: 1;
 }
 
 .settings-nav-item:hover {
@@ -1881,6 +1948,10 @@
   flex-direction: column;
   background: var(--panel);
   min-width: 0;
+  /* Same guard as the sidebar: keep the column clamped to the grid row so
+     `.settings-content-body` scrolls instead of the whole pane overflowing
+     the dialog and getting clipped. */
+  min-height: 0;
   height: 100%;
 }
 
@@ -1888,15 +1959,30 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 20px;
+  gap: 12px;
+  padding: 15px 20px 13px;
   border-bottom: 1px solid var(--border);
+}
+
+.settings-content-titles {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
 }
 
 .settings-tab-title {
   margin: 0;
-  font-size: 16px;
-  font-weight: 600;
+  font-size: 16.5px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
   color: var(--fg);
+}
+
+.settings-content-sub {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--muted);
 }
 
 .settings-content-body {
@@ -1930,6 +2016,7 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
+  box-shadow: inset 0 1px 0 var(--elevate-hi);
 }
 
 .settings-card-header h4 {
@@ -1949,6 +2036,13 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+/* Hairline between stacked setting rows so each control reads as its own
+   entry. Direct-child scope keeps nested widgets (rule forms, provider key
+   editors) untouched. */
+.settings-card-body > .settings-row-grid + .settings-row-grid {
+  border-top: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+  padding-top: 10px;
 }
 
 .settings-row-grid {

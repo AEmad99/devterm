@@ -414,9 +414,10 @@ function PaneChrome({
   const syncNav = useCallback(() => {
     const el = tabsRef.current
     if (!el) return
+    const collapsed = el.clientWidth < 28
     setNav({
-      left: el.scrollLeft > 1,
-      right: el.scrollLeft + el.clientWidth < el.scrollWidth - 1
+      left: !collapsed && el.scrollLeft > 1,
+      right: !collapsed && el.scrollLeft + el.clientWidth < el.scrollWidth - 1
     })
   }, [])
   // Re-measure when the tab count changes; width changes are handled by the

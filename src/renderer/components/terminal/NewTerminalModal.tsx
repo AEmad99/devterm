@@ -31,34 +31,54 @@ export default function NewTerminalModal({
         onClick={(e) => e.stopPropagation()}
       >
         <h3 id="new-term-title">New tab</h3>
-        <div className="nt-choices">
-          <button className="nt-choice" onClick={onLocal}>
-            <span className="nt-ico">
-              <IconLocal size={28} />
+        <div className="nt-list" role="menu" aria-labelledby="new-term-title">
+          <button className="nt-row" role="menuitem" onClick={onLocal}>
+            <span className="nt-tile">
+              <IconLocal size={18} />
             </span>
-            <span className="nt-label">Local</span>
-            <span className="nt-desc">A shell on this machine</span>
+            <span className="nt-text">
+              <span className="nt-label">Local shell</span>
+              <span className="nt-desc">A terminal on this machine</span>
+            </span>
+            <span className="nt-go" aria-hidden="true">
+              ›
+            </span>
           </button>
-          <button className="nt-choice" onClick={onRemote}>
-            <span className="nt-ico">
-              <IconRemote size={28} />
+          <button className="nt-row" role="menuitem" onClick={onRemote}>
+            <span className="nt-tile">
+              <IconRemote size={18} />
             </span>
-            <span className="nt-label">Remote (SSH)</span>
-            <span className="nt-desc">Connect to a server</span>
+            <span className="nt-text">
+              <span className="nt-label">Remote (SSH)</span>
+              <span className="nt-desc">Connect to a saved server</span>
+            </span>
+            <span className="nt-go" aria-hidden="true">
+              ›
+            </span>
           </button>
-          <button className="nt-choice" onClick={onBrowser}>
-            <span className="nt-ico">
-              <IconBrowser size={28} />
+          <button className="nt-row" role="menuitem" onClick={onBrowser}>
+            <span className="nt-tile">
+              <IconBrowser size={18} />
             </span>
-            <span className="nt-label">Browser</span>
-            <span className="nt-desc">Open a web page in a pane</span>
+            <span className="nt-text">
+              <span className="nt-label">Browser</span>
+              <span className="nt-desc">Open a web page in a pane</span>
+            </span>
+            <span className="nt-go" aria-hidden="true">
+              ›
+            </span>
           </button>
-          <button className="nt-choice" onClick={onGrid}>
-            <span className="nt-ico">
-              <IconGrid size={28} />
+          <button className="nt-row" role="menuitem" onClick={onGrid}>
+            <span className="nt-tile">
+              <IconGrid size={18} />
             </span>
-            <span className="nt-label">Grid</span>
-            <span className="nt-desc">Create a pane arrangement</span>
+            <span className="nt-text">
+              <span className="nt-label">Grid</span>
+              <span className="nt-desc">Arrange multiple panes</span>
+            </span>
+            <span className="nt-go" aria-hidden="true">
+              ›
+            </span>
           </button>
         </div>
         <div className="actions">

@@ -412,6 +412,13 @@
   border-radius: 4px;
   cursor: pointer;
 }
+/* Hairline grouping clipboard actions (Copy/Paste) from selection actions
+   (Select All/Clear). */
+.term-context-menu-sep {
+  height: 1px;
+  margin: 3px 6px;
+  background: var(--border);
+}
 .term-context-menu-item:hover:not(:disabled) {
   background: var(--hover);
 }
@@ -560,10 +567,15 @@
 .view-toggle {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 6px;
   padding: 6px 8px;
   background: var(--panel);
   border-bottom: 1px solid var(--border);
+}
+.view-toggle > .policy-field,
+.view-toggle > .agent-btn {
+  flex: 0 0 auto;
 }
 .view-toggle button {
   background: var(--panel-2);

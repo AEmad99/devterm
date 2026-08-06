@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ComponentType,
+  type CSSProperties
+} from 'react'
 import { useSettings } from '../../store/settings'
 import { useSessions } from '../../store/sessions'
 import { useShallow } from 'zustand/react/shallow'
@@ -54,6 +61,50 @@ const TAB_TITLES: Record<SettingsTab, string> = {
   dictation: 'Voice & Dictation',
   system: 'System, Performance & Backup'
 }
+
+/** Compact labels for the sidebar — the full titles headline each pane. */
+const TAB_NAV_LABELS: Record<SettingsTab, string> = {
+  general: 'General & Shell',
+  appearance: 'Appearance',
+  terminal: 'Terminal & Font',
+  layout: 'Layout & Panes',
+  agent: 'DevTerm Agent',
+  hotkeys: 'Keybindings',
+  dictation: 'Voice Dictation',
+  system: 'System & Data'
+}
+
+const TAB_SUBTITLES: Record<SettingsTab, string> = {
+  general: 'Default shell, QuickConnect and session startup',
+  layout: 'Pane arrangement, tab strips and focus mode',
+  appearance: 'Themes, window chrome and accent colors',
+  terminal: 'Font, cursor, scrollback and rendering',
+  agent: 'Model routing, fallbacks and guardrail policy',
+  hotkeys: 'Rebind application shortcuts',
+  dictation: 'Push-to-talk Whisper dictation and models',
+  system: 'Performance snapshot, backups and app data'
+}
+
+const TAB_ICONS: Record<SettingsTab, ComponentType<{ size?: number }>> = {
+  general: IconLocal,
+  layout: IconGroup,
+  appearance: IconPalette,
+  terminal: IconTerminals,
+  agent: IconSettings,
+  hotkeys: IconKeyboard,
+  dictation: IconMic,
+  system: IconRefresh
+}
+
+/** Sidebar ordering: related categories grouped under a small section label
+    instead of one flat list of eight. */
+const NAV_GROUPS: Array<{ label: string; tabs: SettingsTab[] }> = [
+  { label: 'Workspace', tabs: ['general', 'layout'] },
+  { label: 'Appearance', tabs: ['appearance', 'terminal'] },
+  { label: 'Agent', tabs: ['agent'] },
+  { label: 'Input', tabs: ['hotkeys', 'dictation'] },
+  { label: 'System', tabs: ['system'] }
+]
 
 /** A live mini-preview of a theme: a tiny terminal window with a prompt + colours. */
 function ThemeSwatch({
@@ -389,62 +440,26 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
             <h2 id="settings-modal-title">Settings</h2>
           </div>
           <nav className="settings-nav" aria-label="Settings categories">
-            <button
-              className={`settings-nav-item ${activeTab === 'general' ? 'active' : ''}`}
-              onClick={() => setActiveTab('general')}
-            >
-              <IconLocal size={15} />
-              <span>General &amp; Shell</span>
-            </button>
-            <button
-              className={`settings-nav-item ${activeTab === 'appearance' ? 'active' : ''}`}
-              onClick={() => setActiveTab('appearance')}
-            >
-              <IconPalette size={15} />
-              <span>Appearance</span>
-            </button>
-            <button
-              className={`settings-nav-item ${activeTab === 'terminal' ? 'active' : ''}`}
-              onClick={() => setActiveTab('terminal')}
-            >
-              <IconTerminals size={15} />
-              <span>Terminal &amp; Font</span>
-            </button>
-            <button
-              className={`settings-nav-item ${activeTab === 'layout' ? 'active' : ''}`}
-              onClick={() => setActiveTab('layout')}
-            >
-              <IconGroup size={15} />
-              <span>Layout &amp; Panes</span>
-            </button>
-            <button
-              className={`settings-nav-item ${activeTab === 'agent' ? 'active' : ''}`}
-              onClick={() => setActiveTab('agent')}
-            >
-              <IconSettings size={15} />
-              <span>DevTerm Agent</span>
-            </button>
-            <button
-              className={`settings-nav-item ${activeTab === 'hotkeys' ? 'active' : ''}`}
-              onClick={() => setActiveTab('hotkeys')}
-            >
-              <IconKeyboard size={15} />
-              <span>Keybindings</span>
-            </button>
-            <button
-              className={`settings-nav-item ${activeTab === 'dictation' ? 'active' : ''}`}
-              onClick={() => setActiveTab('dictation')}
-            >
-              <IconMic size={15} />
-              <span>Voice Dictation</span>
-            </button>
-            <button
-              className={`settings-nav-item ${activeTab === 'system' ? 'active' : ''}`}
-              onClick={() => setActiveTab('system')}
-            >
-              <IconRefresh size={15} />
-              <span>System &amp; Data</span>
-            </button>
+            {NAV_GROUPS.map((group) => (
+              <div className="settings-nav-group" key={group.label}>
+                <div className="settings-nav-label">{group.label}</div>
+                {group.tabs.map((tab) => {
+                  const Icon = TAB_ICONS[tab]
+                  const active = activeTab === tab
+                  return (
+                    <button
+                      key={tab}
+                      className={`settings-nav-item ${active ? 'active' : ''}`}
+                      aria-current={active ? 'page' : undefined}
+                      onClick={() => setActiveTab(tab)}
+                    >
+                      <Icon size={15} />
+                      <span>{TAB_NAV_LABELS[tab]}</span>
+                    </button>
+                  )
+                })}
+              </div>
+            ))}
           </nav>
 
           <div className="settings-sidebar-footer">
@@ -464,7 +479,10 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
         {/* Right Main Content Pane */}
         <div className="settings-content-area">
           <div className="settings-content-header">
-            <h3>{TAB_TITLES[activeTab]}</h3>
+            <div className="settings-content-titles">
+              <h3 className="settings-tab-title">{TAB_TITLES[activeTab]}</h3>
+              <p className="settings-content-sub">{TAB_SUBTITLES[activeTab]}</p>
+            </div>
             <button className="modal-x" onClick={onClose} title="Close Settings">
               <IconClose size={16} />
             </button>

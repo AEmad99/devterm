@@ -154,7 +154,12 @@ export function attachClipboard(term: Terminal, host: HTMLElement): () => void {
     menu.style.left = `${x}px`
     menu.style.top = `${y}px`
     menu.setAttribute('role', 'menu')
-    const items: Array<{ label: string; disabled?: boolean; onClick: () => void }> = [
+    const items: Array<{
+      label?: string
+      sep?: boolean
+      disabled?: boolean
+      onClick?: () => void
+    }> = [
       {
         label: 'Copy',
         disabled: !hasSelection,
@@ -164,6 +169,7 @@ export function attachClipboard(term: Terminal, host: HTMLElement): () => void {
         label: 'Paste',
         onClick: () => void pasteFromClipboard()
       },
+      { sep: true },
       {
         label: 'Select All',
         onClick: () => term.selectAll()
@@ -175,14 +181,21 @@ export function attachClipboard(term: Terminal, host: HTMLElement): () => void {
       }
     ]
     for (const it of items) {
+      if (it.sep) {
+        const sep = document.createElement('div')
+        sep.className = 'term-context-menu-sep'
+        sep.setAttribute('role', 'separator')
+        menu.appendChild(sep)
+        continue
+      }
       const btn = document.createElement('button')
       btn.type = 'button'
       btn.className = 'term-context-menu-item'
-      btn.textContent = it.label
+      btn.textContent = it.label ?? ''
       btn.disabled = !!it.disabled
       btn.addEventListener('click', () => {
         closeMenu()
-        if (!it.disabled) it.onClick()
+        if (!it.disabled) it.onClick?.()
       })
       menu.appendChild(btn)
     }
