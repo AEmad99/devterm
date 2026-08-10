@@ -29,14 +29,14 @@ import * as knownHosts from '../ssh/knownHosts'
 import * as settingsIo from '../settings/settings-io'
 import * as quickConnect from '../ssh/quick-connect'
 import { setPersistEnabled } from '../search'
+import { broadcast } from './broadcast'
 
 function pushBridgeActivity(
-  getWindow: () => BrowserWindow | null,
+  _getWindow: () => BrowserWindow | null,
   sessionId: string,
   entry: import('@shared/types').BridgeActivityEntry
 ): void {
-  const win = getWindow()
-  win?.webContents.send(`${IPC.bridgeActivityEvent}:${sessionId}`, entry)
+  broadcast(`${IPC.bridgeActivityEvent}:${sessionId}`, entry)
 }
 
 export function registerFoundationIpc(

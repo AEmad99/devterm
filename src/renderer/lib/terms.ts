@@ -10,6 +10,10 @@ const registry = new Map<string, Terminal>()
 // command palette) can't address pty:input themselves — they go through the
 // sender TerminalView wires up for its own keystrokes.
 const inputs = new Map<string, (data: string) => void>()
+// Per-session find-bar openers. App's global Ctrl/Cmd+Shift+F must work even
+// when focus is on chrome/explorer — not only when xterm's custom key handler
+// is the event target.
+const findOpeners = new Map<string, () => void>()
 
 export function registerTerminal(id: string, term: Terminal): void {
   registry.set(id, term)
@@ -18,10 +22,21 @@ export function registerTerminal(id: string, term: Terminal): void {
 export function unregisterTerminal(id: string): void {
   registry.delete(id)
   inputs.delete(id)
+  // Find openers are owned by a separate TerminalView effect (find bar can
+  // outlive a temporary xterm dispose/recreate); do not clear them here.
 }
 
 export function registerTerminalInput(id: string, send: (data: string) => void): void {
   inputs.set(id, send)
+}
+
+/** Register a callback that opens (or re-focuses) the per-pane find bar. */
+export function registerFindOpener(id: string, open: () => void): void {
+  findOpeners.set(id, open)
+}
+
+export function unregisterFindOpener(id: string): void {
+  findOpeners.delete(id)
 }
 
 /** Write to a session's shell exactly as if typed. False if it isn't wired yet. */
@@ -40,4 +55,15 @@ export function focusTerminal(id: string): void {
 /** Clear a session's terminal scrollback (keeps the current prompt line). */
 export function clearTerminal(id: string): void {
   registry.get(id)?.clear()
+}
+
+/**
+ * Open the find bar on a mounted terminal session. Returns false when no
+ * opener is registered (browser panes, pending sessions, unmounted).
+ */
+export function openTerminalFind(id: string): boolean {
+  const open = findOpeners.get(id)
+  if (!open) return false
+  open()
+  return true
 }

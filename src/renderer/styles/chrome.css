@@ -325,6 +325,43 @@
   contain: layout;
   isolation: isolate;
 }
+/* Pane attention rings (cmux-inspired). Inset box-shadow only — never reparent
+   xterm or animate the canvas. Hidden slots omit these classes (TerminalLayout)
+   so background groups don't keep pulsing. */
+.term-slot.attention-needed {
+  animation: dt-attention-pulse-ok 1.6s var(--ease-out, ease) infinite;
+}
+.term-slot.attention-pending {
+  animation: dt-attention-pulse-pending 1.2s var(--ease-out, ease) infinite;
+}
+@keyframes dt-attention-pulse-ok {
+  0%,
+  100% {
+    box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--tab-status-attention) 55%, transparent);
+  }
+  50% {
+    box-shadow: inset 0 0 0 3px color-mix(in srgb, var(--tab-status-attention) 90%, transparent);
+  }
+}
+@keyframes dt-attention-pulse-pending {
+  0%,
+  100% {
+    box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--tab-status-warn) 55%, transparent);
+  }
+  50% {
+    box-shadow: inset 0 0 0 3px color-mix(in srgb, var(--tab-status-warn) 90%, transparent);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .term-slot.attention-needed,
+  .term-slot.attention-pending {
+    animation: none;
+    box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--tab-status-attention) 70%, transparent);
+  }
+  .term-slot.attention-pending {
+    box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--tab-status-warn) 75%, transparent);
+  }
+}
 /* Dim panes that are visible but not part of the active leaf, so multi-pane
    layouts make focus obvious at a glance. This is a translucent overlay, NOT a
    filter on the slot: filtering a live xterm canvas pays a full filtered

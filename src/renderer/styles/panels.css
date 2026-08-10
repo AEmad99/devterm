@@ -1547,6 +1547,15 @@
   border: 1px dashed var(--border);
   border-radius: 12px;
 }
+.manager-hint {
+  color: var(--muted);
+  font-size: 12.5px;
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  background: color-mix(in srgb, var(--accent) 10%, var(--panel));
+  border: 1px solid color-mix(in srgb, var(--accent) 25%, var(--border));
+  border-radius: 8px;
+}
 .manager-list {
   display: flex;
   flex-direction: column;
@@ -2101,7 +2110,9 @@
   padding: 12px 20px;
   border-top: 1px solid var(--border);
   display: flex;
+  align-items: center;
   justify-content: flex-end;
+  gap: 12px;
   background: var(--panel);
 }
 
@@ -2240,6 +2251,96 @@
   box-shadow: var(--shadow-pop);
 }
 
+/* --- Settings: keybindings list (Global Shortcuts) --- */
+.kb-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin: 0;
+}
+.kb-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(7.5rem, max-content) auto;
+  align-items: center;
+  gap: 12px 14px;
+  padding: 8px 2px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+  font-size: 12.5px;
+  color: var(--fg);
+}
+.kb-row:last-child {
+  border-bottom: none;
+}
+.kb-label {
+  min-width: 0;
+  line-height: 1.35;
+  color: var(--fg);
+}
+.kb-combo {
+  justify-self: end;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  text-align: center;
+  color: var(--muted);
+  background: var(--bg-term, var(--panel-2));
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 3px 8px;
+  line-height: 1.3;
+}
+.kb-combo.is-custom {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-term, var(--panel-2)));
+}
+.kb-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  min-width: 5.75rem;
+}
+.kb-actions .ghost.small {
+  min-width: 2.75rem;
+  justify-content: center;
+  padding: 4px 8px;
+  font-size: 11.5px;
+  font-weight: 500;
+  line-height: 1.2;
+}
+.kb-actions-spacer {
+  display: inline-block;
+  min-width: 2.75rem;
+  height: 1px;
+}
+.kb-capture-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--bg) 55%, transparent);
+  backdrop-filter: blur(2px);
+  border-radius: inherit;
+  cursor: pointer;
+}
+.kb-capture-box {
+  padding: 14px 20px;
+  border-radius: 8px;
+  border: 1px solid var(--accent);
+  background: var(--panel);
+  color: var(--fg);
+  font-size: 13px;
+  box-shadow: var(--shadow-pop, 0 8px 28px rgba(0, 0, 0, 0.35));
+  pointer-events: none;
+}
+.settings-card-body:has(> .kb-list) {
+  position: relative;
+}
+
 /* --- Settings: small section hint under a heading --- */
 .settings-sub-hint {
   font-size: 11.5px;
@@ -2257,6 +2358,39 @@
   font-size: 11.5px;
   color: var(--muted);
   margin-left: 10px;
+}
+.settings-version-badge {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12.5px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--bg-soft, color-mix(in srgb, var(--fg) 6%, transparent));
+  color: var(--fg);
+}
+.settings-footer-version {
+  margin-right: auto;
+  font-size: 11.5px;
+  color: var(--muted);
+  font-family: var(--font-mono, ui-monospace, monospace);
+}
+.update-status {
+  margin-left: 0;
+  margin-top: 4px;
+  line-height: 1.4;
+}
+.update-status-up-to-date {
+  color: var(--ok, var(--muted));
+}
+.update-status-available,
+.update-status-downloaded {
+  color: var(--accent, var(--fg));
+}
+.update-status-error {
+  color: var(--danger, var(--muted));
+}
+.update-status-disabled {
+  color: var(--muted);
 }
 .rule-form {
   display: flex;

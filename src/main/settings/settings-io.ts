@@ -82,7 +82,7 @@ export function defaultSettingsSnapshot(): SettingsSnapshot {
       lineHeight: 1.0,
       cursorStyle: 'block',
       cursorBlink: true,
-      scrollback: 1000,
+      scrollback: 10000,
       copyOnSelect: false,
       rightClickPaste: false,
       scrollSensitivity: 1,
@@ -111,6 +111,7 @@ export function defaultSettingsSnapshot(): SettingsSnapshot {
       trustedSkills: []
     },
     remoteDetachedSessions: true,
+    sessionRestore: true,
     transfersPanelOpen: false,
     defaultShell: { kind: 'auto' } as DefaultShellPref,
     gitPanelOpen: false,
@@ -181,6 +182,7 @@ export function mergeSnapshotWithDefaults(
   if (typeof raw.remoteDetachedSessions === 'boolean') {
     out.remoteDetachedSessions = raw.remoteDetachedSessions
   }
+  if (typeof raw.sessionRestore === 'boolean') out.sessionRestore = raw.sessionRestore
   if (typeof raw.transfersPanelOpen === 'boolean') out.transfersPanelOpen = raw.transfersPanelOpen
   if (isObj(raw.defaultShell)) out.defaultShell = raw.defaultShell as DefaultShellPref
   if (typeof raw.gitPanelOpen === 'boolean') out.gitPanelOpen = raw.gitPanelOpen

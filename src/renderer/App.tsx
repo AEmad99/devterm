@@ -23,8 +23,9 @@ import { useEditors } from './store/editors'
 import { useLayout, DEFAULT_GROUP, groupActiveSession, allLeaves } from './store/layout'
 import { useSettings } from './store/settings'
 import { matchHotkey, resolveHotkeys, comboLabel, HOTKEYS, type HotkeyId } from './lib/hotkeys'
-import { focusTerminal, clearTerminal } from './lib/terms'
+import { focusTerminal, clearTerminal, openTerminalFind } from './lib/terms'
 import { capturableSessions, captureWorkspace, launchWorkspaceIntoGroup } from './lib/workspace'
+import { persistSessionRestore, restoreSessionSnapshot } from './lib/session-restore'
 import { dictation } from './lib/stt/dictation'
 import { useDictation } from './store/dictation'
 import DictationStatus from './components/dictation/DictationStatus'
@@ -100,9 +101,10 @@ export default function App() {
 
   useEffect(() => {
     window.devterm.localContext().then(setLocal)
-    // Boot-time auto-launch: open every workspace with `autoLaunch: true`
-    // in its own group. If none are set, fall back to the default behaviour
-    // of opening a single local terminal so the workspace isn't empty.
+    // Boot order:
+    //  1) Workspaces with autoLaunch (operator-chosen presets win)
+    //  2) Last-session restore (if enabled and a snapshot exists)
+    //  3) Empty local shell so the window is never blank
     void (async () => {
       const wsList = await window.devterm.workspaces.list()
       const toAutoLaunch = wsList.filter((w) => w.autoLaunch)
@@ -115,12 +117,50 @@ export default function App() {
         }
         return
       }
-      if (sessionCount === 0) addLocal()
+      if (useSettings.getState().sessionRestore) {
+        try {
+          const snap = await window.devterm.sessionRestore.load()
+          if (snap?.groups?.length) {
+            const conns = await window.devterm.connections.list()
+            const ok = await restoreSessionSnapshot(snap, conns)
+            if (ok) return
+          }
+        } catch {
+          /* fall through to empty local */
+        }
+      }
+      if (useSessions.getState().sessions.length === 0) addLocal()
     })()
     window.devterm.ssh
       .setReconnectPolicy(useSettings.getState().autoReconnect)
       .catch(() => undefined)
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Agent UI modes can change from a floating OS window; apply locally so the
+  // main session store (docked/hidden/floating chrome) stays in sync.
+  useEffect(() => {
+    return window.devterm.agent.onUiModeChanged(({ sessionId, mode }) => {
+      useSessions.getState().setAgentUi(sessionId, { mode }, { localOnly: true })
+    })
+  }, [])
+
+  // Debounced last-session snapshot so a crash/quit can reopen the layout.
+  useEffect(() => {
+    if (!useSettings.getState().sessionRestore) return
+    const t = window.setTimeout(() => {
+      void persistSessionRestore()
+    }, 1500)
+    return () => clearTimeout(t)
+  }, [sessionsRef, groups])
+
+  // Flush restore snapshot on page hide / unload (best-effort).
+  useEffect(() => {
+    const flush = () => {
+      if (useSettings.getState().sessionRestore) void persistSessionRestore()
+    }
+    window.addEventListener('pagehide', flush)
+    return () => window.removeEventListener('pagehide', flush)
   }, [])
 
   useEffect(() => {
@@ -264,9 +304,11 @@ export default function App() {
           case 'zoomReset':
             useSettings.getState().setPrefs({ fontSize: 14 })
             break
-          case 'find':
-            // TODO: wire to xterm find addon when active terminal is focused
+          case 'find': {
+            const activeId = useSessions.getState().activeId
+            if (activeId) openTerminalFind(activeId)
             break
+          }
           case 'settings':
             setShowSettings((v) => !v)
             break

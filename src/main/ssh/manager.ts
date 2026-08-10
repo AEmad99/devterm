@@ -116,19 +116,79 @@ export const DEFAULT_RECONNECT_POLICY: ReconnectPolicy = {
  * binary actually runs, and fall through to a normal interactive shell with a
  * clear message otherwise. Echo is suppressed so the bootstrap line does not
  * clutter the terminal.
+ *
+ * When tmux works we create-or-reuse the named session detached, turn on
+ * `allow-passthrough` (tmux 3.3+ defaults it off, which swallows OSC 7/133
+ * from the pane shell), then attach. Without passthrough the file explorer
+ * cannot follow `cd` inside the detached session.
  */
 export function buildDetachedSessionBootstrap(sessionId: string): string {
   const tmuxName = `devterm-${sessionId.replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 48)}`
   return (
     `stty -echo 2>/dev/null; ` +
     `if command -v tmux >/dev/null 2>&1 && tmux -V >/dev/null 2>&1; then ` +
-    `exec tmux new-session -A -s '${tmuxName}' || ` +
+    // -Ad: create session if missing, do nothing if it already exists (no attach).
+    `tmux new-session -Ad -s '${tmuxName}' 2>/dev/null; ` +
+    // Best-effort: older tmux lacks the option and ignores the error.
+    `tmux set-option -t '${tmuxName}' allow-passthrough on 2>/dev/null; ` +
+    `exec tmux attach-session -t '${tmuxName}' || ` +
     `printf '\\r\\n[DevTerm: tmux failed to start; using a normal shell]\\r\\n'; ` +
     `elif command -v tmux >/dev/null 2>&1; then ` +
     `printf '\\r\\n[DevTerm: tmux is installed but not usable (missing libraries?); using a normal shell]\\r\\n'; ` +
     `else ` +
     `printf '\\r\\n[DevTerm: tmux is not installed; using a normal shell]\\r\\n'; ` +
     `fi; stty echo 2>/dev/null\n`
+  )
+}
+
+/**
+ * One-liner injected into a remote POSIX shell after open so DevTerm can track
+ * cwd (OSC 7) and command-input anchors (OSC 133 ;A/;B).
+ *
+ * Inside tmux, bare OSC sequences are consumed for pane metadata and never
+ * reach the outer terminal. When `$TMUX` is set we:
+ *  1. enable `allow-passthrough` on the current session (best-effort), and
+ *  2. wrap each OSC in the DCS form `\ePtmux;\e<esc-doubled-payload>\e\\`
+ * so xterm.js still sees OSC 7 / 133 and the file explorer follows `cd`.
+ */
+export function buildPosixShellIntegrationSetup(): string {
+  // DCS-wrapped OSC payloads: every ESC in the inner sequence is doubled.
+  // BEL (`\007`) is left as-is. Terminator is ESC \ (ST).
+  const osc7Tmux =
+    `printf '\\033Ptmux;\\033\\033]7;file://%s%s\\007\\033\\\\' "\${HOSTNAME:-h}" "$PWD"`
+  const osc7Plain = `printf '\\033]7;file://%s%s\\007' "\${HOSTNAME:-h}" "$PWD"`
+  const osc133ATmux = `printf '\\033Ptmux;\\033\\033]133;A\\007\\033\\\\'`
+  const osc133BTmux = `printf '\\033Ptmux;\\033\\033]133;B\\007\\033\\\\'`
+  const osc133APlain = `printf '\\033]133;A\\007'`
+  const osc133BPlain = `printf '\\033]133;B\\007'`
+
+  return (
+    `stty -echo 2>/dev/null; ` +
+    // If we are already inside tmux (DevTerm detach or user-started), allow
+    // DCS passthrough so the OSC wrappers below can reach DevTerm.
+    `[ -n "\${TMUX-}" ] && tmux set-option allow-passthrough on 2>/dev/null; ` +
+    `__dt7() { ` +
+    `if [ -n "\${TMUX-}" ]; then ${osc7Tmux}; ` +
+    `else ${osc7Plain}; fi; }; ` +
+    `if [ -n "\${TMUX-}" ]; then ` +
+    `__dtA=$(${osc133ATmux}); __dtB=$(${osc133BTmux}); ` +
+    `else ` +
+    `__dtA=$(${osc133APlain}); __dtB=$(${osc133BPlain}); ` +
+    `fi; ` +
+    `if [ -n "$ZSH_VERSION" ]; then ` +
+    `case " \${precmd_functions[*]} " in *" __dt7 "*) ;; *) precmd_functions+=(__dt7);; esac; ` +
+    // When under tmux, only treat the prompt as already integrated if it has
+    // the DCS wrap (Ptmux). A bare OSC 133 from a pre-fix session is replaced
+    // so autosuggest anchors still reach the outer terminal.
+    `if [ -n "\${TMUX-}" ]; then case "$PROMPT" in *Ptmux*133*) ;; *) PROMPT="%{$__dtA%}$PROMPT%{$__dtB%}";; esac; ` +
+    `else case "$PROMPT" in *133*) ;; *) PROMPT="%{$__dtA%}$PROMPT%{$__dtB%}";; esac; fi; ` +
+    `else ` +
+    `case ":$PROMPT_COMMAND:" in *__dt7*) ;; *) PROMPT_COMMAND="__dt7\${PROMPT_COMMAND:+;$PROMPT_COMMAND}";; esac; ` +
+    `if [ -n "$BASH_VERSION" ]; then ` +
+    `if [ -n "\${TMUX-}" ]; then case "$PS1" in *Ptmux*133*) ;; *) PS1="\\[$__dtA\\]$PS1\\[$__dtB\\]";; esac; ` +
+    `else case "$PS1" in *133*) ;; *) PS1="\\[$__dtA\\]$PS1\\[$__dtB\\]";; esac; fi; fi; ` +
+    `fi; ` +
+    `stty echo 2>/dev/null; clear; __dt7\n`
   )
 }
 
@@ -587,28 +647,20 @@ export class SSHManager {
         // shown; we then clear and emit once for the initial cwd. (A plain sh/dash
         // login falls through to the bash branch, which it ignores, so only the
         // initial directory is reported — acceptable for that rare case.)
+        //
+        // When the shell lives inside tmux (DevTerm detached sessions, or a
+        // user-started tmux), bare OSC 7 is swallowed unless wrapped — see
+        // buildPosixShellIntegrationSetup.
         if (s.context.os === 'linux' || s.context.os === 'mac') {
-          // __dt7 emits OSC 7 (cwd). __dtA/__dtB are OSC 133 ;A/;B semantic-prompt
-          // markers wrapped into PS1 (bash) / PROMPT (zsh) as non-printing regions
-          // so the renderer knows where the typed command begins — the anchor the
-          // history autocomplete reads from. Each wrap is guarded (case "*133*") so
-          // it's idempotent and only applied to the shell that supports it.
-          const setup =
-            `stty -echo 2>/dev/null; ` +
-            `__dt7() { printf '\\033]7;file://%s%s\\007' "\${HOSTNAME:-h}" "$PWD"; }; ` +
-            `__dtA=$(printf '\\033]133;A\\007'); __dtB=$(printf '\\033]133;B\\007'); ` +
-            `if [ -n "$ZSH_VERSION" ]; then ` +
-            `case " \${precmd_functions[*]} " in *" __dt7 "*) ;; *) precmd_functions+=(__dt7);; esac; ` +
-            `case "$PROMPT" in *133*) ;; *) PROMPT="%{$__dtA%}$PROMPT%{$__dtB%}";; esac; ` +
-            `else ` +
-            `case ":$PROMPT_COMMAND:" in *__dt7*) ;; *) PROMPT_COMMAND="__dt7\${PROMPT_COMMAND:+;$PROMPT_COMMAND}";; esac; ` +
-            `if [ -n "$BASH_VERSION" ]; then case "$PS1" in *133*) ;; *) PS1="\\[$__dtA\\]$PS1\\[$__dtB\\]";; esac; fi; ` +
-            `fi; ` +
-            `stty echo 2>/dev/null; clear; __dt7\n`
+          // Detached sessions need a beat longer: bootstrap runs `exec tmux
+          // attach` first, and the OSC setup must land in the pane shell after
+          // attach, not in the login shell that is about to be replaced.
+          const setupDelayMs = s.shellRequest?.detached ? 1200 : 700
+          const setup = buildPosixShellIntegrationSetup()
           const t = setTimeout(() => {
             if (s.setupTimers) s.setupTimers.delete(t)
             if (s.shell && this.sessions.has(sessionId)) s.shell.write(setup)
-          }, 700)
+          }, setupDelayMs)
           if (!s.setupTimers) s.setupTimers = new Set()
           s.setupTimers.add(t)
         } else if (s.context.os === 'windows') {

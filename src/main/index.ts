@@ -104,6 +104,7 @@ import { registerContextIpc } from './ipc/context'
 import { registerFileIpc } from './ipc/files'
 import { registerAgentIpc, type AgentController } from './ipc/agent'
 import { registerConnectionsIpc } from './ipc/connections'
+import { registerSessionRestoreIpc } from './ipc/session-restore'
 import { registerWorkspacesIpc } from './ipc/workspaces'
 import { registerSnippetsIpc } from './ipc/snippets'
 import { registerHistoryIpc } from './ipc/history'
@@ -115,7 +116,7 @@ import { registerGitIpc } from './ipc/git'
 import { registerTransfersIpc } from './ipc/transfers'
 import { registerBrowserIpc } from './ipc/browser'
 import { registerPerformanceIpc } from './ipc/performance'
-import { initAutoUpdater } from './updater'
+import { initAutoUpdater, registerUpdaterIpc } from './updater'
 import { flushScheduledSnapshot } from './settings/settings-io'
 import type { PtyManager } from './pty/manager'
 import type { SSHManager } from './ssh/manager'
@@ -247,6 +248,7 @@ function registerIpc(): void {
   fileController = registerFileIpc(sshManager, () => mainWindow)
   agentController = registerAgentIpc(sshManager, ptyManager, () => mainWindow)
   registerConnectionsIpc()
+  registerSessionRestoreIpc()
   registerWorkspacesIpc()
   registerSnippetsIpc()
   registerHistoryIpc(sshManager)
@@ -260,6 +262,7 @@ function registerIpc(): void {
   transfersController = registerTransfersIpc(sshManager, () => mainWindow)
   browserController = registerBrowserIpc(() => mainWindow)
   registerPerformanceIpc()
+  registerUpdaterIpc()
 
   // Global search handler (MVP)
   ipcMain.handle(IPC.searchQuery, (_e, q: string) => globalSearchIndex.query(q))

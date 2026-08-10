@@ -3,6 +3,35 @@
 All notable changes to DevTerm are documented here. The most recent section is
 at the top. Dates are ISO `YYYY-MM-DD`.
 
+## 1.3.15 — 2026-08-10
+
+### Added
+
+- **Agent UI modes:** docked side pane, floating OS window (multi-monitor), or
+  hidden — process lifetime is independent of placement. Hide/float/dock do not
+  kill the agent; only Stop / tab close / quit do.
+- **Ask agent strip** under remote shells: pick backend + policy, type a prompt,
+  Ctrl+Enter / Ask starts or reuses the agent and injects into its PTY.
+- **Floating agent window** with Dock / Hide / Stop; OS close demotes to hidden.
+  Approvals and bridge/PTY events work across main + float windows.
+- **Session restore MVP:** optional restore of last groups (local + saved SSH)
+  from `userData/session-restore.json` after workspace auto-launch.
+- **Import `~/.ssh/config`** into Connections (concrete Hosts only; no passwords).
+
+### Fixed / improved
+
+- Global per-pane **Find** hotkey opens the SearchBar via `openTerminalFind`
+  (no longer a no-op when focus is outside xterm).
+- Default terminal **scrollback** raised to 10 000 lines.
+- `agent:open` is idempotent unless `forceRestart`, so mode switches reattach.
+
+## 1.3.14 — 2026-08-06
+
+### Fixed
+
+- Settings modal scrolling (issue #4): long tabs scroll inside the content body
+  instead of overflowing under `overflow: hidden`.
+
 ## 1.3.7 — 2026-07-22
 
 ### Fixed

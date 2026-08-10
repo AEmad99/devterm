@@ -257,13 +257,25 @@ export default function TerminalLayout({
           const isInactive =
             inactivePaneDimming && !isFocused && visible && !!slot && !slot.activeLeaf
           const style: React.CSSProperties = isFocused ? { ...FOCUSED_SLOT } : slotBodyStyle(rect)
+          // Pane-level attention ring (cmux-style): approval pending beats
+          // finished-agent attention. Hidden slots skip the pulse so off-screen
+          // groups don't animate forever.
+          const attentionClass =
+            !isHidden && s.agentPendingApproval
+              ? 'attention-pending'
+              : !isHidden && s.needsAttention
+                ? 'attention-needed'
+                : ''
           return (
             <div
               key={s.id}
               className={`term-slot ${isFocused ? 'focused' : ''} ${isHidden ? 'term-hidden' : ''} ${
                 isInactive ? 'inactive' : ''
-              }`}
+              } ${attentionClass}`.trim()}
               style={style}
+              data-attention={
+                s.agentPendingApproval ? 'pending' : s.needsAttention ? 'needed' : undefined
+              }
               onMouseDownCapture={() => focusSession(s.id)}
             >
               {isFocused && (

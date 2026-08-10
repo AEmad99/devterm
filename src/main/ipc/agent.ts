@@ -7,7 +7,10 @@ import {
   type AgentBridgeStatus,
   type AgentOpenOpts,
   type AgentOpenResult,
+  type AgentSessionStatus,
   type AgentTrustedSkill,
+  type AgentUiMode,
+  type AgentWindowOpenOpts,
   type ConfirmRequest,
   type HostContext,
   type SSHStatus
@@ -32,6 +35,7 @@ import { buildCodexMd, prepareCodexLaunch } from '../agent/codex-launch'
 import { buildAntigravityMd, prepareAntigravityLaunch } from '../agent/antigravity-launch'
 import type { SSHManager } from '../ssh/manager'
 import type { PtyManager } from '../pty/manager'
+import { broadcast } from './broadcast'
 
 interface AgentSession {
   bridge: McpBridge
@@ -99,24 +103,44 @@ export function registerAgentIpc(
   // (`agent:set-cwd`). The bridge reads it through a getter so the agent's
   // commands follow the operator's `cd` without restarting the agent.
   const cwds = new Map<string, string>()
+  /** Last UI placement reported by the main renderer (docked / floating / hidden). */
+  const uiModes = new Map<string, AgentUiMode>()
+  /** Floating agent BrowserWindows keyed by remote session id. */
+  const agentWindows = new Map<string, BrowserWindow>()
 
-  const send = (channel: string, ...args: unknown[]) => {
+  const sendMain = (channel: string, ...args: unknown[]) => {
     const win = getWindow()
     if (win && !win.isDestroyed()) win.webContents.send(channel, ...args)
+  }
+
+  const closeAgentWindow = (sessionId: string, notifyMain = false): void => {
+    const win = agentWindows.get(sessionId)
+    if (!win) return
+    agentWindows.delete(sessionId)
+    if (!win.isDestroyed()) {
+      // Avoid re-entrant closed handler notifying while we are tearing down.
+      win.removeAllListeners('closed')
+      win.close()
+    }
+    if (notifyMain) sendMain(IPC.agentWindowClosed, sessionId)
   }
 
   // Ask the renderer to approve a guarded action (confirm mode / destructive op).
   // Resolves 'timeout' if the operator never answers — distinct from an explicit
   // 'denied' so the tool can tell the agent the connection is still healthy.
+  // Broadcast so a floating agent window can approve without switching back.
   const confirm = (sessionId: string, tool: string, detail: string): Promise<ConfirmOutcome> =>
     new Promise((resolve) => {
       const reqId = randomUUID()
       const timer = setTimeout(() => {
-        if (pendingConfirms.delete(reqId)) resolve('timeout')
+        if (pendingConfirms.delete(reqId)) {
+          broadcast(IPC.agentConfirmResolved, { reqId, sessionId })
+          resolve('timeout')
+        }
       }, 120000)
       pendingConfirms.set(reqId, { sessionId, resolve, timer })
       const req: ConfirmRequest = { reqId, sessionId, tool, detail }
-      send(IPC.agentConfirm, req)
+      broadcast(IPC.agentConfirm, req)
     })
 
   ipcMain.on(IPC.agentConfirmReply, (_e, reqId: string, approved: boolean) => {
@@ -125,12 +149,15 @@ export function registerAgentIpc(
       pendingConfirms.delete(reqId)
       clearTimeout(r.timer)
       r.resolve(approved ? 'approved' : 'denied')
+      broadcast(IPC.agentConfirmResolved, { reqId, sessionId: r.sessionId })
     }
   })
 
   const closeOne = async (sessionId: string): Promise<void> => {
     const s = sessions.get(sessionId)
     if (!s) return
+    closeAgentWindow(sessionId, false)
+    uiModes.delete(sessionId)
     // Fail any in-flight approval prompts for this session immediately —
     // otherwise the tool call pends until the 120s timeout after the pane is
     // already gone.
@@ -139,6 +166,7 @@ export function registerAgentIpc(
       pendingConfirms.delete(reqId)
       clearTimeout(pending.timer)
       pending.resolve('denied')
+      broadcast(IPC.agentConfirmResolved, { reqId, sessionId })
     }
     s.sshDispose?.()
     s.ptyDispose?.()
@@ -176,11 +204,23 @@ export function registerAgentIpc(
   })
 
   const sendBridgeStatus = (sessionId: string, status: AgentBridgeStatus) =>
-    send(`${IPC.agentBridgeStatus}:${sessionId}`, status)
+    broadcast(`${IPC.agentBridgeStatus}:${sessionId}`, status)
 
   ipcMain.handle(IPC.agentOpen, async (_e, opts: AgentOpenOpts): Promise<AgentOpenResult> => {
     // Serialize against reconnect auto-restart for the same session id.
     return enqueueLaunch(opts.sessionId, async () => {
+      const existing = sessions.get(opts.sessionId)
+      // Reattach path: UI mode changes (dock / float / hide / ask-strip) must
+      // not kill a healthy agent. Restart only when explicitly requested or
+      // when the previous agent process has already exited.
+      if (existing && !opts.forceRestart && !existing.agentExited) {
+        const bridge = existing.bridge.getStatus()
+        return {
+          ptyId: existing.ptyId,
+          mcpUrl: bridge.mcpUrl ?? '',
+          reused: true
+        }
+      }
       // Close any previous session for the same id (Restart button path). Await
       // so the old bridge / temp dir are fully gone before we allocate new ones.
       if (sessions.has(opts.sessionId)) await closeOne(opts.sessionId)
@@ -486,16 +526,112 @@ export function registerAgentIpc(
     }
   }
 
-  ipcMain.handle(IPC.agentStatus, (_e, sessionId: string): AgentBridgeStatus | null => {
-    return sessions.get(sessionId)?.bridge.getStatus() ?? null
+  ipcMain.handle(IPC.agentStatus, (_e, sessionId: string): AgentSessionStatus | null => {
+    const s = sessions.get(sessionId)
+    if (!s) return null
+    const opts = s.lastOpts
+    if (!opts) return null
+    return {
+      ptyId: s.ptyId,
+      kind: opts.kind,
+      mode: opts.mode,
+      bridge: s.bridge.getStatus(),
+      uiMode: uiModes.get(sessionId)
+    }
   })
 
   ipcMain.on(IPC.agentClose, (_e, sessionId: string) => {
     void closeOne(sessionId)
   })
 
+  ipcMain.on(IPC.agentSetUiMode, (_e, sessionId: string, mode: AgentUiMode | null) => {
+    if (typeof sessionId !== 'string') return
+    if (mode === null || mode === undefined) {
+      uiModes.delete(sessionId)
+      closeAgentWindow(sessionId, false)
+      broadcast(IPC.agentUiModeChanged, { sessionId, mode: null })
+      return
+    }
+    if (mode !== 'docked' && mode !== 'floating' && mode !== 'hidden') return
+    uiModes.set(sessionId, mode)
+    if (mode !== 'floating') closeAgentWindow(sessionId, false)
+    // Tell every renderer (especially the main window) so store state matches
+    // when a floating window docks/hides itself.
+    broadcast(IPC.agentUiModeChanged, { sessionId, mode })
+  })
+
+  ipcMain.handle(IPC.agentWindowOpen, async (_e, opts: AgentWindowOpenOpts): Promise<void> => {
+    if (!opts || typeof opts.sessionId !== 'string') return
+    const { sessionId } = opts
+    const existing = agentWindows.get(sessionId)
+    if (existing && !existing.isDestroyed()) {
+      if (existing.isMinimized()) existing.restore()
+      existing.show()
+      existing.focus()
+      return
+    }
+
+    uiModes.set(sessionId, 'floating')
+    const hostLabel = (opts.title || 'agent').replace(/[^\w.@\-: ]+/g, '').slice(0, 64)
+    const win = new BrowserWindow({
+      width: 720,
+      height: 640,
+      minWidth: 420,
+      minHeight: 320,
+      show: false,
+      frame: true,
+      transparent: false,
+      backgroundColor: '#16161e',
+      title: hostLabel ? `Agent · ${hostLabel}` : 'DevTerm Agent',
+      autoHideMenuBar: true,
+      webPreferences: {
+        preload: join(__dirname, '../preload/index.js'),
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+        autoplayPolicy: 'no-user-gesture-required',
+        backgroundThrottling: false,
+        webviewTag: false
+      }
+    })
+    agentWindows.set(sessionId, win)
+
+    const params = new URLSearchParams({
+      sessionId,
+      kind: opts.kind,
+      mode: opts.mode,
+      title: opts.title ?? ''
+    })
+
+    win.on('ready-to-show', () => win.show())
+    win.on('closed', () => {
+      if (agentWindows.get(sessionId) === win) agentWindows.delete(sessionId)
+      // User closed the pop-out: keep the agent process, demote UI to hidden.
+      if (uiModes.get(sessionId) === 'floating') {
+        uiModes.set(sessionId, 'hidden')
+        broadcast(IPC.agentUiModeChanged, { sessionId, mode: 'hidden' as AgentUiMode })
+      }
+      sendMain(IPC.agentWindowClosed, sessionId)
+    })
+    win.on('focus', () => win.flashFrame(false))
+
+    if (process.env.ELECTRON_RENDERER_URL) {
+      await win.loadURL(`${process.env.ELECTRON_RENDERER_URL}/agent-window.html?${params}`)
+    } else {
+      await win.loadFile(join(__dirname, '../renderer/agent-window.html'), {
+        query: Object.fromEntries(params.entries())
+      })
+    }
+  })
+
+  ipcMain.on(IPC.agentWindowClose, (_e, sessionId: string) => {
+    if (typeof sessionId !== 'string') return
+    closeAgentWindow(sessionId, false)
+  })
+
   return {
     closeAll: async () => {
+      for (const id of [...agentWindows.keys()]) closeAgentWindow(id, false)
       for (const id of [...sessions.keys()]) await closeOne(id)
     }
   }

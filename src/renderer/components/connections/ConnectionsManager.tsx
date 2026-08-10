@@ -20,6 +20,8 @@ export default function ConnectionsManager({ onConnect }: { onConnect: () => voi
   // null = form closed; { initial } = open (initial undefined → new connection).
   const [form, setForm] = useState<{ initial?: SavedConnection } | null>(null)
   const [knownHostsOpen, setKnownHostsOpen] = useState(false)
+  const [importBusy, setImportBusy] = useState(false)
+  const [importHint, setImportHint] = useState<string | null>(null)
 
   const refresh = () => window.devterm.connections.list().then(setSaved)
   useEffect(() => {
@@ -35,21 +37,41 @@ export default function ConnectionsManager({ onConnect }: { onConnect: () => voi
 
   const del = async (id: string) => setSaved(await window.devterm.connections.delete(id))
 
+  const importSshConfig = async () => {
+    setImportBusy(true)
+    setImportHint(null)
+    try {
+      const result = await window.devterm.connections.importSshConfig()
+      setSaved(result.connections)
+      setImportHint(result.message ?? `Imported ${result.added}`)
+    } catch (e) {
+      setImportHint((e as Error).message || String(e))
+    } finally {
+      setImportBusy(false)
+    }
+  }
+
   return (
     <div className="manager">
       <div className="manager-head">
         <h2>Saved connections</h2>
         <span className="spacer" />
         <Button onClick={() => setKnownHostsOpen(true)}>Known hosts…</Button>
+        <Button onClick={() => void importSshConfig()} disabled={importBusy}>
+          {importBusy ? 'Importing…' : 'Import SSH config'}
+        </Button>
         <Button variant="primary" onClick={() => setForm({})}>
           <IconPlus size={15} />
           New connection
         </Button>
       </div>
 
+      {importHint && <div className="manager-hint">{importHint}</div>}
+
       {saved.length === 0 ? (
         <div className="manager-empty">
-          No saved connections yet. Click “＋ New connection” to add one.
+          No saved connections yet. Click “＋ New connection” or import from{' '}
+          <code>~/.ssh/config</code>.
         </div>
       ) : (
         <ManagerList>

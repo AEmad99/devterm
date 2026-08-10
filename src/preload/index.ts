@@ -13,9 +13,14 @@ import {
   type FileContent,
   type AgentOpenOpts,
   type AgentOpenResult,
+  type AgentSessionStatus,
+  type AgentUiMode,
+  type AgentWindowOpenOpts,
   type AgentBridgeStatus,
   type ConfirmRequest,
   type SavedConnection,
+  type SessionRestoreSnapshot,
+  type SshConfigImportResult,
   type Workspace,
   type Snippet,
   type HistoryQuery,
@@ -133,23 +138,46 @@ const api: DevTermApi = {
     chooseSkill: () => ipcRenderer.invoke(IPC.agentChooseSkill),
     close: (sessionId: string) => ipcRenderer.send(IPC.agentClose, sessionId),
     setCwd: (sessionId: string, cwd: string) => ipcRenderer.send(IPC.agentSetCwd, sessionId, cwd),
-    status: (sessionId: string): Promise<AgentBridgeStatus | null> =>
+    status: (sessionId: string): Promise<AgentSessionStatus | null> =>
       ipcRenderer.invoke(IPC.agentStatus, sessionId),
     onBridgeStatus: (sessionId, cb) =>
       subscribe<AgentBridgeStatus>(`${IPC.agentBridgeStatus}:${sessionId}`, cb),
     onConfirm: (cb) => subscribe<ConfirmRequest>(IPC.agentConfirm, cb),
+    onConfirmResolved: (cb) =>
+      subscribe<{ reqId: string; sessionId: string }>(IPC.agentConfirmResolved, cb),
     replyConfirm: (reqId: string, approved: boolean) =>
-      ipcRenderer.send(IPC.agentConfirmReply, reqId, approved)
+      ipcRenderer.send(IPC.agentConfirmReply, reqId, approved),
+    setUiMode: (sessionId: string, mode: AgentUiMode | null) =>
+      ipcRenderer.send(IPC.agentSetUiMode, sessionId, mode),
+    openWindow: (opts: AgentWindowOpenOpts): Promise<void> =>
+      ipcRenderer.invoke(IPC.agentWindowOpen, opts),
+    closeWindow: (sessionId: string) => ipcRenderer.send(IPC.agentWindowClose, sessionId),
+    onWindowClosed: (cb) => subscribe<string>(IPC.agentWindowClosed, cb),
+    onUiModeChanged: (cb) =>
+      subscribe<{ sessionId: string; mode: AgentUiMode | null }>(IPC.agentUiModeChanged, cb)
   },
   performance: {
     snapshot: () => ipcRenderer.invoke(IPC.performanceSnapshot)
+  },
+  app: {
+    getVersion: (): Promise<string> => ipcRenderer.invoke(IPC.appGetVersion),
+    checkForUpdates: (): Promise<import('@shared/types').AppUpdateCheckResult> =>
+      ipcRenderer.invoke(IPC.appCheckForUpdates)
   },
   connections: {
     list: (): Promise<SavedConnection[]> => ipcRenderer.invoke(IPC.connectionsList),
     save: (conn: SavedConnection): Promise<SavedConnection[]> =>
       ipcRenderer.invoke(IPC.connectionsSave, conn),
     delete: (id: string): Promise<SavedConnection[]> =>
-      ipcRenderer.invoke(IPC.connectionsDelete, id)
+      ipcRenderer.invoke(IPC.connectionsDelete, id),
+    importSshConfig: (opts?: { path?: string }): Promise<SshConfigImportResult> =>
+      ipcRenderer.invoke(IPC.connectionsImportSshConfig, opts)
+  },
+  sessionRestore: {
+    load: (): Promise<SessionRestoreSnapshot | null> => ipcRenderer.invoke(IPC.sessionRestoreLoad),
+    save: (snap: SessionRestoreSnapshot): Promise<void> =>
+      ipcRenderer.invoke(IPC.sessionRestoreSave, snap),
+    clear: (): Promise<void> => ipcRenderer.invoke(IPC.sessionRestoreClear)
   },
   workspaces: {
     list: (): Promise<Workspace[]> => ipcRenderer.invoke(IPC.workspacesList),

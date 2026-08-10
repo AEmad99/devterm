@@ -33,6 +33,8 @@ export interface TabLabelInput {
   agentKind?: AgentKind
   agentBridgeState?: AgentBridgeState
   agentPendingApproval?: boolean
+  /** Last shell exit code when known (local PTY exit; remote often null). */
+  exitCode?: number | null
   context?: { hostname?: string; os?: string; detail?: string }
 }
 
@@ -196,7 +198,11 @@ export function summarizeAgentTask(task: string, maxLen = TAB_CONTEXT_MAX): stri
 
 function deriveContext(s: TabLabelInput): string | undefined {
   // Hard status overrides everything: closed, reconnecting, bridge errors.
-  if (s.closed) return s.status || 'closed'
+  if (s.closed) {
+    if (s.exitCode != null && s.exitCode !== 0) return `exit ${s.exitCode}`
+    if (s.exitCode === 0) return s.status || 'exited'
+    return s.status || 'closed'
+  }
   if (s.status && s.status.toLowerCase().startsWith('reconnecting')) return s.status
   if (s.status && s.status.toLowerCase().startsWith('failed:')) return s.status
 
@@ -248,6 +254,7 @@ function buildTooltip(s: TabLabelInput, title: string, context?: string): string
     parts.push(context)
   }
   if (s.cwd) parts.push(`cwd: ${s.cwd}`)
+  if (s.exitCode != null) parts.push(`exit: ${s.exitCode}`)
   if (s.status && !parts.includes(s.status)) parts.push(s.status)
   if (s.kind === 'remote' && s.context?.hostname) parts.push(`host: ${s.context.hostname}`)
   return parts.join('\n')

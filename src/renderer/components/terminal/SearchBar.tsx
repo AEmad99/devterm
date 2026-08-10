@@ -7,17 +7,21 @@ import { useEffect, useRef, useState } from 'react'
  */
 export default function SearchBar({
   onSearch,
-  onClose
+  onClose,
+  focusToken = 0
 }: {
   onSearch: (query: string, dir: number) => void
   onClose: () => void
+  /** Increment to re-focus the input when Find is pressed again while open. */
+  focusToken?: number
 }) {
   const [q, setQ] = useState('')
   const ref = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     ref.current?.focus()
-  }, [])
+    ref.current?.select()
+  }, [focusToken])
 
   return (
     <div className="term-search" onMouseDown={(e) => e.stopPropagation()}>

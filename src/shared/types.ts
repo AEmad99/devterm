@@ -386,6 +386,15 @@ export interface AgentCapabilities {
   loadedAt: number
 }
 
+/**
+ * Where the agent terminal UI is shown for a remote session.
+ * Process lifetime is independent: the agent can keep running while hidden.
+ * - `docked` — side column next to the shell in the main window
+ * - `floating` — separate OS window (multi-monitor)
+ * - `hidden` — no visible agent terminal; process + bridge stay up
+ */
+export type AgentUiMode = 'docked' | 'floating' | 'hidden'
+
 export interface AgentOpenOpts {
   sessionId: string
   /** Which agent CLI to launch. */
@@ -403,6 +412,12 @@ export interface AgentOpenOpts {
   cwd?: string
   cols: number
   rows: number
+  /**
+   * When true, tear down any existing agent for this session and launch fresh
+   * (Restart button). Default false: an already-running agent is reattached
+   * so UI mode changes (dock / float / hide) do not kill the process.
+   */
+  forceRestart?: boolean
 }
 
 export interface SSHOpenShellOptions {
@@ -426,10 +441,46 @@ export interface PerformanceSnapshot {
   processes: ProcessPerformanceMetric[]
 }
 
+/** Result of a manual "Check for updates" request from Settings. */
+export type AppUpdateStatus =
+  | 'up-to-date'
+  | 'available'
+  | 'downloaded'
+  | 'disabled'
+  | 'error'
+
+export interface AppUpdateCheckResult {
+  status: AppUpdateStatus
+  currentVersion: string
+  latestVersion?: string
+  message: string
+}
+
 export interface AgentOpenResult {
   /** PTY id of the spawned interactive agent (use the pty.* channels). */
   ptyId: string
   mcpUrl: string
+  /** True when an existing agent was reused (no relaunch). */
+  reused?: boolean
+}
+
+/** Snapshot of a running agent session (attach UI without relaunching). */
+export interface AgentSessionStatus {
+  ptyId: string
+  kind: AgentKind
+  mode: PolicyMode
+  bridge: AgentBridgeStatus
+  /** UI placement last reported by the renderer. */
+  uiMode?: AgentUiMode
+}
+
+/** Open or focus a floating agent BrowserWindow. */
+export interface AgentWindowOpenOpts {
+  sessionId: string
+  kind: AgentKind
+  mode: PolicyMode
+  /** Window title suffix (hostname / session title). */
+  title?: string
 }
 
 export type AgentBridgeState =
@@ -590,19 +641,45 @@ export const IPC = {
   agentClose: 'agent:close',
   agentConfirm: 'agent:confirm', // main -> renderer
   agentConfirmReply: 'agent:confirm:reply', // renderer -> main
+  /** Broadcast when a confirm is answered so other windows drop the request. */
+  agentConfirmResolved: 'agent:confirm:resolved',
   agentBridgeStatus: 'agent:bridge-status', // suffixed :<sessionId>
   agentStatus: 'agent:status',
   agentSetCwd: 'agent:set-cwd', // renderer -> main: live working-directory updates
   agentCapabilities: 'agent:capabilities',
   agentChooseSkill: 'agent:choose-skill',
+  /** Renderer reports docked | floating | hidden for confirm routing + windows. */
+  agentSetUiMode: 'agent:set-ui-mode',
+  /**
+   * Main → all renderers: UI mode changed (so the main window store stays in
+   * sync when a floating agent window docks/hides itself).
+   */
+  agentUiModeChanged: 'agent:ui-mode-changed',
+  /** Open / focus a floating agent OS window. */
+  agentWindowOpen: 'agent:window:open',
+  /** Close the floating agent window without stopping the agent process. */
+  agentWindowClose: 'agent:window:close',
+  /** Main → renderer: floating window was closed by the user (X button). */
+  agentWindowClosed: 'agent:window:closed',
 
   // Local-only process telemetry (no analytics or network reporting).
   performanceSnapshot: 'performance:snapshot',
+
+  // App version + manual update check (GitHub releases via electron-updater)
+  appGetVersion: 'app:get-version',
+  appCheckForUpdates: 'app:check-for-updates',
 
   // saved connections (persisted in userData)
   connectionsList: 'connections:list',
   connectionsSave: 'connections:save',
   connectionsDelete: 'connections:delete',
+  /** Import Host entries from the user's OpenSSH config (~/.ssh/config). */
+  connectionsImportSshConfig: 'connections:import-ssh-config',
+
+  // session restore snapshot (last-session layout; no secrets)
+  sessionRestoreLoad: 'session-restore:load',
+  sessionRestoreSave: 'session-restore:save',
+  sessionRestoreClear: 'session-restore:clear',
 
   // workspaces (persisted in userData)
   workspacesList: 'workspaces:list',
@@ -836,19 +913,50 @@ export interface DevTermApi {
     close(sessionId: string): void
     /** Push the remote shell's live cwd so the agent's commands follow the operator's `cd`. */
     setCwd(sessionId: string, cwd: string): void
-    status(sessionId: string): Promise<AgentBridgeStatus | null>
+    status(sessionId: string): Promise<AgentSessionStatus | null>
     onBridgeStatus(sessionId: string, cb: (status: AgentBridgeStatus) => void): () => void
     onConfirm(cb: (req: ConfirmRequest) => void): () => void
+    /** Fired when any window answers a confirm so peer windows can dismiss. */
+    onConfirmResolved(cb: (info: { reqId: string; sessionId: string }) => void): () => void
     replyConfirm(reqId: string, approved: boolean): void
+    /** Report UI placement so main can route approvals and manage pop-out windows. */
+    setUiMode(sessionId: string, mode: AgentUiMode | null): void
+    /** Open or focus the floating agent window for this session. */
+    openWindow(opts: AgentWindowOpenOpts): Promise<void>
+    /** Close the floating window only (agent process keeps running). */
+    closeWindow(sessionId: string): void
+    /** Main window: floating agent window closed by the user. */
+    onWindowClosed(cb: (sessionId: string) => void): () => void
+    /** Cross-window UI mode sync (floating window → main store). */
+    onUiModeChanged(
+      cb: (info: { sessionId: string; mode: AgentUiMode | null }) => void
+    ): () => void
   }
   performance: {
     snapshot(): Promise<PerformanceSnapshot>
+  }
+  /** App version and manual update check (packaged builds only). */
+  app: {
+    getVersion(): Promise<string>
+    checkForUpdates(): Promise<AppUpdateCheckResult>
   }
   /** Persisted SSH connections (CRUD); each call returns the full updated list. */
   connections: {
     list(): Promise<SavedConnection[]>
     save(conn: SavedConnection): Promise<SavedConnection[]>
     delete(id: string): Promise<SavedConnection[]>
+    /**
+     * Parse `~/.ssh/config` (or optional path) and merge concrete Host entries
+     * into saved connections. Skips wildcards and hosts that already exist
+     * (same host:port:user). Does not import passwords.
+     */
+    importSshConfig(opts?: { path?: string }): Promise<SshConfigImportResult>
+  }
+  /** Last-session restore snapshot (groups + local/remote items + layout). */
+  sessionRestore: {
+    load(): Promise<SessionRestoreSnapshot | null>
+    save(snap: SessionRestoreSnapshot): Promise<void>
+    clear(): Promise<void>
   }
   /** Persisted terminal workspaces (CRUD); each call returns the full updated list. */
   workspaces: {
@@ -1378,6 +1486,11 @@ export interface SettingsSnapshot {
   agentPreferences?: AgentPreferences
   /** Reattach POSIX remote terminals through tmux when it is installed. */
   remoteDetachedSessions?: boolean
+  /**
+   * On next app start, reopen the last session snapshot (local shells + saved
+   * SSH connections + split layout). Auto-launch workspaces still take priority.
+   */
+  sessionRestore?: boolean
   transfersPanelOpen?: boolean
   defaultShell?: DefaultShellPref
   gitPanelOpen?: boolean
@@ -1386,6 +1499,54 @@ export interface SettingsSnapshot {
   stt?: STTSettings
   /** Optional persistent global-search tail (off by default). */
   searchPersist?: boolean
+}
+
+// ---------------------------------------------------------------------------
+// Session restore (last-session snapshot) + SSH config import
+// ---------------------------------------------------------------------------
+
+/** One capturable terminal in a session-restore group. */
+export interface SessionRestoreItem {
+  id: string
+  kind: 'local' | 'remote'
+  /** Remote items: saved connection id (required to reconnect). */
+  connectionId?: string
+  cwd?: string
+  title?: string
+}
+
+export interface SessionRestoreGroup {
+  /** Display name for the group tab. */
+  name: string
+  items: SessionRestoreItem[]
+  /** Layout leaf tabs reference item ids. */
+  layout?: WorkspaceLayoutNode | null
+}
+
+/**
+ * Snapshot of open groups written to `userData/session-restore.json`.
+ * No secrets — remotes only store connectionIds.
+ */
+export interface SessionRestoreSnapshot {
+  version: 1
+  savedAt: number
+  groups: SessionRestoreGroup[]
+  /** Index into `groups` that was active when saved. */
+  activeGroupIndex?: number
+}
+
+/** Result of importing Host blocks from an OpenSSH config file. */
+export interface SshConfigImportResult {
+  /** Full updated connection list after the import. */
+  connections: SavedConnection[]
+  /** How many new connections were added. */
+  added: number
+  /** How many Host entries were skipped (wildcard, duplicate, incomplete). */
+  skipped: number
+  /** Absolute path that was read. */
+  path: string
+  /** Non-fatal parse/read note when the file was missing or empty. */
+  message?: string
 }
 
 /** Attention settings (mirrors the renderer `AttentionSettings`). */
@@ -1492,9 +1653,9 @@ export interface SettingsExportBundle {
 }
 
 // ---------------------------------------------------------------------------
-// Git awareness (read-only) — populates the file tree with status badges and
-// the "Show changes only" filter. Mutations (add/commit/push/etc.) are not
-// exposed; the agent and the editor are the only writers in DevTerm.
+// Git status (file-tree badges + "Show changes only" filter). Full read/write
+// git ops live further below (Git panel / Warp-style UI) — this block is only
+// the compact status shape shared with the explorer.
 // ---------------------------------------------------------------------------
 
 /** Per-file git status. `?` = untracked, `U` = conflicted, `R` = renamed. */

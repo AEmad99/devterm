@@ -47,6 +47,26 @@ export default function ConfirmActionModal() {
     })
   }, [])
 
+  // Another window may answer first (floating agent pop-out). Drop the request
+  // so we don't leave a ghost modal or a stuck pending-approval badge.
+  useEffect(() => {
+    return window.devterm.agent.onConfirmResolved(({ reqId, sessionId }) => {
+      setQueue((q) => {
+        const next = q.filter((x) => x.reqId !== reqId)
+        if (!next.some((x) => x.sessionId === sessionId)) {
+          useSessions.getState().setAgentPendingApproval(sessionId, false)
+        }
+        return next
+      })
+      setSnoozed((s) => {
+        if (!s.has(reqId)) return s
+        const next = new Map(s)
+        next.delete(reqId)
+        return next
+      })
+    })
+  }, [])
+
   // Re-evaluate snooze expiry every 10 seconds so snoozed requests resurface.
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 10000)

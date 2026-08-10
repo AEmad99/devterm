@@ -76,6 +76,11 @@ export interface AppSettings {
   /** Reattach remote POSIX shells through tmux when available. */
   remoteDetachedSessions: boolean
   /**
+   * Reopen the last session snapshot (local shells + saved SSH + layout) on
+   * app start. Workspace auto-launch still wins when any workspace has it set.
+   */
+  sessionRestore: boolean
+  /**
    * Whether the transfers panel is open in the bottom dock. Cluster D adds
    * this. App toolbar's segmented "Activity | Transfers | Off" toggle is the
    * canonical control; this flag mirrors its chosen value so the panel can
@@ -171,7 +176,8 @@ const DEFAULTS: AppSettings = {
     lineHeight: 1.0,
     cursorStyle: 'block',
     cursorBlink: true,
-    scrollback: 1000,
+    // 10k matches modern terminal defaults (WT/iTerm); settings clamp is 100–100000.
+    scrollback: 10000,
     copyOnSelect: false,
     rightClickPaste: false,
     scrollSensitivity: 1,
@@ -206,6 +212,7 @@ const DEFAULTS: AppSettings = {
     trustedSkills: []
   },
   remoteDetachedSessions: true,
+  sessionRestore: true,
   transfersPanelOpen: false,
   defaultShell: { kind: 'auto' },
   gitPanelOpen: false,
@@ -272,6 +279,10 @@ function load(): AppSettings {
         typeof parsed?.remoteDetachedSessions === 'boolean'
           ? parsed.remoteDetachedSessions
           : DEFAULTS.remoteDetachedSessions,
+      sessionRestore:
+        typeof parsed?.sessionRestore === 'boolean'
+          ? parsed.sessionRestore
+          : DEFAULTS.sessionRestore,
       transfersPanelOpen:
         typeof parsed?.transfersPanelOpen === 'boolean'
           ? parsed.transfersPanelOpen
@@ -420,6 +431,7 @@ interface SettingsState extends AppSettings {
   setAgentKind: (v: AgentKind) => void
   setAgentPreferences: (patch: Partial<AgentPreferences>) => void
   setRemoteDetachedSessions: (v: boolean) => void
+  setSessionRestore: (v: boolean) => void
   setTransfersPanelOpen: (v: boolean) => void
   setDefaultShell: (pref: DefaultShellPref) => void
   setGitPanelOpen: (v: boolean) => void
@@ -461,6 +473,7 @@ function persist(state: AppSettings): void {
     agentKind: state.agentKind,
     agentPreferences: state.agentPreferences,
     remoteDetachedSessions: state.remoteDetachedSessions,
+    sessionRestore: state.sessionRestore,
     transfersPanelOpen: state.transfersPanelOpen,
     defaultShell: state.defaultShell,
     gitPanelOpen: state.gitPanelOpen,
@@ -564,6 +577,11 @@ export const useSettings = create<SettingsState>((set, get) => ({
     persist(snapshot(get()))
   },
 
+  setSessionRestore: (v) => {
+    set({ sessionRestore: v })
+    persist(snapshot(get()))
+  },
+
   setTransfersPanelOpen: (v) => {
     set({ transfersPanelOpen: v })
     persist(snapshot(get()))
@@ -643,6 +661,8 @@ export const useSettings = create<SettingsState>((set, get) => ({
         typeof s.remoteDetachedSessions === 'boolean'
           ? s.remoteDetachedSessions
           : cur.remoteDetachedSessions,
+      sessionRestore:
+        typeof s.sessionRestore === 'boolean' ? s.sessionRestore : cur.sessionRestore,
       transfersPanelOpen:
         typeof s.transfersPanelOpen === 'boolean' ? s.transfersPanelOpen : cur.transfersPanelOpen,
       defaultShell: s.defaultShell ? normalizeDefaultShell(s.defaultShell) : cur.defaultShell,
@@ -678,6 +698,7 @@ export const useSettings = create<SettingsState>((set, get) => ({
       agentKind: DEFAULTS.agentKind,
       agentPreferences: DEFAULTS.agentPreferences,
       remoteDetachedSessions: DEFAULTS.remoteDetachedSessions,
+      sessionRestore: DEFAULTS.sessionRestore,
       transfersPanelOpen: DEFAULTS.transfersPanelOpen,
       defaultShell: DEFAULTS.defaultShell,
       gitPanelOpen: DEFAULTS.gitPanelOpen,
@@ -721,6 +742,7 @@ function snapshot(s: SettingsState): AppSettings {
     agentKind: s.agentKind,
     agentPreferences: s.agentPreferences,
     remoteDetachedSessions: s.remoteDetachedSessions,
+    sessionRestore: s.sessionRestore,
     transfersPanelOpen: s.transfersPanelOpen,
     defaultShell: s.defaultShell,
     gitPanelOpen: s.gitPanelOpen,

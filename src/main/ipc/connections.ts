@@ -1,8 +1,10 @@
 import { app, ipcMain, safeStorage } from 'electron'
 import { randomUUID } from 'crypto'
 import { promises as fs } from 'fs'
+import { homedir } from 'os'
 import { join } from 'path'
-import { IPC, type SavedConnection, type SSHHop } from '@shared/types'
+import { IPC, type SavedConnection, type SSHHop, type SshConfigImportResult } from '@shared/types'
+import { parseSshConfig } from '../ssh/ssh-config-parse'
 
 /**
  * Persisted SSH connections. Stored as JSON in the OS userData directory
@@ -108,5 +110,101 @@ export function registerConnectionsIpc(): void {
       await writeAll(list)
       return list
     })
+  )
+
+  ipcMain.handle(
+    IPC.connectionsImportSshConfig,
+    (_e, opts?: { path?: string }): Promise<SshConfigImportResult> =>
+      enqueueMutation(async () => {
+        const configPath =
+          typeof opts?.path === 'string' && opts.path.trim()
+            ? opts.path.trim()
+            : join(homedir(), '.ssh', 'config')
+        let text = ''
+        try {
+          text = await fs.readFile(configPath, 'utf8')
+        } catch {
+          return {
+            connections: await readAll(),
+            added: 0,
+            skipped: 0,
+            path: configPath,
+            message: `No SSH config found at ${configPath}`
+          }
+        }
+
+        const parsed = parseSshConfig(text)
+        if (!parsed.length) {
+          return {
+            connections: await readAll(),
+            added: 0,
+            skipped: 0,
+            path: configPath,
+            message: 'No concrete Host entries found to import'
+          }
+        }
+
+        const list = await readAll()
+        const existingKeys = new Set(
+          list.map((c) => `${(c.username || '').toLowerCase()}@${c.host.toLowerCase()}:${c.port || 22}`)
+        )
+        const existingNames = new Set(list.map((c) => c.name.toLowerCase()))
+
+        let added = 0
+        let skipped = 0
+        for (const h of parsed) {
+          const username = h.username || process.env.USERNAME || process.env.USER || 'user'
+          const port = h.port || 22
+          const key = `${username.toLowerCase()}@${h.host.toLowerCase()}:${port}`
+          if (existingKeys.has(key)) {
+            skipped++
+            continue
+          }
+
+          let name = h.alias
+          if (existingNames.has(name.toLowerCase())) {
+            name = `${h.alias} (${h.host})`
+          }
+          // Expand ~ in IdentityFile for storage as an absolute-ish path.
+          let privateKeyPath = h.privateKeyPath
+          if (privateKeyPath?.startsWith('~/') || privateKeyPath === '~') {
+            privateKeyPath = join(homedir(), privateKeyPath.slice(2) || '')
+          }
+
+          const entry: SavedConnection = {
+            id: randomUUID(),
+            name,
+            host: h.host,
+            port,
+            username,
+            privateKeyPath,
+            jump: h.jump
+              ? {
+                  host: h.jump.host,
+                  port: h.jump.port,
+                  username: h.jump.username || username
+                }
+              : undefined
+          }
+          list.push(entry)
+          existingKeys.add(key)
+          existingNames.add(name.toLowerCase())
+          added++
+        }
+
+        if (added > 0) await writeAll(list)
+        return {
+          connections: list,
+          added,
+          skipped,
+          path: configPath,
+          message:
+            added > 0
+              ? `Imported ${added} connection${added === 1 ? '' : 's'}${skipped ? ` (${skipped} skipped)` : ''}`
+              : skipped
+                ? `Nothing new to import (${skipped} already saved)`
+                : 'No Host entries imported'
+        }
+      })
   )
 }

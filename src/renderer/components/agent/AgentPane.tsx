@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import type { AgentBridgeStatus, AgentKind, PolicyMode } from '@shared/types'
@@ -8,6 +8,7 @@ import { fitNow, fitSoon } from '../../lib/fit'
 import { attachRenderer, attachClipboard } from '../../lib/renderer'
 import { createIdleChime, AGENT_ATTENTION_BODY } from '../../lib/attention'
 import { useBridgeActivity } from '../../lib/bridge-activity'
+import { agentKindLabel } from '../../lib/agent-ui'
 
 /** Live state of the agent's link to this host (what the status pill reflects). */
 type BridgeState = AgentBridgeStatus['state'] | 'connecting' | 'exited'
@@ -47,42 +48,42 @@ function formatAgentTabTask(tool: string | undefined, detail: string | undefined
 }
 
 /**
- * Runs the embedded DevTerm Agent or a fallback coding-agent CLI (`claude`, `pi`, `opencode`,
- * `kimi`, `grok`, or `codex`, per `kind`) in a node-pty, wired to the
- * in-process MCP bridge for this session — Claude via its native
- * `--mcp-config`, pi via a loaded extension, OpenCode via a per-session
- * `opencode.json` with a remote MCP entry, Kimi via a per-session
- * `.kimi-code/mcp.json`, Grok via a per-session `.grok/config.toml` HTTP MCP
- * entry, Codex via a per-session isolated `CODEX_HOME/config.toml` HTTP MCP
- * entry. The pane is a plain terminal; the status pill is driven by the
- * bridge's actual HTTP/SSE connection state.
+ * Runs the embedded DevTerm Agent or a fallback coding-agent CLI in a node-pty,
+ * wired to the in-process MCP bridge for this session. The pane is a plain
+ * terminal; the status pill is driven by the bridge's actual HTTP/SSE state.
+ *
+ * Lifecycle: open is **idempotent** unless `forceRestart` (Restart button).
+ * Unmount does **not** stop the agent when `closeOnUnmount` is false — that
+ * lets UI modes (docked / floating / hidden) share one process.
  */
 export default function AgentPane({
   sessionId,
   kind,
-  mode
+  mode,
+  /** When false, the PTY is display-only (stashed / non-active surface). */
+  active = true,
+  /**
+   * When false, unmounting leaves the agent process running (mode switches).
+   * Parent must call agent.close when the operator fully stops the agent.
+   */
+  closeOnUnmount = false,
+  /** Mirror bridge/task into the main sessions store (skip in floating window). */
+  mirrorToStore = true,
+  /** Extra controls rendered in the status bar (mode buttons). */
+  toolbar
 }: {
   sessionId: string
   kind: AgentKind
   mode: PolicyMode
+  active?: boolean
+  closeOnUnmount?: boolean
+  mirrorToStore?: boolean
+  toolbar?: ReactNode
 }) {
-  const label =
-    kind === 'devterm'
-      ? 'DevTerm'
-      : kind === 'claude'
-        ? 'Claude'
-        : kind === 'opencode'
-          ? 'OpenCode'
-          : kind === 'kimi'
-            ? 'Kimi'
-            : kind === 'grok'
-              ? 'Grok'
-              : kind === 'codex'
-                ? 'Codex'
-                : kind === 'antigravity'
-                  ? 'Antigravity'
-                  : 'Pi'
+  const label = agentKindLabel(kind).replace(/ Agent$/, '')
   const hostRef = useRef<HTMLDivElement>(null)
+  const activeRef = useRef(active)
+  activeRef.current = active
   const [bridge, setBridge] = useState<BridgeState>('connecting')
   const [bridgeMessage, setBridgeMessage] = useState<string | undefined>()
   const [mcpUrl, setMcpUrl] = useState<string | undefined>()
@@ -90,23 +91,17 @@ export default function AgentPane({
   const [restartNonce, setRestartNonce] = useState(0)
   const hostClosed = useSessions((s) => s.sessions.find((x) => x.id === sessionId)?.closed ?? false)
   // The operator's live shell cwd (tracked from OSC 7 in TerminalView). Pushed
-  // to main so the agent's commands follow the operator's `cd` — see the effect
-  // below. Kept out of the agent-launch effect's deps so a `cd` never restarts
-  // the agent; it's a live update, not a relaunch.
+  // to main so the agent's commands follow the operator's `cd`. Kept out of the
+  // agent-launch effect's deps so a `cd` never restarts the agent.
   const cwd = useSessions((s) => s.sessions.find((x) => x.id === sessionId)?.cwd)
-  // Mirror the bridge state up to the session store so the tab dot can color
-  // on it. The local `bridge` is the source of truth for the in-pane status
-  // pill; the store copy is just a cache for the chrome. We only push the
-  // canonical AgentBridgeState values ('connecting' and 'exited' are
-  // AgentPane-local only).
   const setAgentBridgeState = useSessions((s) => s.setAgentBridgeState)
   const setAgentTask = useSessions((s) => s.setAgentTask)
+  const setAgentUi = useSessions((s) => s.setAgentUi)
   const { entries } = useBridgeActivity(sessionId)
 
-  // Surface the latest agent activity in the session tab so the label can show
-  // what the agent is doing ("read_file nginx.conf", "run_command npm test", …).
-  // Prefer a short task string here; tab-label.ts also summarizes for display.
+  // Surface the latest agent activity in the session tab.
   useEffect(() => {
+    if (!mirrorToStore) return
     const latest = entries[entries.length - 1]
     if (!latest) return
     if (latest.kind === 'tool_call') {
@@ -117,7 +112,7 @@ export default function AgentPane({
     } else if (latest.kind === 'approval_outcome') {
       setAgentTask(sessionId, latest.ok ? 'approval granted' : 'approval denied', kind)
     }
-  }, [entries, sessionId, kind, setAgentTask])
+  }, [entries, sessionId, kind, setAgentTask, mirrorToStore])
 
   useEffect(() => {
     return window.devterm.agent.onBridgeStatus(sessionId, (status) => {
@@ -125,19 +120,16 @@ export default function AgentPane({
       setBridgeMessage(status.message)
       if (status.mcpUrl) setMcpUrl(status.mcpUrl)
       setLastHeartbeatAt(status.lastHeartbeatAt)
-      setAgentBridgeState(sessionId, status.state)
-      // Once the agent exits or the bridge stops, there's nothing "currently"
-      // doing; clear the task so the tab doesn't keep showing a stale action.
-      if (status.state === 'stopped' || status.state === 'error') {
-        setAgentTask(sessionId, undefined, kind)
+      if (mirrorToStore) {
+        setAgentBridgeState(sessionId, status.state)
+        if (status.state === 'stopped' || status.state === 'error') {
+          setAgentTask(sessionId, undefined, kind)
+        }
       }
     })
-  }, [sessionId, kind, setAgentBridgeState, setAgentTask])
+  }, [sessionId, kind, setAgentBridgeState, setAgentTask, mirrorToStore])
 
-  // Mirror the live cwd to main on every change (and on mount). open() also
-  // seeds the launch cwd; this keeps it current as the operator navigates.
-  // Fire-and-forget and idempotent — a push before the agent is open just
-  // records the latest value for when it starts.
+  // Mirror the live cwd to main on every change (and on mount).
   useEffect(() => {
     if (cwd) window.devterm.agent.setCwd(sessionId, cwd)
   }, [sessionId, cwd])
@@ -163,62 +155,77 @@ export default function AgentPane({
     const disposeRenderer = attachRenderer(term)
     const disposeClipboard = attachClipboard(term, host)
     fitNow(fit, host)
-    term.write(`\x1b[90mStarting ${label} agent bridged to this host...\x1b[0m\r\n`)
+    const forceRestart = restartNonce > 0
+    term.write(
+      forceRestart
+        ? `\x1b[90mRestarting ${label} agent...\x1b[0m\r\n`
+        : `\x1b[90mStarting ${label} agent bridged to this host...\x1b[0m\r\n`
+    )
 
     let disposed = false
     const cleanups: Array<() => void> = [disposeRenderer, disposeClipboard]
 
     ;(async () => {
       try {
-        const { ptyId, mcpUrl } = await window.devterm.agent.open({
+        const { ptyId, mcpUrl: url, reused } = await window.devterm.agent.open({
           sessionId,
           kind,
           mode,
           preferences: kind === 'devterm' ? useSettings.getState().agentPreferences : undefined,
-          // Read non-reactively so the launch isn't tied to cwd changes; live
-          // updates after this flow through agent.setCwd (effect above).
           cwd: useSessions.getState().sessions.find((x) => x.id === sessionId)?.cwd,
           cols: term.cols,
-          rows: term.rows
+          rows: term.rows,
+          forceRestart
         })
-        if (disposed) return window.devterm.agent.close(sessionId)
-        setMcpUrl(mcpUrl)
-        setBridge((cur) => (cur === 'connecting' ? 'listening' : cur))
-        const toolNote =
-          kind === 'devterm'
-            ? 'embedded multi-provider runtime, MCP-only host tools'
-            : kind === 'claude'
-              ? 'local file tools scratch-only'
-              : kind === 'opencode'
-                ? 'built-in tools off, MCP devterm server'
-                : kind === 'kimi'
-                  ? 'use mcp__devterm__* tools for host work'
-                  : kind === 'grok'
-                    ? 'built-in tools off, MCP devterm server'
-                    : kind === 'codex'
+        if (disposed) {
+          // Only kill if we were asked to own the lifecycle.
+          if (closeOnUnmount) window.devterm.agent.close(sessionId)
+          return
+        }
+        if (mirrorToStore) {
+          setAgentUi(sessionId, { kind, policyMode: mode, ptyId })
+        }
+        setMcpUrl(url)
+        setBridge((cur) => (cur === 'connecting' ? (reused ? 'connected' : 'listening') : cur))
+        if (reused) {
+          term.write(
+            `\x1b[90mReattached to running ${label} agent (MCP: ${url || '…'} | policy: ${mode}).\x1b[0m\r\n`
+          )
+        } else {
+          const toolNote =
+            kind === 'devterm'
+              ? 'embedded multi-provider runtime, MCP-only host tools'
+              : kind === 'claude'
+                ? 'local file tools scratch-only'
+                : kind === 'opencode'
+                  ? 'built-in tools off, MCP devterm server'
+                  : kind === 'kimi'
+                    ? 'use mcp__devterm__* tools for host work'
+                    : kind === 'grok'
                       ? 'built-in tools off, MCP devterm server'
-                      : kind === 'antigravity'
-                        ? 'use mcp__devterm__* tools for host work'
-                        : 'built-in tools off'
-        term.write(
-          `\x1b[90mMCP bridge: ${mcpUrl} | policy: ${mode} | agent: ${kind} (${toolNote})\x1b[0m\r\n`
-        )
-        // Raise an attention signal when this agent finishes or waits for input:
-        // its output goes quiet for a beat after a real burst of work. setArmed
-        // on the operator's first keystroke arms the idle path (so the startup
-        // banner never chimes) and it stays armed for the session.
+                      : kind === 'codex'
+                        ? 'built-in tools off, MCP devterm server'
+                        : kind === 'antigravity'
+                          ? 'use mcp__devterm__* tools for host work'
+                          : 'built-in tools off'
+          term.write(
+            `\x1b[90mMCP bridge: ${url} | policy: ${mode} | agent: ${kind} (${toolNote})\x1b[0m\r\n`
+          )
+        }
         const attention = createIdleChime({
           sessionId,
           makeNotice: () => {
             const s = useSessions.getState().sessions.find((x) => x.id === sessionId)
-            const host = s?.context?.hostname || s?.title || 'host'
-            return { title: `${label} · ${host}`, body: AGENT_ATTENTION_BODY }
+            const hostName = s?.context?.hostname || s?.title || 'host'
+            return { title: `${label} · ${hostName}`, body: AGENT_ATTENTION_BODY }
           }
         })
         cleanups.push(attention.dispose)
         cleanups.push(
           window.devterm.pty.onData(ptyId, (d) => {
-            attention.feed(d)
+            // Only the active surface owns attention chimes (stashed + floating
+            // would otherwise double-notify).
+            if (activeRef.current) attention.feed(d)
             term.write(d)
           })
         )
@@ -226,11 +233,6 @@ export default function AgentPane({
           window.devterm.pty.onExit(ptyId, ({ exitCode }) => {
             setBridge('exited')
             setBridgeMessage(`${label} exited with code ${exitCode}`)
-            // Reset xterm modes BEFORE the notice: a TUI that died ungracefully
-            // (opencode / claude / pi on Ctrl+C, etc.) can leave xterm stuck in
-            // alternate-screen + mouse + hidden-cursor modes; the exit line then
-            // lands overlapped on the stale TUI frame. The escape sequence is
-            // identical to TerminalView's `EXIT_RESET`.
             term.write(
               '\x1b[?1049l' +
                 '\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l' +
@@ -243,12 +245,16 @@ export default function AgentPane({
           })
         )
         const inputDisposable = term.onData((d) => {
+          // Only the active surface drives the PTY (avoids double input when
+          // a stashed main pane coexists with a floating window).
+          if (!activeRef.current) return
           attention.setArmed(true)
           attention.onInput()
           window.devterm.pty.input(ptyId, d)
         })
         cleanups.push(() => inputDisposable.dispose())
         const push = () => {
+          if (!activeRef.current) return
           if (fitNow(fit, host)) window.devterm.pty.resize(ptyId, term.cols, term.rows)
         }
         const ro = new ResizeObserver(push)
@@ -276,15 +282,32 @@ export default function AgentPane({
     return () => {
       disposed = true
       cleanups.forEach((fn) => fn())
-      window.devterm.agent.close(sessionId)
+      if (closeOnUnmount) {
+        window.devterm.agent.close(sessionId)
+        if (mirrorToStore) {
+          setAgentBridgeState(sessionId, 'stopped')
+          setAgentTask(sessionId, undefined, kind)
+        }
+      }
       term.dispose()
-      // Tab dot shouldn't keep showing the old bridge state once the pane is
-      // gone. A follow-up mount of the same pane will push a fresh state on
-      // its first bridge-status event.
-      setAgentBridgeState(sessionId, 'stopped')
-      setAgentTask(sessionId, undefined, kind)
     }
-  }, [kind, label, mode, restartNonce, sessionId, setAgentBridgeState, setAgentTask])
+    // restartNonce intentionally triggers a full relaunch with forceRestart.
+    // closeOnUnmount / mirrorToStore are fixed for a given mount site.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [kind, label, mode, restartNonce, sessionId])
+
+  // When becoming active after stash/float, re-fit so the PTY matches the viewport.
+  useEffect(() => {
+    if (!active) return
+    const host = hostRef.current
+    if (!host) return
+    // Soft fit only — resize is sent on the next ResizeObserver tick in the
+    // main effect's observer while activeRef is true.
+    const t = window.setTimeout(() => {
+      host.dispatchEvent(new Event('resize'))
+    }, 50)
+    return () => window.clearTimeout(t)
+  }, [active])
 
   const pill = hostClosed
     ? { tone: 'down', text: 'Host disconnected' }
@@ -303,7 +326,10 @@ export default function AgentPane({
                 : { tone: 'down', text: 'Failed to start' }
   const canRestart =
     !hostClosed &&
-    (bridge === 'disconnected' || bridge === 'stopped' || bridge === 'exited' || bridge === 'error')
+    (bridge === 'disconnected' ||
+      bridge === 'stopped' ||
+      bridge === 'exited' ||
+      bridge === 'error')
   const statusTitle = [
     bridgeMessage,
     mcpUrl,
@@ -315,7 +341,7 @@ export default function AgentPane({
     .join('\n')
 
   return (
-    <div className="agent-pane">
+    <div className={`agent-pane${active ? '' : ' is-inactive'}`}>
       <div
         className={`agent-status agent-status--${pill.tone}`}
         title={statusTitle || 'Live state of the agent bridge to this host'}
@@ -334,6 +360,7 @@ export default function AgentPane({
         <span className="agent-mode" title="What the agent is allowed to do on this host">
           {MODE_LABEL[mode]}
         </span>
+        {toolbar && <div className="agent-status-toolbar">{toolbar}</div>}
       </div>
       <div className="terminal-host agent-host" ref={hostRef} />
     </div>

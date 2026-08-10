@@ -1,5 +1,12 @@
 import { create } from 'zustand'
-import type { AgentBridgeState, AgentKind, HostContext, SSHProfile } from '@shared/types'
+import type {
+  AgentBridgeState,
+  AgentKind,
+  AgentUiMode,
+  HostContext,
+  PolicyMode,
+  SSHProfile
+} from '@shared/types'
 import { useLayout } from './layout'
 
 const statusDisposers = new Map<string, () => void>()
@@ -36,6 +43,15 @@ export interface Session {
   agentTask?: string
   /** Which agent kind is running in this session's agent pane, if any. */
   agentKind?: AgentKind
+  /**
+   * Where the agent terminal UI is placed. Absent means no agent session is
+   * desired (process stopped). Process can still run while `hidden`.
+   */
+  agentUiMode?: AgentUiMode
+  /** Policy mode used for the active agent (fixed while the process is up). */
+  agentPolicyMode?: PolicyMode
+  /** PTY id of the live agent process, if known (for prompt inject without open). */
+  agentPtyId?: string
   /**
    * Initial working directory to open the shell in (best-effort), set when a
    * session is launched from a saved workspace. Consumed once by TerminalView on
@@ -109,6 +125,21 @@ interface SessionState {
   setCurrentCommand: (id: string, command: string | undefined) => void
   /** Set the current agent task surfaced from bridge activity. */
   setAgentTask: (id: string, task: string | undefined, kind?: AgentKind) => void
+  /**
+   * Update agent UI placement + optional live metadata. Pass `mode: null` to
+   * clear placement after the agent is stopped.
+   */
+  setAgentUi: (
+    id: string,
+    patch: {
+      mode?: AgentUiMode | null
+      kind?: AgentKind
+      policyMode?: PolicyMode
+      ptyId?: string | null
+    },
+    /** Skip main IPC (used when applying a mode broadcast from main). */
+    opts?: { localOnly?: boolean }
+  ) => void
   markClosed: (id: string) => void
   close: (id: string) => void
   /**
@@ -359,6 +390,61 @@ export const useSessions = create<SessionState>((set, get) => ({
         )
       }
     }),
+  setAgentUi: (id, patch, opts) => {
+    // Always sync UI mode to main (confirm routing + float window lifecycle),
+    // even when this renderer has no session record (floating agent window).
+    // localOnly: apply a mode that main already broadcast (avoid feedback loop).
+    if (patch.mode !== undefined && !opts?.localOnly) {
+      window.devterm.agent.setUiMode(id, patch.mode)
+    }
+    set((s) => {
+      const cur = s.sessions.find((x) => x.id === id)
+      if (!cur) return s
+      // Stopped / cleared: drop placement metadata. Keep agentKind as last-used.
+      if (patch.mode === null) {
+        return {
+          sessions: s.sessions.map((x) =>
+            x.id === id
+              ? {
+                  ...x,
+                  agentUiMode: undefined,
+                  agentPtyId: undefined,
+                  agentPolicyMode: undefined,
+                  agentTask: undefined,
+                  agentBridgeState: undefined
+                }
+              : x
+          )
+        }
+      }
+      const nextMode = patch.mode ?? cur.agentUiMode
+      const nextPty =
+        patch.ptyId === null ? undefined : patch.ptyId !== undefined ? patch.ptyId : cur.agentPtyId
+      const nextKind = patch.kind ?? cur.agentKind
+      const nextPolicy = patch.policyMode ?? cur.agentPolicyMode
+      if (
+        cur.agentUiMode === nextMode &&
+        cur.agentPtyId === nextPty &&
+        cur.agentKind === nextKind &&
+        cur.agentPolicyMode === nextPolicy
+      ) {
+        return s
+      }
+      return {
+        sessions: s.sessions.map((x) =>
+          x.id === id
+            ? {
+                ...x,
+                agentUiMode: nextMode,
+                agentPtyId: nextPty,
+                agentKind: nextKind,
+                agentPolicyMode: nextPolicy
+              }
+            : x
+        )
+      }
+    })
+  },
   markClosed: (id) => {
     statusDisposers.get(id)?.()
     statusDisposers.delete(id)
@@ -440,6 +526,10 @@ export const useSessions = create<SessionState>((set, get) => ({
     if (s?.kind === 'remote' && !id.startsWith('pending-')) {
       statusDisposers.get(id)?.()
       statusDisposers.delete(id)
+      // Stop agent + floating window before dropping the SSH client so we don't
+      // leave a bridge bound to a dead session id.
+      window.devterm.agent.close(id)
+      window.devterm.agent.closeWindow(id)
       window.devterm.ssh.disconnect(id)
     }
     set((st) => {

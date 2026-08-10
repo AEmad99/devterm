@@ -11,6 +11,7 @@ import { useSessions } from '../../store/sessions'
 import { useShallow } from 'zustand/react/shallow'
 import type {
   AgentCapabilities,
+  AppUpdateCheckResult,
   ApprovalRule,
   DefaultShellPref,
   PerformanceSnapshot
@@ -29,6 +30,9 @@ import {
   IconMic,
   IconRefresh
 } from '../common/Icons'
+
+/** Latest GitHub release notes (changelog) for this product. */
+const CHANGELOG_URL = 'https://github.com/AEmad99/devterm/releases/latest'
 
 const FONT_PRESETS = [
   'Cascadia Code, Consolas, "Courier New", monospace',
@@ -82,7 +86,7 @@ const TAB_SUBTITLES: Record<SettingsTab, string> = {
   agent: 'Model routing, fallbacks and guardrail policy',
   hotkeys: 'Rebind application shortcuts',
   dictation: 'Push-to-talk Whisper dictation and models',
-  system: 'Performance snapshot, backups and app data'
+  system: 'Version, updates, performance snapshot and backups'
 }
 
 const TAB_ICONS: Record<SettingsTab, ComponentType<{ size?: number }>> = {
@@ -197,6 +201,8 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
   const setAgentPreferences = useSettings((s) => s.setAgentPreferences)
   const remoteDetachedSessions = useSettings((s) => s.remoteDetachedSessions)
   const setRemoteDetachedSessions = useSettings((s) => s.setRemoteDetachedSessions)
+  const sessionRestore = useSettings((s) => s.sessionRestore)
+  const setSessionRestore = useSettings((s) => s.setSessionRestore)
 
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -210,6 +216,9 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
   const [agentCapabilitiesBusy, setAgentCapabilitiesBusy] = useState(false)
   const [fallbackDraft, setFallbackDraft] = useState(agentPreferences.fallbackModels.join(', '))
   const [performance, setPerformance] = useState<PerformanceSnapshot | null>(null)
+  const [appVersion, setAppVersion] = useState<string | null>(null)
+  const [updateBusy, setUpdateBusy] = useState(false)
+  const [updateResult, setUpdateResult] = useState<AppUpdateCheckResult | null>(null)
 
   // Agent guardrails (approval rules) state
   const [rules, setRules] = useState<ApprovalRule[]>([])
@@ -262,6 +271,12 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
   useEffect(() => {
     void refreshAgentCapabilities()
     let active = true
+    void window.devterm.app
+      .getVersion()
+      .then((v) => {
+        if (active) setAppVersion(v)
+      })
+      .catch(() => undefined)
     const refreshPerformance = () => {
       void window.devterm.performance
         .snapshot()
@@ -277,6 +292,28 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
       clearInterval(timer)
     }
   }, [refreshAgentCapabilities])
+
+  const runUpdateCheck = async () => {
+    setUpdateBusy(true)
+    setUpdateResult(null)
+    try {
+      const result = await window.devterm.app.checkForUpdates()
+      setUpdateResult(result)
+      if (!appVersion && result.currentVersion) setAppVersion(result.currentVersion)
+    } catch (e) {
+      setUpdateResult({
+        status: 'error',
+        currentVersion: appVersion ?? 'unknown',
+        message: (e as Error).message || String(e)
+      })
+    } finally {
+      setUpdateBusy(false)
+    }
+  }
+
+  const openChangelog = () => {
+    void window.devterm.openExternal(CHANGELOG_URL)
+  }
 
   const refreshRules = () => {
     window.devterm.approvalRules
@@ -859,7 +896,7 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                           value={prefs.scrollback}
                           onChange={(e) =>
                             setPrefs({
-                              scrollback: clamp(Number(e.target.value) || 1000, 100, 100000)
+                              scrollback: clamp(Number(e.target.value) || 10000, 100, 100000)
                             })
                           }
                         />
@@ -925,6 +962,22 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                         />
                       </span>
                     </label>
+
+                    <label className="settings-row-grid">
+                      <span className="settings-label">Restore last session on startup</span>
+                      <span className="settings-control">
+                        <input
+                          type="checkbox"
+                          checked={sessionRestore}
+                          onChange={(e) => setSessionRestore(e.target.checked)}
+                        />
+                      </span>
+                    </label>
+                    <p className="settings-hint">
+                      Reopens local shells and saved SSH connections with their split layout.
+                      Workspace auto-launch still takes priority when enabled. Ad-hoc SSH (not
+                      saved) is skipped.
+                    </p>
                   </div>
                 </div>
 
@@ -1283,21 +1336,27 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                                     window.devterm.platform === 'darwin'
                                   )}
                             </span>
-                            <button
-                              className="ghost small"
-                              onClick={() => setCapturing(h.id)}
-                              disabled={isCapturing}
-                            >
-                              Edit
-                            </button>
-                            {custom && (
+                            <span className="kb-actions">
                               <button
+                                type="button"
                                 className="ghost small"
-                                onClick={() => setKeybinding(h.id, null)}
+                                onClick={() => setCapturing(h.id)}
+                                disabled={isCapturing}
                               >
-                                Reset
+                                Edit
                               </button>
-                            )}
+                              {custom ? (
+                                <button
+                                  type="button"
+                                  className="ghost small"
+                                  onClick={() => setKeybinding(h.id, null)}
+                                >
+                                  Reset
+                                </button>
+                              ) : (
+                                <span className="kb-actions-spacer" aria-hidden="true" />
+                              )}
+                            </span>
                           </div>
                         )
                       })}
@@ -1450,6 +1509,54 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
               <div className="settings-tab-pane">
                 <div className="settings-card">
                   <div className="settings-card-header">
+                    <h4>About &amp; Updates</h4>
+                    <p className="settings-card-subtitle">
+                      Current version, manual update check, and release notes on GitHub.
+                    </p>
+                  </div>
+                  <div className="settings-card-body">
+                    <div className="settings-row-grid">
+                      <span className="settings-label">Version</span>
+                      <span className="settings-control">
+                        <code className="settings-version-badge">
+                          {appVersion ? `v${appVersion}` : '…'}
+                        </code>
+                      </span>
+                    </div>
+                    <div className="settings-row-grid">
+                      <span className="settings-label">Updates</span>
+                      <span className="settings-control">
+                        <button
+                          className="ghost small"
+                          type="button"
+                          disabled={updateBusy}
+                          onClick={() => void runUpdateCheck()}
+                        >
+                          {updateBusy ? 'Checking…' : 'Check for updates'}
+                        </button>
+                        <button className="ghost small" type="button" onClick={openChangelog}>
+                          Changelog
+                        </button>
+                      </span>
+                    </div>
+                    {updateResult && (
+                      <div
+                        className={`settings-hint update-status update-status-${updateResult.status}`}
+                        role="status"
+                      >
+                        {updateResult.message}
+                        {updateResult.latestVersion &&
+                          updateResult.status !== 'up-to-date' &&
+                          updateResult.latestVersion !== updateResult.currentVersion && (
+                            <> (latest: v{updateResult.latestVersion})</>
+                          )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="settings-card">
+                  <div className="settings-card-header">
                     <h4>Search &amp; Telemetry</h4>
                     <p className="settings-card-subtitle">
                       Local terminal search indexing and real-time process monitoring.
@@ -1522,6 +1629,11 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
           </div>
 
           <div className="settings-content-footer">
+            {appVersion && (
+              <span className="settings-footer-version" title="Installed DevTerm version">
+                DevTerm v{appVersion}
+              </span>
+            )}
             <button className="primary" onClick={onClose}>
               Done
             </button>

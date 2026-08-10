@@ -12,7 +12,13 @@ import { createIdleChime, isAgentCommand, AGENT_ATTENTION_BODY } from '../../lib
 import { fitNow, fitSoon } from '../../lib/fit'
 import { attachRenderer, attachClipboard } from '../../lib/renderer'
 import { matchHotkey, resolveHotkeys } from '../../lib/hotkeys'
-import { registerTerminal, registerTerminalInput, unregisterTerminal } from '../../lib/terms'
+import {
+  registerFindOpener,
+  registerTerminal,
+  registerTerminalInput,
+  unregisterFindOpener,
+  unregisterTerminal
+} from '../../lib/terms'
 import SearchBar from './SearchBar'
 import Autosuggest from './Autosuggest'
 import {
@@ -119,8 +125,13 @@ function TerminalView({ session }: { session: Session }) {
   // changing the host's pixel size, so the ResizeObserver wouldn't fire).
   const resizeRef = useRef<((cols: number, rows: number) => void) | null>(null)
   const [findOpen, setFindOpen] = useState(false)
+  // Bumped when openFind is requested while the bar is already open so SearchBar
+  // re-focuses its input (mount effect alone only runs once).
+  const [findFocusToken, setFindFocusToken] = useState(0)
   const [suggestView, setSuggestView] = useState<SuggestView | null>(null)
   const suggestRef = useRef<AutosuggestController | null>(null)
+  const findOpenRef = useRef(false)
+  findOpenRef.current = findOpen
   // Cached bell setting, refreshed by the prefs effect below. Read on every PTY
   // data chunk by writeData — a `useSettings.getState()` per chunk is cheap but
   // compounds on a fast stream, and the chunk path is one of the few that runs
@@ -128,6 +139,21 @@ function TerminalView({ session }: { session: Session }) {
   // ref with the current setting so the main effect's writeData closure sees
   // the right value before the prefs effect's first run.
   const bellOnRef = useRef(useSettings.getState().prefs.bell === 'visual')
+
+  // Global Find (App hotkey) + in-pane Find share this opener. Must stay
+  // registered for the session's lifetime, independent of the xterm effect
+  // (which may re-run on kind changes).
+  useEffect(() => {
+    if (session.id.startsWith('pending-') || session.kind === 'browser') return
+    registerFindOpener(session.id, () => {
+      if (findOpenRef.current) {
+        setFindFocusToken((n) => n + 1)
+      } else {
+        setFindOpen(true)
+      }
+    })
+    return () => unregisterFindOpener(session.id)
+  }, [session.id, session.kind])
 
   useEffect(() => {
     const host = hostRef.current
@@ -614,6 +640,7 @@ function TerminalView({ session }: { session: Session }) {
       />
       {findOpen && (
         <SearchBar
+          focusToken={findFocusToken}
           onSearch={(query, dir) => {
             const s = searchRef.current
             if (!s || !query) return

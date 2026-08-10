@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert'
-import { summarizeCommand, summarizeAgentTask } from './tab-label'
+import { summarizeCommand, summarizeAgentTask, deriveTabLabel } from './tab-label'
 
 /**
  * summarizeCommand flattens noisy agent invocations into something readable
@@ -75,5 +75,28 @@ describe('summarizeAgentTask', () => {
   it('handles a generic first key=value', () => {
     const out = summarizeAgentTask('write_file: content=hello world')
     assert.strictEqual(out, 'write_file hello world')
+  })
+})
+
+describe('deriveTabLabel — exit codes', () => {
+  it('shows non-zero exit on a closed session as context', () => {
+    const label = deriveTabLabel({
+      kind: 'local',
+      title: 'Local 1',
+      closed: true,
+      exitCode: 127
+    })
+    assert.strictEqual(label.context, 'exit 127')
+    assert.match(label.tooltip, /exit: 127/)
+  })
+
+  it('shows clean exit without inventing an error chip', () => {
+    const label = deriveTabLabel({
+      kind: 'local',
+      title: 'Local 1',
+      closed: true,
+      exitCode: 0
+    })
+    assert.strictEqual(label.context, 'exited')
   })
 })

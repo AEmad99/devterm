@@ -1,7 +1,8 @@
 # DevTerm
 
 A cross-platform desktop **SSH/SFTP terminal** with tiling panes, a file editor, an in-app
-browser, saved connections & workspaces, and a built-in **Claude agent** that can operate on the
+browser, saved connections & workspaces, and a built-in multi-provider **DevTerm Agent** (plus
+optional Claude / Codex / Grok / OpenCode / Kimi / pi / Antigravity CLIs) that can operate on the
 connected remote host — through an MCP bridge the app hosts itself, so the remote needs nothing
 installed and no internet.
 
@@ -25,10 +26,11 @@ installed and no internet.
 - 🎨 **Themes** — nine built-in themes (Tokyo Night, Dracula, Catppuccin Mocha, Nord, Gruvbox,
   One Dark, Solarized Dark, Ayu Mirage, and a translucent **Glass**) that restyle both the terminal
   palette and the whole app chrome; plus font, cursor, scrollback and background-image preferences.
-- 🤖 **Claude agent bridge** — runs the real interactive `claude` CLI locally and lets it act on
-  the remote host via tools (`run_command`, `read_file`, `write_file`, `list_dir`,
+- 🤖 **DevTerm Agent bridge** — default bundled multi-provider agent (or an external CLI you pick)
+  acts on the remote host via tools (`run_command`, `read_file`, `write_file`, `list_dir`,
   `get_host_context`) routed over the **same** SSH connection, with a per-host guardrail
-  (`read-only` / `confirm` / `full`) enforced at the boundary.
+  (`read-only` / `confirm` / `full`) enforced at the boundary. Ask from the strip under a remote
+  shell, or open the full agent docked / floating / hidden without killing the session.
 - 🔒 Security-first: `contextIsolation` on, `nodeIntegration` off, `sandbox` on; MCP server bound
   to `127.0.0.1` with a random per-session bearer token; SSH host-key verification (trust-on-first-use).
 
@@ -94,21 +96,20 @@ npm run build:win              # → dist/DevTerm-<version>-setup.exe (NSIS)
 - **Themes & preferences:** open **Settings** to switch theme, set the terminal font/cursor/
   scrollback/background, and toggle copy-on-select / right-click-paste. Settings persist across
   restarts.
-- **Claude agent:** install and sign into the [`claude`](https://www.anthropic.com/claude-code) CLI
-  first (`claude` must be on your PATH and logged in via your subscription). On a remote tab, pick a
-  guardrail policy (**confirm** is a sane default), optionally tick **air-gapped**, then click
-  **🤖 Claude**. Ask it something like *"what's eating disk on this box?"* — it runs `df`/`du` on the
-  **remote** via the bridge and summarizes. Guarded/destructive actions pop an approval dialog.
+- **Agent:** open a remote tab, pick a guardrail policy, then launch **DevTerm Agent** (bundled,
+  multi-provider) or a fallback CLI from Settings. The agent runs on the **remote** via the MCP
+  bridge over the same SSH connection — ask e.g. *"what's eating disk on this box?"*. Guarded/
+  destructive actions can pop an approval dialog depending on policy.
 
-> The Claude pane runs the **interactive** CLI against your OAuth/subscription — never `claude -p`,
-> the SDK, or any API-key path. Nothing is parsed or driven programmatically; it's human-in-the-loop.
+> Provider credentials stay in the agent runtime (e.g. `~/.pi/agent/auth.json` or the CLI's own
+> store) — DevTerm never moves API keys over its IPC.
 
 ---
 
 ## How it works
 
 ```
-claude (local, your subscription, internet for the model)
+DevTerm Agent / CLI (local; model credentials stay with the agent runtime)
   → in-process MCP bridge (127.0.0.1 + bearer token, inside the app)
      → the SAME ssh2 connection (shell + SFTP + agent are separate channels)
         → remote host (nothing installed, no outbound internet required)
@@ -121,8 +122,7 @@ their own channel on it. The MCP boundary is where per-host policy is enforced.
 
 - Renderer is sandboxed and isolated; it talks to the main process only through a typed
   `contextBridge`. No `nodeIntegration`.
-- MCP server binds to `127.0.0.1` only, with a random per-session bearer token; the generated
-  `--mcp-config` and `CLAUDE.md` live in a temp dir and are removed on teardown.
+- MCP server binds to `127.0.0.1` only, with a random per-session bearer token; per-session agent config and host briefings live in a temp dir and are removed on teardown.
 - Saved SSH passwords/passphrases are encrypted at rest with the OS keychain (Electron
   `safeStorage`); private-key paths are stored plaintext (the key stays on disk). Workspaces and
   snippets hold **no** secrets.

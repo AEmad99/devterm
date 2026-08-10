@@ -3,16 +3,16 @@ import { IPC, type PtyCreateOptions } from '@shared/types'
 import { PtyManager } from '../pty/manager'
 import { makeCoalescer } from './coalesce'
 import { globalSearchIndex } from '../search/index'
+import { broadcast } from './broadcast'
 
 /**
  * Registers PTY IPC handlers. Data/exit events are pushed to the renderer on
  * per-pty channels (`pty:data:<id>`) so multiple panes don't cross-talk.
+ * Events are broadcast to every window so a floating agent pane can attach
+ * to the same PTY stream as a stashed main-window agent view.
  */
-export function registerPtyIpc(getWindow: () => BrowserWindow | null): PtyManager {
-  const send = (channel: string, ...args: unknown[]) => {
-    const win = getWindow()
-    if (win && !win.isDestroyed()) win.webContents.send(channel, ...args)
-  }
+export function registerPtyIpc(_getWindow: () => BrowserWindow | null): PtyManager {
+  const send = (channel: string, ...args: unknown[]) => broadcast(channel, ...args)
 
   // Map PTY id → renderer session id so the search index is keyed the same
   // way the renderer seeds/queries it (by session id, not raw PTY id).

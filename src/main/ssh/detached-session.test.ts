@@ -1,11 +1,24 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { buildDetachedSessionBootstrap } from './manager'
+import { buildDetachedSessionBootstrap, buildPosixShellIntegrationSetup } from './manager'
 
 describe('buildDetachedSessionBootstrap', () => {
   it('uses a stable sanitized tmux session name from the session id', () => {
     const script = buildDetachedSessionBootstrap('35148259-faae-4338-b3dc-0146a4b93a79')
-    assert.match(script, /tmux new-session -A -s 'devterm-35148259-faae-4338-b3dc-0146a4b93a79'/)
+    assert.match(
+      script,
+      /tmux new-session -Ad -s 'devterm-35148259-faae-4338-b3dc-0146a4b93a79'/
+    )
+    assert.match(
+      script,
+      /tmux attach-session -t 'devterm-35148259-faae-4338-b3dc-0146a4b93a79'/
+    )
+  })
+
+  it('enables allow-passthrough so OSC 7 from the pane reaches DevTerm', () => {
+    const script = buildDetachedSessionBootstrap('abc')
+    assert.match(script, /allow-passthrough on/)
+    assert.match(script, /set-option -t 'devterm-abc' allow-passthrough on/)
   })
 
   it('probes tmux -V so broken installs (missing libs) fall back to a normal shell', () => {
@@ -21,5 +34,29 @@ describe('buildDetachedSessionBootstrap', () => {
     const script = buildDetachedSessionBootstrap('sess/with spaces!and*junk')
     assert.match(script, /-s 'devterm-sess-with-spaces-and-junk'/)
     assert.doesNotMatch(script, /sess\/with/)
+  })
+})
+
+describe('buildPosixShellIntegrationSetup', () => {
+  it('installs __dt7 on PROMPT_COMMAND / precmd_functions and emits OSC 7', () => {
+    const script = buildPosixShellIntegrationSetup()
+    assert.match(script, /__dt7\(\)/)
+    assert.match(script, /PROMPT_COMMAND=/)
+    assert.match(script, /precmd_functions\+=\(__dt7\)/)
+    assert.match(script, /\]7;file:\/\//)
+    assert.match(script, /\]133;A/)
+    assert.match(script, /\]133;B/)
+  })
+
+  it('wraps OSC sequences in tmux DCS passthrough when TMUX is set', () => {
+    const script = buildPosixShellIntegrationSetup()
+    // Enable passthrough on the current session (user or DevTerm tmux).
+    assert.match(script, /\[ -n "\$\{TMUX-\}" \] && tmux set-option allow-passthrough on/)
+    // DCS form: ESC P tmux; ESC ESC ]7;… BEL ESC \
+    assert.match(script, /\\033Ptmux;\\033\\033\]7;file:\/\//)
+    assert.match(script, /\\033Ptmux;\\033\\033\]133;A/)
+    assert.match(script, /\\033Ptmux;\\033\\033\]133;B/)
+    // Still has the plain (non-tmux) path for shells outside tmux.
+    assert.match(script, /else printf '\\033\]7;file:\/\//)
   })
 })

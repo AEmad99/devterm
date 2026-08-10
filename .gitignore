@@ -33,3 +33,6 @@ terminals/
 # onnxruntime-web wasm blobs copied from node_modules by scripts/setup-native.mjs
 # (~32MB; regenerated on `npm run setup`, so not checked in)
 src/renderer/public/ort/
+
+# local Qwen CLI state
+.qwen/
