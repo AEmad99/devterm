@@ -154,8 +154,7 @@ export function buildDetachedSessionBootstrap(sessionId: string): string {
 export function buildPosixShellIntegrationSetup(): string {
   // DCS-wrapped OSC payloads: every ESC in the inner sequence is doubled.
   // BEL (`\007`) is left as-is. Terminator is ESC \ (ST).
-  const osc7Tmux =
-    `printf '\\033Ptmux;\\033\\033]7;file://%s%s\\007\\033\\\\' "\${HOSTNAME:-h}" "$PWD"`
+  const osc7Tmux = `printf '\\033Ptmux;\\033\\033]7;file://%s%s\\007\\033\\\\' "\${HOSTNAME:-h}" "$PWD"`
   const osc7Plain = `printf '\\033]7;file://%s%s\\007' "\${HOSTNAME:-h}" "$PWD"`
   const osc133ATmux = `printf '\\033Ptmux;\\033\\033]133;A\\007\\033\\\\'`
   const osc133BTmux = `printf '\\033Ptmux;\\033\\033]133;B\\007\\033\\\\'`
@@ -185,8 +184,13 @@ export function buildPosixShellIntegrationSetup(): string {
     `else ` +
     `case ":$PROMPT_COMMAND:" in *__dt7*) ;; *) PROMPT_COMMAND="__dt7\${PROMPT_COMMAND:+;$PROMPT_COMMAND}";; esac; ` +
     `if [ -n "$BASH_VERSION" ]; then ` +
-    `if [ -n "\${TMUX-}" ]; then case "$PS1" in *Ptmux*133*) ;; *) PS1="\\[$__dtA\\]$PS1\\[$__dtB\\]";; esac; ` +
-    `else case "$PS1" in *133*) ;; *) PS1="\\[$__dtA\\]$PS1\\[$__dtB\\]";; esac; fi; fi; ` +
+    // bash resolves the zero-width `\[`/`\]` markers on the literal PS1 text
+    // before expanding ${var} references. Baking the OSC bytes straight in
+    // (PS1="\[$__dtA\]…") lets the tmux DCS-wrapped marker's terminator backslash
+    // (`ESC \`) collide with the closing `\]`, which bash turns into a literal
+    // `\\]` — a stray `]` printed around the prompt. Referencing ${__dtA} defers
+    // the injection until after `\[`/`\]` are bound, keeping the prompt clean.
+    `case "$PS1" in *'\${__dtA}'*) ;; *) PS1='\\[\${__dtA}\\]'"$PS1"'\\[\${__dtB}\\]';; esac; fi; ` +
     `fi; ` +
     `stty echo 2>/dev/null; clear; __dt7\n`
   )

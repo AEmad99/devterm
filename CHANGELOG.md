@@ -3,6 +3,21 @@
 All notable changes to DevTerm are documented here. The most recent section is
 at the top. Dates are ISO `YYYY-MM-DD`.
 
+## 1.3.16 — 2026-08-17
+
+### Fixed
+
+- **Stray `]` around remote bash prompts (detached tmux sessions).** The shell
+  integration wrapped the prompt's OSC 133 A/B markers in tmux's DCS
+  passthrough envelope (`\ePtmux;…`). bash resolves the zero-width `\[`/`\]`
+  markers on the literal PS1 text before expanding variable references, so
+  baking those marker bytes straight into PS1 made the envelope's terminator
+  backslash (`ESC \`) collide with the closing `\]` and print a literal `]`
+  next to the prompt. The markers are now applied via deferred `${__dtA}` /
+  `${__dtB}` references so bash binds `\[`/`\]` first and injects the bytes
+  afterwards — the prompt renders cleanly on every shell, with or without tmux
+  passthrough.
+
 ## 1.3.15 — 2026-08-10
 
 ### Added

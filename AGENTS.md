@@ -4,7 +4,7 @@ Guidance for coding agents working in the DevTerm repository.
 
 DevTerm is an Electron 29 desktop terminal: local shells (prebuilt node-pty), SSH/SFTP sessions, workspaces, file browsing/editing (CodeMirror 6), an in-app browser, snippets, a Warp-style Git panel, a persistent transfer queue, offline Whisper dictation, global terminal search, and an embedded multi-provider **DevTerm Agent** with seven external CLI fallbacks (`pi`, `claude`, `opencode`, `kimi`, `grok`, `codex`, `antigravity`). Every agent runs in a local PTY and reaches the remote host only through DevTerm's in-process MCP bridge. Stack: electron-vite, TypeScript strict, React 18, Zustand, xterm.js, ssh2, marked + DOMPurify, `@huggingface/transformers`, `@earendil-works/pi-coding-agent` (bundled runtime), dedicated `node` binary for the agent, electron-updater, zod.
 
-**Current version:** `package.json` → `1.3.15`. Top-level views: **Terminals** (always-mounted workspace: group tabs, split panes, local/remote/browser sessions), **Connections**, **Workspaces**, **Snippets**. DevTerm is a normal framed desktop app; the first screen is the terminal, not a marketing page.
+**Current version:** `package.json` → `1.3.16`. Top-level views: **Terminals** (always-mounted workspace: group tabs, split panes, local/remote/browser sessions), **Connections**, **Workspaces**, **Snippets**. DevTerm is a normal framed desktop app; the first screen is the terminal, not a marketing page.
 
 ## Architecture
 
@@ -210,6 +210,7 @@ Bridge & tools:
 
 ## Recent release notes (for context)
 
+- **1.3.16** — Fix stray `]` around remote bash prompts (detached tmux): the OS-integration prompt markers now reference `${__dtA}`/`${__dtB}` deferred in PS1 instead of baking the tmux DCS envelope bytes in, which let bash's `\]` decoder print a literal bracket. Regression-tested in `detached-session.test.ts`.
 - **1.3.15** — Agent UI modes (`docked` / `floating` / `hidden`) with process lifetime decoupled from layout; Warp-style **Ask agent** strip under remote shells (ensure + inject into live agent PTY); floating agent OS window (multi-monitor) with dock/hide/stop and cross-window confirm routing; session-restore MVP (last groups/local/saved-SSH); `~/.ssh/config` import; global Find hotkey wired through `openTerminalFind`; default scrollback raised to 10 000; multi-window PTY/bridge broadcast for pop-out agent.
 - **1.3.14** — Settings modal scrolling fix (issue #4): the dialog's grid row now tracks its own height (`grid-template-rows: minmax(0, 1fr)`) with `min-height: 0` guards on both columns, so long tabs scroll inside `.settings-content-body` instead of overflowing and getting clipped by `overflow: hidden`. Sidebar nav regrouped into labeled sections with per-tab subtitles; new-tab picker restyled as list rows; terminal context menu gains a clipboard/selection separator; pane tab-strip nav arrows hidden when the strip is collapsed.
 - **1.3.13** — Remote detached sessions: probe `tmux -V` before `exec` so hosts with a broken tmux install (e.g. missing `libncurses.so.5`) fall back to a normal shell instead of killing the SSH channel.

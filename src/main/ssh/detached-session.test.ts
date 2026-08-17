@@ -5,14 +5,8 @@ import { buildDetachedSessionBootstrap, buildPosixShellIntegrationSetup } from '
 describe('buildDetachedSessionBootstrap', () => {
   it('uses a stable sanitized tmux session name from the session id', () => {
     const script = buildDetachedSessionBootstrap('35148259-faae-4338-b3dc-0146a4b93a79')
-    assert.match(
-      script,
-      /tmux new-session -Ad -s 'devterm-35148259-faae-4338-b3dc-0146a4b93a79'/
-    )
-    assert.match(
-      script,
-      /tmux attach-session -t 'devterm-35148259-faae-4338-b3dc-0146a4b93a79'/
-    )
+    assert.match(script, /tmux new-session -Ad -s 'devterm-35148259-faae-4338-b3dc-0146a4b93a79'/)
+    assert.match(script, /tmux attach-session -t 'devterm-35148259-faae-4338-b3dc-0146a4b93a79'/)
   })
 
   it('enables allow-passthrough so OSC 7 from the pane reaches DevTerm', () => {
@@ -58,5 +52,15 @@ describe('buildPosixShellIntegrationSetup', () => {
     assert.match(script, /\\033Ptmux;\\033\\033\]133;B/)
     // Still has the plain (non-tmux) path for shells outside tmux.
     assert.match(script, /else printf '\\033\]7;file:\/\//)
+  })
+
+  it('defers bash prompt marker vars instead of baking OSC bytes into PS1', () => {
+    const script = buildPosixShellIntegrationSetup()
+    // bash decodes `\[`/`\]` before expanding ${var}, so the marker OSC must not
+    // be baked into PS1 (the tmux DCS terminator `ESC \` would collide with `\]`
+    // and print a stray `]`). Assert PS1 references ${__dtA}/${__dtB} deferral.
+    assert.match(script, /PS1='\\\[\$\{__dtA\}\\\]'"\$PS1"'\\\[\$\{__dtB\}\\\]'/)
+    // The old form that embedded the raw marker bytes must be gone.
+    assert.doesNotMatch(script, /PS1="\\\[\$__dtA\\\]/)
   })
 })
