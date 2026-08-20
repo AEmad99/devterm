@@ -3,6 +3,26 @@
 All notable changes to DevTerm are documented here. The most recent section is
 at the top. Dates are ISO `YYYY-MM-DD`.
 
+## 1.3.17 — 2026-08-20
+
+### Added
+
+- **tmux session picker overhaul:** each session shows command, cwd, window list,
+  attached/detached state, and a live capture of the active pane so you can see
+  what it is doing before attaching.
+- **Kill session** from the picker (confirm first); runs `tmux kill-session` on
+  an exec channel, not the interactive shell.
+- **Reopen the picker** on a live remote: pane tab-strip button, **Ctrl/Cmd+Alt+T**,
+  or command palette “tmux sessions…”. Attach while already inside tmux switches
+  the existing client (`switch-client`) instead of typing attach into the pane.
+
+### Fixed
+
+- **Remote login flash:** POSIX shell-integration inject was echoed as a long
+  command then `clear`ed, so connecting looked like a dump of text that vanished.
+  Inject now disables echo first and no longer clears the screen. The same script
+  is no longer typed into an existing tmux pane (vim/htop/etc.).
+
 ## 1.3.16 — 2026-08-17
 
 ### Fixed

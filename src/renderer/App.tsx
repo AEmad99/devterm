@@ -23,7 +23,7 @@ import { useEditors } from './store/editors'
 import { useLayout, DEFAULT_GROUP, groupActiveSession, allLeaves } from './store/layout'
 import { useSettings } from './store/settings'
 import { matchHotkey, resolveHotkeys, comboLabel, HOTKEYS, type HotkeyId } from './lib/hotkeys'
-import { focusTerminal, clearTerminal, openTerminalFind } from './lib/terms'
+import { focusTerminal, clearTerminal, openTerminalFind, openTmuxPicker } from './lib/terms'
 import { capturableSessions, captureWorkspace, launchWorkspaceIntoGroup } from './lib/workspace'
 import { persistSessionRestore, restoreSessionSnapshot } from './lib/session-restore'
 import { dictation } from './lib/stt/dictation'
@@ -333,6 +333,11 @@ export default function App() {
           case 'toggleZenMode': {
             const cur = useSettings.getState().zenMode
             useSettings.getState().setZenMode(!cur)
+            break
+          }
+          case 'tmuxSessions': {
+            const activeId = useSessions.getState().activeId
+            if (activeId) openTmuxPicker(activeId)
             break
           }
           case 'shortcuts':

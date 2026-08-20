@@ -1,5 +1,11 @@
 import { ipcMain, BrowserWindow } from 'electron'
-import { IPC, type SSHOpenShellOptions, type SSHProfile, type SSHStatus } from '@shared/types'
+import {
+  IPC,
+  type SSHOpenShellOptions,
+  type SSHProfile,
+  type SSHStatus,
+  type TmuxAttachRequest
+} from '@shared/types'
 import { SSHManager, type ReconnectPolicy } from '../ssh/manager'
 import { makeCoalescer } from './coalesce'
 import { globalSearchIndex } from '../search/index'
@@ -58,6 +64,11 @@ export function registerSshIpc(getWindow: () => BrowserWindow | null): SSHManage
     manager.setReconnectPolicy(patch)
     return manager.getReconnectPolicy()
   })
+  ipcMain.handle(IPC.sshListTmux, (_e, id: string) => manager.listTmux(id))
+  ipcMain.handle(IPC.sshAttachTmux, (_e, id: string, req: TmuxAttachRequest) =>
+    manager.attachTmux(id, req ?? {})
+  )
+  ipcMain.handle(IPC.sshKillTmux, (_e, id: string, name: string) => manager.killTmux(id, name))
 
   return manager
 }

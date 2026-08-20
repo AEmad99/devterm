@@ -953,7 +953,7 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                     </label>
 
                     <label className="settings-row-grid">
-                      <span className="settings-label">Detached remote sessions (tmux)</span>
+                      <span className="settings-label">Offer tmux sessions on connect</span>
                       <span className="settings-control">
                         <input
                           type="checkbox"
@@ -962,6 +962,11 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                         />
                       </span>
                     </label>
+                    <p className="settings-hint">
+                      When a POSIX remote has a working tmux, pick an existing session, start a new
+                      one, or use a normal shell. Detaching from tmux returns you to that shell
+                      instead of closing the connection.
+                    </p>
 
                     <label className="settings-row-grid">
                       <span className="settings-label">Restore last session on startup</span>

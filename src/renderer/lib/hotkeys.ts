@@ -31,6 +31,7 @@ export type HotkeyId =
   | 'prevTab'
   | 'toggleFocus'
   | 'toggleZenMode'
+  | 'tmuxSessions'
   | 'shortcuts'
   | 'saveEditor'
   | 'dictate'
@@ -73,6 +74,7 @@ export const HOTKEYS: Hotkey[] = [
   { id: 'prevTab', mod: true, shift: true, key: 'Tab', label: 'Previous tab' },
   { id: 'toggleFocus', mod: true, shift: true, key: 'z', label: 'Focus (magnify) terminal' },
   { id: 'toggleZenMode', mod: true, alt: true, key: 'z', label: 'Zen mode' },
+  { id: 'tmuxSessions', mod: true, alt: true, key: 't', label: 'tmux sessions' },
   { id: 'settings', mod: true, key: ',', label: 'Settings' },
   { id: 'globalSearch', mod: true, alt: true, key: 'f', label: 'Search across all terminals' },
   { id: 'shortcuts', mod: true, key: '/', label: 'Keyboard shortcuts' },

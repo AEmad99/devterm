@@ -421,8 +421,51 @@ export interface AgentOpenOpts {
 }
 
 export interface SSHOpenShellOptions {
-  /** Attach to a stable tmux session when tmux is available on a POSIX host. */
+  /**
+   * Legacy: when true and no `tmuxSession` is set, POSIX remotes may offer
+   * a tmux session picker (renderer). Reconnect uses `tmuxSession` instead.
+   */
   detached?: boolean
+  /** Re-attach this named tmux session after the login shell opens (no `exec`). */
+  tmuxSession?: string
+}
+
+/** One row from `tmux list-sessions` on a remote POSIX host. */
+export interface TmuxSessionInfo {
+  name: string
+  windows: number
+  /** How many clients are currently attached. */
+  attached: number
+  /** Unix epoch seconds, when tmux reported it. */
+  created?: number
+  /** Unix epoch seconds of last pane activity. */
+  activity?: number
+  /** Active window name. */
+  currentWindow?: string
+  /** Foreground process in the active pane. */
+  currentCommand?: string
+  /** Working directory of the active pane. */
+  currentPath?: string
+  /** Window labels such as `0:vim*` (star = active). */
+  windowList?: string[]
+  /** Visible active-pane contents, ANSI-stripped, for the picker preview. */
+  preview?: string
+}
+
+/** Result of probing tmux on a live SSH session (exec channel, not the shell). */
+export interface TmuxListing {
+  available: boolean
+  version?: string
+  sessions: TmuxSessionInfo[]
+  error?: string
+}
+
+/** Attach to an existing/new tmux session, or stay in the login shell. */
+export interface TmuxAttachRequest {
+  /** Omit / empty to stay in a normal (non-tmux) shell. */
+  name?: string
+  /** Create the session if it does not exist, then attach. */
+  create?: boolean
 }
 
 export interface ProcessPerformanceMetric {
@@ -442,12 +485,7 @@ export interface PerformanceSnapshot {
 }
 
 /** Result of a manual "Check for updates" request from Settings. */
-export type AppUpdateStatus =
-  | 'up-to-date'
-  | 'available'
-  | 'downloaded'
-  | 'disabled'
-  | 'error'
+export type AppUpdateStatus = 'up-to-date' | 'available' | 'downloaded' | 'disabled' | 'error'
 
 export interface AppUpdateCheckResult {
   status: AppUpdateStatus
@@ -606,6 +644,9 @@ export const IPC = {
   sshCancelReconnect: 'ssh:cancel-reconnect', // <sessionId>
   sshGetReconnectPolicy: 'ssh:get-reconnect-policy',
   sshSetReconnectPolicy: 'ssh:set-reconnect-policy',
+  sshListTmux: 'ssh:listTmux',
+  sshAttachTmux: 'ssh:attachTmux',
+  sshKillTmux: 'ssh:killTmux',
 
   // local filesystem
   fsList: 'fs:list',
@@ -857,6 +898,18 @@ export interface DevTermApi {
     onData(sessionId: string, cb: (data: string) => void): () => void
     onExit(sessionId: string, cb: () => void): () => void
     onStatus(sessionId: string, cb: (s: SSHStatus) => void): () => void
+    /** Probe tmux on the remote and list existing sessions (dedicated exec). */
+    listTmux(sessionId: string): Promise<TmuxListing>
+    /**
+     * Attach the live login shell to a tmux session without `exec`, or record
+     * that the operator chose a normal shell. Detach returns to the login shell.
+     */
+    attachTmux(sessionId: string, req: TmuxAttachRequest): Promise<void>
+    /**
+     * Destroy a named tmux session on the remote via exec (not the interactive
+     * shell). Idempotent if the session is already gone.
+     */
+    killTmux(sessionId: string, name: string): Promise<void>
   }
   /** Local filesystem browsing. */
   fs: {
@@ -928,9 +981,7 @@ export interface DevTermApi {
     /** Main window: floating agent window closed by the user. */
     onWindowClosed(cb: (sessionId: string) => void): () => void
     /** Cross-window UI mode sync (floating window → main store). */
-    onUiModeChanged(
-      cb: (info: { sessionId: string; mode: AgentUiMode | null }) => void
-    ): () => void
+    onUiModeChanged(cb: (info: { sessionId: string; mode: AgentUiMode | null }) => void): () => void
   }
   performance: {
     snapshot(): Promise<PerformanceSnapshot>
@@ -1484,7 +1535,7 @@ export interface SettingsSnapshot {
   zenMode?: boolean
   agentKind?: AgentKind
   agentPreferences?: AgentPreferences
-  /** Reattach POSIX remote terminals through tmux when it is installed. */
+  /** Offer a tmux session picker when connecting to a POSIX host that has tmux. */
   remoteDetachedSessions?: boolean
   /**
    * On next app start, reopen the last session snapshot (local shells + saved

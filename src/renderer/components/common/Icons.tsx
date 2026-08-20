@@ -271,6 +271,14 @@ export const IconFocus = (p: IconProps) => (
   </Svg>
 )
 
+/** Four-pane grid, used for the tmux session picker. */
+export const IconTmux = (p: IconProps) => (
+  <Svg {...p}>
+    <rect x="3.5" y="3.5" width="17" height="17" rx="2.5" />
+    <path d="M12 3.5v17M3.5 12h17" />
+  </Svg>
+)
+
 /** Empty-state illustration for "no terminals / empty group". */
 export function EmptyTerminalArt({ size = 76 }: { size?: number }) {
   return (

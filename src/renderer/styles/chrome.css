@@ -709,7 +709,8 @@
 /* --- pane tab-strip "new terminal" button --- */
 .pane-add,
 .pane-merge,
-.pane-focus {
+.pane-focus,
+.pane-tmux {
   /* Never let these shrink away: .pane-tabs (flex:1, min-width:0) absorbs all
      the squeeze so focus/add/merge stay visible on narrow panes. */
   flex: 0 0 auto;
@@ -728,7 +729,8 @@
 }
 .pane-add:hover,
 .pane-merge:hover,
-.pane-focus:hover {
+.pane-focus:hover,
+.pane-tmux:hover {
   background: var(--panel-2);
   color: var(--fg);
 }
@@ -1177,6 +1179,7 @@ textarea:focus {
 .pane-add,
 .pane-merge,
 .pane-focus,
+.pane-tmux,
 .tab-close,
 .group-close {
   display: inline-flex;

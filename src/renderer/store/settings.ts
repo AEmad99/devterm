@@ -73,7 +73,7 @@ export interface AppSettings {
   agentKind: AgentKind
   /** Provider/model routing and resumable-session preferences for DevTerm Agent. */
   agentPreferences: AgentPreferences
-  /** Reattach remote POSIX shells through tmux when available. */
+  /** Offer a tmux session picker when connecting to a POSIX host that has tmux. */
   remoteDetachedSessions: boolean
   /**
    * Reopen the last session snapshot (local shells + saved SSH + layout) on
@@ -661,8 +661,7 @@ export const useSettings = create<SettingsState>((set, get) => ({
         typeof s.remoteDetachedSessions === 'boolean'
           ? s.remoteDetachedSessions
           : cur.remoteDetachedSessions,
-      sessionRestore:
-        typeof s.sessionRestore === 'boolean' ? s.sessionRestore : cur.sessionRestore,
+      sessionRestore: typeof s.sessionRestore === 'boolean' ? s.sessionRestore : cur.sessionRestore,
       transfersPanelOpen:
         typeof s.transfersPanelOpen === 'boolean' ? s.transfersPanelOpen : cur.transfersPanelOpen,
       defaultShell: s.defaultShell ? normalizeDefaultShell(s.defaultShell) : cur.defaultShell,

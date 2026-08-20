@@ -8,6 +8,8 @@ import {
   type SSHConnectResult,
   type SSHStatus,
   type ReconnectPolicy,
+  type TmuxListing,
+  type TmuxAttachRequest,
   type HostContext,
   type DirListing,
   type FileContent,
@@ -80,7 +82,11 @@ const api: DevTermApi = {
       ipcRenderer.invoke(IPC.sshSetReconnectPolicy, patch),
     onData: (id, cb) => subscribe<string>(`${IPC.sshData}:${id}`, cb),
     onExit: (id, cb) => subscribe<void>(`${IPC.sshExit}:${id}`, () => cb()),
-    onStatus: (id, cb) => subscribe<SSHStatus>(`${IPC.sshStatus}:${id}`, cb)
+    onStatus: (id, cb) => subscribe<SSHStatus>(`${IPC.sshStatus}:${id}`, cb),
+    listTmux: (id): Promise<TmuxListing> => ipcRenderer.invoke(IPC.sshListTmux, id),
+    attachTmux: (id, req: TmuxAttachRequest): Promise<void> =>
+      ipcRenderer.invoke(IPC.sshAttachTmux, id, req),
+    killTmux: (id, name: string): Promise<void> => ipcRenderer.invoke(IPC.sshKillTmux, id, name)
   },
   fs: {
     list: (path?: string): Promise<DirListing> => ipcRenderer.invoke(IPC.fsList, path),

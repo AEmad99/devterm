@@ -7,6 +7,7 @@ import type {
   WorkspaceItem
 } from '@shared/types'
 import { activeSession, runInActive } from '../../lib/input'
+import { openTmuxPicker } from '../../lib/terms'
 import {
   applyPlaceholders,
   clearCachedPlaceholders,
@@ -224,12 +225,20 @@ export default function CommandPalette({
         title: 'Create terminal grid…',
         subtitle: 'Open rows × columns of local shells in a new group',
         score: 0
+      },
+      {
+        kind: 'action' as const,
+        id: 'tmux',
+        title: 'tmux sessions…',
+        subtitle: 'Preview, attach, or kill tmux sessions on this remote',
+        score: 0
       }
     ]
     if (!queryTrimmed) return actions
     return actions
       .map((a) => {
-        const target = `${a.title} ${a.subtitle} grid split 2x2 3x3 new grid`
+        const extra = a.id === 'grid' ? ' grid split 2x2 3x3 new grid' : ' tmux session attach kill'
+        const target = `${a.title} ${a.subtitle}${extra}`
         const scored = scoreTerms(target, queryTrimmed)
         return scored ? { ...a, score: scored.score } : null
       })
@@ -375,6 +384,10 @@ export default function CommandPalette({
     } else if (item.kind === 'action') {
       onRun()
       if (item.id === 'grid') onCreateGrid?.()
+      if (item.id === 'tmux') {
+        const sid = useSessions.getState().activeId
+        if (sid) openTmuxPicker(sid)
+      }
       onClose()
     }
   }

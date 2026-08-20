@@ -1,4 +1,5 @@
 import { memo, useEffect, useRef, useState } from 'react'
+import type { TmuxSessionInfo } from '@shared/types'
 import { Terminal } from '@xterm/xterm'
 import type { ITheme } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
@@ -16,11 +17,14 @@ import {
   registerFindOpener,
   registerTerminal,
   registerTerminalInput,
+  registerTmuxPickerOpener,
   unregisterFindOpener,
-  unregisterTerminal
+  unregisterTerminal,
+  unregisterTmuxPickerOpener
 } from '../../lib/terms'
 import SearchBar from './SearchBar'
 import Autosuggest from './Autosuggest'
+import TmuxPicker from './TmuxPicker'
 import {
   attachAutosuggest,
   type AutosuggestController,
@@ -125,6 +129,15 @@ function TerminalView({ session }: { session: Session }) {
   // changing the host's pixel size, so the ResizeObserver wouldn't fire).
   const resizeRef = useRef<((cols: number, rows: number) => void) | null>(null)
   const [findOpen, setFindOpen] = useState(false)
+  const [tmuxPicker, setTmuxPicker] = useState<{
+    sessions: TmuxSessionInfo[]
+    version?: string
+    mode: 'connect' | 'browse'
+  } | null>(null)
+  const [tmuxAttached, setTmuxAttached] = useState<string | undefined>()
+  const tmuxPickerRef = useRef(tmuxPicker)
+  tmuxPickerRef.current = tmuxPicker
+  const blockInputRef = useRef(false)
   // Bumped when openFind is requested while the bar is already open so SearchBar
   // re-focuses its input (mount effect alone only runs once).
   const [findFocusToken, setFindFocusToken] = useState(0)
@@ -153,6 +166,13 @@ function TerminalView({ session }: { session: Session }) {
       }
     })
     return () => unregisterFindOpener(session.id)
+  }, [session.id, session.kind])
+
+  const openTmuxPickerRef = useRef<() => void>(() => undefined)
+  useEffect(() => {
+    if (session.id.startsWith('pending-') || session.kind !== 'remote') return
+    registerTmuxPickerOpener(session.id, () => openTmuxPickerRef.current())
+    return () => unregisterTmuxPickerOpener(session.id)
   }, [session.id, session.kind])
 
   useEffect(() => {
@@ -285,6 +305,7 @@ function TerminalView({ session }: { session: Session }) {
         setFindOpen(true)
         return false
       }
+      if (id === 'tmuxSessions') return false
       return id === null
     })
 
@@ -449,6 +470,7 @@ function TerminalView({ session }: { session: Session }) {
     // local PTY is still spawning isn't dropped — `sendInput` queues until the
     // backend is wired (grid broadcast/snippets rely on the same queue).
     term.onData((d) => {
+      if (blockInputRef.current) return
       onUserInput(d)
       sendInput(d)
     })
@@ -534,18 +556,41 @@ function TerminalView({ session }: { session: Session }) {
           term.write(`${EXIT_RESET}\r\n\x1b[90m[connection closed]\x1b[0m\r\n`)
         })
       )
+      const applyStartCwd = () => {
+        // Best-effort: restore the working directory when launched from a
+        // saved workspace. Works for POSIX shells and PowerShell alike.
+        // Seed store so the explorer shows that path before OSC 7 arrives.
+        // Skipped when attaching to an existing tmux session (it has its own cwd).
+        if (session.startCwd) {
+          useSessions.getState().setCwd(session.id, session.startCwd)
+          const p = session.startCwd.replace(/"/g, '\\"')
+          window.devterm.ssh.input(sid, `cd "${p}"\r`)
+        }
+      }
       window.devterm.ssh
-        .openShell(sid, term.cols, term.rows, {
-          detached: useSettings.getState().remoteDetachedSessions
-        })
-        .then(() => {
-          // Best-effort: restore the working directory when launched from a
-          // saved workspace. Works for POSIX shells and PowerShell alike.
-          // Seed store so the explorer shows that path before OSC 7 arrives.
-          if (session.startCwd) {
-            useSessions.getState().setCwd(session.id, session.startCwd)
-            const p = session.startCwd.replace(/"/g, '\\"')
-            window.devterm.ssh.input(sid, `cd "${p}"\r`)
+        .openShell(sid, term.cols, term.rows)
+        .then(async () => {
+          if (disposed) return
+          const offerTmux = useSettings.getState().remoteDetachedSessions
+          if (!offerTmux) {
+            applyStartCwd()
+            return
+          }
+          try {
+            const listing = await window.devterm.ssh.listTmux(sid)
+            if (disposed) return
+            if (!listing.available) {
+              applyStartCwd()
+              return
+            }
+            blockInputRef.current = true
+            setTmuxPicker({
+              sessions: listing.sessions,
+              version: listing.version,
+              mode: 'connect'
+            })
+          } catch {
+            if (!disposed) applyStartCwd()
           }
         })
         .catch((e) => {
@@ -557,6 +602,8 @@ function TerminalView({ session }: { session: Session }) {
 
     return () => {
       disposed = true
+      blockInputRef.current = false
+      setTmuxPicker(null)
       clearTimeout(seedTimer)
       suggest.dispose()
       suggestRef.current = null
@@ -618,6 +665,69 @@ function TerminalView({ session }: { session: Session }) {
     bellOnRef.current = prefs.bell === 'visual'
   }, [prefs])
 
+  const dismissTmuxPicker = () => {
+    blockInputRef.current = false
+    setTmuxPicker(null)
+    termRef.current?.focus()
+  }
+
+  const finishTmuxPick = async (choice: { name?: string; create?: boolean }) => {
+    const wasConnect = tmuxPickerRef.current?.mode === 'connect'
+    blockInputRef.current = false
+    setTmuxPicker(null)
+    const sid = session.id
+    try {
+      await window.devterm.ssh.attachTmux(sid, choice)
+    } catch (e) {
+      termRef.current?.write(`\r\n\x1b[31m[tmux: ${String(e)}]\x1b[0m\r\n`)
+      return
+    }
+    setTmuxAttached(choice.name || undefined)
+    if (!choice.name && wasConnect && session.startCwd) {
+      useSessions.getState().setCwd(sid, session.startCwd)
+      const p = session.startCwd.replace(/"/g, '\\"')
+      window.devterm.ssh.input(sid, `cd "${p}"\r`)
+    }
+    termRef.current?.focus()
+  }
+
+  openTmuxPickerRef.current = () => {
+    const open = tmuxPickerRef.current
+    if (open) {
+      if (open.mode === 'connect') void finishTmuxPick({})
+      else dismissTmuxPicker()
+      return
+    }
+    if (session.kind !== 'remote' || session.closed) return
+    void (async () => {
+      try {
+        const listing = await window.devterm.ssh.listTmux(session.id)
+        if (!listing.available) return
+        blockInputRef.current = true
+        setTmuxPicker({
+          sessions: listing.sessions,
+          version: listing.version,
+          mode: 'browse'
+        })
+      } catch {
+        /* probe failed — stay in the shell */
+      }
+    })()
+  }
+
+  const killTmuxSession = async (name: string) => {
+    await window.devterm.ssh.killTmux(session.id, name)
+    if (tmuxAttached === name) setTmuxAttached(undefined)
+    const listing = await window.devterm.ssh.listTmux(session.id)
+    if (!listing.available) {
+      dismissTmuxPicker()
+      return
+    }
+    setTmuxPicker((cur) =>
+      cur ? { ...cur, sessions: listing.sessions, version: listing.version } : cur
+    )
+  }
+
   const reconnect = async () => {
     if (!session.connectionId) return
     const conns = await window.devterm.connections.list()
@@ -657,6 +767,19 @@ function TerminalView({ session }: { session: Session }) {
         <div className="term-reconnect">
           <button onClick={reconnect}>⟳ Reconnect</button>
         </div>
+      )}
+      {tmuxPicker && (
+        <TmuxPicker
+          sessions={tmuxPicker.sessions}
+          version={tmuxPicker.version}
+          mode={tmuxPicker.mode}
+          attachedName={tmuxAttached}
+          onClose={dismissTmuxPicker}
+          onNormal={() => void finishTmuxPick({})}
+          onAttach={(name) => void finishTmuxPick({ name })}
+          onCreate={(name) => void finishTmuxPick({ name, create: true })}
+          onKill={killTmuxSession}
+        />
       )}
     </div>
   )

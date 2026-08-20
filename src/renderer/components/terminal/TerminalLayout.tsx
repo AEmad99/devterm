@@ -12,7 +12,8 @@ import {
   type LeafNode,
   type Rect
 } from '../../store/layout'
-import { IconMerge, IconPlus, IconFocus, IconClose } from '../common/Icons'
+import { IconMerge, IconPlus, IconFocus, IconClose, IconTmux } from '../common/Icons'
+import { openTmuxPicker } from '../../lib/terms'
 import { deriveTabLabel } from '../../lib/tab-label'
 import TabStatusDot from './TabStatusDot'
 
@@ -582,6 +583,18 @@ function PaneChrome({
             }}
           >
             ›
+          </button>
+        )}
+        {leaf.active && sessions.get(leaf.active)?.kind === 'remote' && (
+          <button
+            className="pane-tmux"
+            title="tmux sessions — Ctrl/Cmd+Alt+T"
+            onClick={(e) => {
+              e.stopPropagation()
+              if (leaf.active) openTmuxPicker(leaf.active)
+            }}
+          >
+            <IconTmux size={14} />
           </button>
         )}
         {leaf.active && (

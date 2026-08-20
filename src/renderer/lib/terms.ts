@@ -14,6 +14,7 @@ const inputs = new Map<string, (data: string) => void>()
 // when focus is on chrome/explorer — not only when xterm's custom key handler
 // is the event target.
 const findOpeners = new Map<string, () => void>()
+const tmuxPickerOpeners = new Map<string, () => void>()
 
 export function registerTerminal(id: string, term: Terminal): void {
   registry.set(id, term)
@@ -63,6 +64,26 @@ export function clearTerminal(id: string): void {
  */
 export function openTerminalFind(id: string): boolean {
   const open = findOpeners.get(id)
+  if (!open) return false
+  open()
+  return true
+}
+
+/** Register a callback that opens (or toggles) the remote tmux session picker. */
+export function registerTmuxPickerOpener(id: string, open: () => void): void {
+  tmuxPickerOpeners.set(id, open)
+}
+
+export function unregisterTmuxPickerOpener(id: string): void {
+  tmuxPickerOpeners.delete(id)
+}
+
+/**
+ * Open the tmux session picker on a mounted remote terminal. Returns false
+ * when no opener is registered (local/browser panes, pending, unmounted).
+ */
+export function openTmuxPicker(id: string): boolean {
+  const open = tmuxPickerOpeners.get(id)
   if (!open) return false
   open()
   return true

@@ -15,16 +15,13 @@ describe('buildDetachedSessionBootstrap', () => {
     assert.match(script, /set-option -t 'devterm-abc' allow-passthrough on/)
   })
 
-  it('probes tmux -V so broken installs (missing libs) fall back to a normal shell', () => {
+  it('does not exec tmux so detach returns to the login shell', () => {
     const script = buildDetachedSessionBootstrap('abc')
-    assert.match(script, /command -v tmux/)
-    assert.match(script, /tmux -V/)
-    assert.match(script, /missing libraries\?/)
-    assert.match(script, /tmux is not installed/)
-    assert.match(script, /tmux failed to start/)
+    assert.doesNotMatch(script, /\bexec tmux\b/)
+    assert.match(script, /detached from tmux/)
   })
 
-  it('sanitizes unsafe characters out of the tmux session name', () => {
+  it('sanitizes unsafe characters out of the session name', () => {
     const script = buildDetachedSessionBootstrap('sess/with spaces!and*junk')
     assert.match(script, /-s 'devterm-sess-with-spaces-and-junk'/)
     assert.doesNotMatch(script, /sess\/with/)
@@ -62,5 +59,11 @@ describe('buildPosixShellIntegrationSetup', () => {
     assert.match(script, /PS1='\\\[\$\{__dtA\}\\\]'"\$PS1"'\\\[\$\{__dtB\}\\\]'/)
     // The old form that embedded the raw marker bytes must be gone.
     assert.doesNotMatch(script, /PS1="\\\[\$__dtA\\\]/)
+  })
+
+  it('does not clear the screen after injecting hooks', () => {
+    const script = buildPosixShellIntegrationSetup()
+    assert.doesNotMatch(script, /\bclear\b/)
+    assert.match(script, /stty echo/)
   })
 })

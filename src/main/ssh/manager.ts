@@ -5,11 +5,29 @@ import type {
   SSHConnectResult,
   SSHOpenShellOptions,
   SSHProfile,
-  SSHStatus
+  SSHStatus,
+  TmuxAttachRequest,
+  TmuxListing
 } from '@shared/types'
 import { establish } from './connection'
 import { detectRemoteContext } from './osDetect'
 import { PortForwardManager } from './port-forward'
+import {
+  TMUX_CLIENT_LEFT_RE,
+  TMUX_LIST_CLIENTS,
+  TMUX_PROBE_AND_LIST,
+  buildTmuxAttachCommand,
+  buildTmuxDetachClientCommand,
+  buildTmuxEnsureSessionCommand,
+  buildTmuxKillCommand,
+  buildTmuxSwitchCommand,
+  isTmuxSessionGone,
+  parseTmuxClients,
+  parseTmuxListing,
+  pickClientTty
+} from './tmux'
+
+export { buildDetachedSessionBootstrap } from './tmux'
 
 interface Session {
   id: string
@@ -58,6 +76,15 @@ interface Session {
   isWindowsPowerShell?: boolean
   /** Pending shell-setup write timers; cleared on disconnect. */
   setupTimers?: Set<NodeJS.Timeout>
+  /**
+   * True while `disconnect()` is tearing the session down. Shell-channel
+   * close must not auto-reopen a login shell in that window.
+   */
+  closing?: boolean
+  /** True between writing `tmux attach` and a confirmed return to the login shell. */
+  tmuxClientRunning?: boolean
+  /** Coalesces detach-banner + channel-close into one resume attempt. */
+  tmuxResumeTimer?: NodeJS.Timeout
 }
 
 const RECONNECTING_ERR = 'session reconnecting'
@@ -83,6 +110,8 @@ interface ShellRequest {
   cols: number
   rows: number
   detached: boolean
+  /** Last tmux session the operator attached to; restored after SSH reconnect. */
+  tmuxSession?: string
 }
 
 export interface ReconnectPolicy {
@@ -107,41 +136,6 @@ export const DEFAULT_RECONNECT_POLICY: ReconnectPolicy = {
 }
 
 /**
- * Remote shell one-liner for detached POSIX sessions.
- *
- * `command -v tmux` alone is not enough: some hosts ship a tmux binary that
- * fails at load time (missing libncurses.so.5, wrong ABI, etc.). In that case
- * a bare `exec tmux …` leaves the operator looking at a dynamic-linker error
- * with no usable shell. We probe with `tmux -V` first, only exec when the
- * binary actually runs, and fall through to a normal interactive shell with a
- * clear message otherwise. Echo is suppressed so the bootstrap line does not
- * clutter the terminal.
- *
- * When tmux works we create-or-reuse the named session detached, turn on
- * `allow-passthrough` (tmux 3.3+ defaults it off, which swallows OSC 7/133
- * from the pane shell), then attach. Without passthrough the file explorer
- * cannot follow `cd` inside the detached session.
- */
-export function buildDetachedSessionBootstrap(sessionId: string): string {
-  const tmuxName = `devterm-${sessionId.replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 48)}`
-  return (
-    `stty -echo 2>/dev/null; ` +
-    `if command -v tmux >/dev/null 2>&1 && tmux -V >/dev/null 2>&1; then ` +
-    // -Ad: create session if missing, do nothing if it already exists (no attach).
-    `tmux new-session -Ad -s '${tmuxName}' 2>/dev/null; ` +
-    // Best-effort: older tmux lacks the option and ignores the error.
-    `tmux set-option -t '${tmuxName}' allow-passthrough on 2>/dev/null; ` +
-    `exec tmux attach-session -t '${tmuxName}' || ` +
-    `printf '\\r\\n[DevTerm: tmux failed to start; using a normal shell]\\r\\n'; ` +
-    `elif command -v tmux >/dev/null 2>&1; then ` +
-    `printf '\\r\\n[DevTerm: tmux is installed but not usable (missing libraries?); using a normal shell]\\r\\n'; ` +
-    `else ` +
-    `printf '\\r\\n[DevTerm: tmux is not installed; using a normal shell]\\r\\n'; ` +
-    `fi; stty echo 2>/dev/null\n`
-  )
-}
-
-/**
  * One-liner injected into a remote POSIX shell after open so DevTerm can track
  * cwd (OSC 7) and command-input anchors (OSC 133 ;A/;B).
  *
@@ -162,9 +156,8 @@ export function buildPosixShellIntegrationSetup(): string {
   const osc133BPlain = `printf '\\033]133;B\\007'`
 
   return (
-    `stty -echo 2>/dev/null; ` +
-    // If we are already inside tmux (DevTerm detach or user-started), allow
-    // DCS passthrough so the OSC wrappers below can reach DevTerm.
+    // Echo is already off (writeQuiet / pty ECHO=0). Do not `clear` — that
+    // wiped the login banner after the inject flashed on screen.
     `[ -n "\${TMUX-}" ] && tmux set-option allow-passthrough on 2>/dev/null; ` +
     `__dt7() { ` +
     `if [ -n "\${TMUX-}" ]; then ${osc7Tmux}; ` +
@@ -192,9 +185,15 @@ export function buildPosixShellIntegrationSetup(): string {
     // the injection until after `\[`/`\]` are bound, keeping the prompt clean.
     `case "$PS1" in *'\${__dtA}'*) ;; *) PS1='\\[\${__dtA}\\]'"$PS1"'\\[\${__dtB}\\]';; esac; fi; ` +
     `fi; ` +
-    `stty echo 2>/dev/null; clear; __dt7\n`
+    `stty echo 2>/dev/null; __dt7\n`
   )
 }
+
+/** First half of a quiet inject: turn off PTY echo (this line itself may flash). */
+export const STTY_DISABLE_ECHO = '\x15stty -echo 2>/dev/null\n'
+
+/** Wait for `stty -echo` to run before sending the payload on a slow SSH link. */
+const QUIET_WRITE_GAP_MS = 180
 
 /**
  * Detect whether the open shell on a Windows remote is PowerShell. The probe
@@ -354,6 +353,14 @@ export class SSHManager {
    * failure).
    */
   private handleTransportClose(sessionId: string): void {
+    const existing = this.sessions.get(sessionId)
+    if (existing) {
+      existing.tmuxClientRunning = false
+      if (existing.tmuxResumeTimer) {
+        clearTimeout(existing.tmuxResumeTimer)
+        existing.tmuxResumeTimer = undefined
+      }
+    }
     this.fireStatus(sessionId, { type: 'closed' })
     this.handlers.onExit(sessionId)
     const reaped = this.sessions.get(sessionId)
@@ -377,6 +384,11 @@ export class SSHManager {
       for (const t of s.setupTimers) clearTimeout(t)
       s.setupTimers.clear()
     }
+    if (s.tmuxResumeTimer) {
+      clearTimeout(s.tmuxResumeTimer)
+      s.tmuxResumeTimer = undefined
+    }
+    s.tmuxClientRunning = false
     s.shell = undefined
     s.shellDecoder = undefined
     s.shellInflight = undefined
@@ -528,7 +540,8 @@ export class SSHManager {
       if (state.shellRequest) {
         try {
           await this.openShell(sessionId, state.shellRequest.cols, state.shellRequest.rows, {
-            detached: state.shellRequest.detached
+            detached: state.shellRequest.detached,
+            tmuxSession: state.shellRequest.tmuxSession
           })
         } catch (err) {
           this.handlers.onData(
@@ -599,102 +612,120 @@ export class SSHManager {
   ): Promise<void> {
     const s = this.sessions.get(sessionId)
     if (!s) return Promise.reject(new Error('unknown session'))
+    const prevTmux = s.shellRequest?.tmuxSession
     s.shellRequest = {
       cols: Math.max(1, cols),
       rows: Math.max(1, rows),
-      detached: options.detached === true
+      detached: options.detached === true,
+      tmuxSession: 'tmuxSession' in options ? options.tmuxSession || undefined : prevTmux
     }
     if (s.shell) return Promise.resolve()
     if (!s.client) return Promise.reject(new Error(RECONNECTING_ERR))
     if (s.shellInflight) return s.shellInflight
     const client = s.client
     const inflight = new Promise<void>((resolve, reject) => {
-      client.shell({ term: 'xterm-256color', cols, rows }, (err, channel) => {
-        s.shellInflight = undefined
-        if (err) return reject(err)
-        s.shell = channel
-        // Stream every chunk through a per-session UTF-8 decoder so multi-byte
-        // codepoints split across ssh2 data events decode correctly instead
-        // of turning into U+FFFD. The close handler flushes any trailing bytes
-        // the decoder buffered (the final incomplete codepoint renders as a
-        // single replacement char).
-        s.shellDecoder = new TextDecoder('utf-8', { fatal: false })
-        const dec = s.shellDecoder
-        channel
-          .on('data', (d: Buffer) => {
-            this.handlers.onData(sessionId, dec.decode(d, { stream: true }))
-          })
-          .on('close', () => {
-            this.handlers.onExit(sessionId)
-            s.shell = undefined
-            if (s.shellDecoder) {
-              const tail = s.shellDecoder.decode()
-              if (tail) this.handlers.onData(sessionId, tail)
-              s.shellDecoder = undefined
+      client.shell(
+        {
+          term: 'xterm-256color',
+          cols,
+          rows,
+          // Hide the OSC-hook inject (and tmux attach) so it is not echoed, then
+          // the setup script turns echo back on. Servers that ignore pty modes
+          // still get the stty -echo two-step in writeQuiet().
+          modes: { ECHO: 0 }
+        },
+        (err, channel) => {
+          s.shellInflight = undefined
+          if (err) return reject(err)
+          s.shell = channel
+          // Stream every chunk through a per-session UTF-8 decoder so multi-byte
+          // codepoints split across ssh2 data events decode correctly instead
+          // of turning into U+FFFD. The close handler flushes any trailing bytes
+          // the decoder buffered (the final incomplete codepoint renders as a
+          // single replacement char).
+          s.shellDecoder = new TextDecoder('utf-8', { fatal: false })
+          const dec = s.shellDecoder
+          const emitShellData = (chunk: string) => {
+            if (!chunk) return
+            if (s.tmuxClientRunning && TMUX_CLIENT_LEFT_RE.test(chunk)) {
+              this.scheduleResumeAfterTmux(sessionId)
             }
+            this.handlers.onData(sessionId, chunk)
+          }
+          channel
+            .on('data', (d: Buffer) => {
+              emitShellData(dec.decode(d, { stream: true }))
+            })
+            .on('close', () => {
+              s.shell = undefined
+              if (s.shellDecoder) {
+                const tail = s.shellDecoder.decode()
+                if (tail) emitShellData(tail)
+                s.shellDecoder = undefined
+              }
+              // `exec tmux` + detach (or a crashed tmux client) closes this
+              // channel while the ssh2 client is still up. Don't tell the
+              // renderer the connection died — resume a login shell instead.
+              if (s.tmuxClientRunning && s.client && !s.closing && !s.reconnect) {
+                this.scheduleResumeAfterTmux(sessionId)
+                return
+              }
+              this.handlers.onExit(sessionId)
+            })
+          channel.stderr.on('data', (d: Buffer) => {
+            emitShellData(dec.decode(d, { stream: true }))
           })
-        channel.stderr.on('data', (d: Buffer) => {
-          this.handlers.onData(sessionId, dec.decode(d, { stream: true }))
-        })
 
-        if (s.shellRequest?.detached && (s.context.os === 'linux' || s.context.os === 'mac')) {
-          channel.write(buildDetachedSessionBootstrap(sessionId))
-        }
+          // Reconnect path: the operator already chose a session. Attach as a
+          // child (never exec) so a later detach returns to this login shell.
+          if (s.shellRequest?.tmuxSession && (s.context.os === 'linux' || s.context.os === 'mac')) {
+            this.writeTmuxAttach(s, s.shellRequest.tmuxSession, false)
+          }
 
-        // Best-effort OSC 7 cwd reporting for POSIX remotes so the file explorer
-        // can follow `cd`. The hook must be wired per-shell: bash re-runs
-        // PROMPT_COMMAND before each prompt, while zsh ignores it and instead
-        // calls the functions in `precmd_functions`. We detect the live shell via
-        // $ZSH_VERSION (set in the interactive shell, so more reliable than probing)
-        // and append to whichever mechanism applies — preserving the distro's own
-        // hooks and staying idempotent. Echo is suppressed so the setup line isn't
-        // shown; we then clear and emit once for the initial cwd. (A plain sh/dash
-        // login falls through to the bash branch, which it ignores, so only the
-        // initial directory is reported — acceptable for that rare case.)
-        //
-        // When the shell lives inside tmux (DevTerm detached sessions, or a
-        // user-started tmux), bare OSC 7 is swallowed unless wrapped — see
-        // buildPosixShellIntegrationSetup.
-        if (s.context.os === 'linux' || s.context.os === 'mac') {
-          // Detached sessions need a beat longer: bootstrap runs `exec tmux
-          // attach` first, and the OSC setup must land in the pane shell after
-          // attach, not in the login shell that is about to be replaced.
-          const setupDelayMs = s.shellRequest?.detached ? 1200 : 700
-          const setup = buildPosixShellIntegrationSetup()
-          const t = setTimeout(() => {
-            if (s.setupTimers) s.setupTimers.delete(t)
-            if (s.shell && this.sessions.has(sessionId)) s.shell.write(setup)
-          }, setupDelayMs)
-          if (!s.setupTimers) s.setupTimers = new Set()
-          s.setupTimers.add(t)
-        } else if (s.context.os === 'windows') {
-          // Windows remote: probe whether the open shell is PowerShell (the
-          // OpenSSH server default on Server 2019+ and most modern Windows
-          // boxes). cmd.exe has no prompt hook that can emit OSC 7, so we
-          // intentionally fall through to no-op there — see the limitation
-          // note on `probeWindowsShell`. The setup is identical in shape to
-          // the local PTY's PowerShell branch in `main/pty/manager.ts`
-          // (function `prompt` writes the OSC 7 sequence and the OSC 133 ;A/;B
-          // markers around the visible prompt).
-          void probeWindowsShell(client).then((isPS) => {
-            s.isWindowsPowerShell = isPS
-            if (!isPS) return // cmd.exe: known limitation, no OSC 7.
-            const setup =
-              `function prompt { $e=[char]27; $b=[char]7; $p=$PWD.ProviderPath; ` +
-              `$u=($p -replace '\\\\','/'); ` +
-              `Write-Host -NoNewline ($e + ']133;A' + $b + $e + ']7;file:///' + $u + $b); ` +
-              `('PS ' + $p + '> ' + $e + ']133;B' + $b) }; ` +
-              `Clear-Host; prompt\n`
-            const t = setTimeout(() => {
-              if (s.setupTimers) s.setupTimers.delete(t)
-              if (s.shell && this.sessions.has(sessionId)) s.shell.write(setup)
-            }, 700)
-            if (!s.setupTimers) s.setupTimers = new Set()
-            s.setupTimers.add(t)
-          })
+          // Best-effort OSC 7 cwd reporting for POSIX remotes so the file explorer
+          // can follow `cd`. The hook must be wired per-shell: bash re-runs
+          // PROMPT_COMMAND before each prompt, while zsh ignores it and instead
+          // calls the functions in `precmd_functions`. We detect the live shell via
+          // $ZSH_VERSION (set in the interactive shell, so more reliable than probing)
+          // and append to whichever mechanism applies — preserving the distro's own
+          // hooks and staying idempotent.
+          //
+          // Injected quietly (pty ECHO off + stty -echo) and never `clear`s the
+          // login banner. Skipped when we are about to attach tmux — that path
+          // would otherwise type the script into the pane.
+          if (
+            (s.context.os === 'linux' || s.context.os === 'mac') &&
+            !s.shellRequest?.tmuxSession
+          ) {
+            this.scheduleQuietWrite(s, buildPosixShellIntegrationSetup(), 250)
+          } else if (s.context.os === 'windows') {
+            // Windows remote: probe whether the open shell is PowerShell (the
+            // OpenSSH server default on Server 2019+ and most modern Windows
+            // boxes). cmd.exe has no prompt hook that can emit OSC 7, so we
+            // intentionally fall through to no-op there — see the limitation
+            // note on `probeWindowsShell`. The setup is identical in shape to
+            // the local PTY's PowerShell branch in `main/pty/manager.ts`
+            // (function `prompt` writes the OSC 7 sequence and the OSC 133 ;A/;B
+            // markers around the visible prompt).
+            void probeWindowsShell(client).then((isPS) => {
+              s.isWindowsPowerShell = isPS
+              if (!isPS) return // cmd.exe: known limitation, no OSC 7.
+              const setup =
+                `function prompt { $e=[char]27; $b=[char]7; $p=$PWD.ProviderPath; ` +
+                `$u=($p -replace '\\\\','/'); ` +
+                `Write-Host -NoNewline ($e + ']133;A' + $b + $e + ']7;file:///' + $u + $b); ` +
+                `('PS ' + $p + '> ' + $e + ']133;B' + $b) }; prompt\n`
+              const t = setTimeout(() => {
+                if (s.setupTimers) s.setupTimers.delete(t)
+                if (s.shell && this.sessions.has(sessionId)) s.shell.write(setup)
+              }, 700)
+              if (!s.setupTimers) s.setupTimers = new Set()
+              s.setupTimers.add(t)
+            })
+          }
+          resolve()
         }
-        resolve()
-      })
+      )
     })
     s.shellInflight = inflight
     return inflight
@@ -809,6 +840,188 @@ export class SSHManager {
     this.sessions.get(sessionId)?.shell?.write(data)
   }
 
+  /**
+   * Probe tmux on the remote via a dedicated exec channel (does not touch
+   * the interactive shell / MOTD). Broken binaries (`tmux -V` fails) count
+   * as unavailable so we never offer a picker the attach step cannot honor.
+   */
+  async listTmux(sessionId: string): Promise<TmuxListing> {
+    const s = this.sessions.get(sessionId)
+    if (!s) return { available: false, sessions: [], error: 'unknown session' }
+    if (!s.client) return { available: false, sessions: [], error: RECONNECTING_ERR }
+    if (s.context.os !== 'linux' && s.context.os !== 'mac') {
+      return { available: false, sessions: [] }
+    }
+    try {
+      const result = await this.exec(sessionId, TMUX_PROBE_AND_LIST, 12000)
+      return parseTmuxListing(result.stdout, result.stderr)
+    } catch (err) {
+      return { available: false, sessions: [], error: (err as Error).message }
+    }
+  }
+
+  /**
+   * Attach the live login shell to a tmux session, or record that the
+   * operator chose a normal shell. Never `exec`s — see `buildTmuxAttachCommand`.
+   */
+  attachTmux(sessionId: string, req: TmuxAttachRequest): Promise<void> {
+    const s = this.sessions.get(sessionId)
+    if (!s) return Promise.reject(new Error('unknown session'))
+    if (!s.shell) return Promise.reject(new Error('shell not open'))
+    const name = (req.name ?? '').trim()
+    if (!name) {
+      if (s.tmuxClientRunning) return this.detachTmuxClient(s)
+      s.tmuxClientRunning = false
+      if (s.shellRequest) s.shellRequest.tmuxSession = undefined
+      return Promise.resolve()
+    }
+    if (s.tmuxClientRunning) {
+      return this.switchTmuxClient(s, name, req.create === true)
+    }
+    if (s.shellRequest) s.shellRequest.tmuxSession = name
+    this.writeTmuxAttach(s, name, req.create === true)
+    return Promise.resolve()
+  }
+
+  /**
+   * `tmux kill-session` over exec so it never types into the live pane.
+   * Missing sessions count as success (already gone).
+   */
+  async killTmux(sessionId: string, name: string): Promise<void> {
+    const s = this.sessions.get(sessionId)
+    if (!s) throw new Error('unknown session')
+    if (!s.client) throw new Error(RECONNECTING_ERR)
+    const trimmed = name.trim()
+    if (!trimmed) throw new Error('missing tmux session name')
+    const result = await this.exec(sessionId, buildTmuxKillCommand(trimmed), 8000)
+    if (result.timedOut) throw new Error('tmux kill timed out')
+    if (!isTmuxSessionGone(result.stdout, result.stderr, result.code)) {
+      throw new Error(result.stderr.trim() || result.stdout.trim() || 'tmux kill-session failed')
+    }
+    if (s.shellRequest?.tmuxSession === trimmed) {
+      s.shellRequest.tmuxSession = undefined
+    }
+  }
+
+  private async clientTtyFor(s: Session): Promise<string | undefined> {
+    const current = s.shellRequest?.tmuxSession
+    if (!current) return undefined
+    const listed = await this.exec(s.id, TMUX_LIST_CLIENTS, 6000)
+    return pickClientTty(parseTmuxClients(listed.stdout), current)
+  }
+
+  /** Switch the pane's existing tmux client to another session (no shell inject). */
+  private async switchTmuxClient(s: Session, name: string, create: boolean): Promise<void> {
+    const tty = await this.clientTtyFor(s)
+    if (!tty) {
+      if (s.shellRequest) s.shellRequest.tmuxSession = name
+      this.writeTmuxAttach(s, name, create)
+      return
+    }
+    if (create) {
+      await this.exec(s.id, buildTmuxEnsureSessionCommand(name), 8000)
+    }
+    const result = await this.exec(s.id, buildTmuxSwitchCommand(tty, name), 8000)
+    if (result.timedOut) throw new Error('tmux switch timed out')
+    if (result.code && result.code !== 0) {
+      throw new Error(result.stderr.trim() || 'tmux switch-client failed')
+    }
+    if (s.shellRequest) s.shellRequest.tmuxSession = name
+  }
+
+  private async detachTmuxClient(s: Session): Promise<void> {
+    const tty = await this.clientTtyFor(s)
+    if (s.shellRequest) s.shellRequest.tmuxSession = undefined
+    if (!tty) {
+      s.tmuxClientRunning = false
+      return
+    }
+    await this.exec(s.id, buildTmuxDetachClientCommand(tty), 8000)
+  }
+
+  private clearSetupTimers(s: Session): void {
+    if (!s.setupTimers) return
+    for (const t of s.setupTimers) clearTimeout(t)
+    s.setupTimers.clear()
+  }
+
+  private trackTimer(s: Session, t: NodeJS.Timeout): void {
+    if (!s.setupTimers) s.setupTimers = new Set()
+    s.setupTimers.add(t)
+  }
+
+  /**
+   * Run a login-shell command without painting it: disable echo, wait for
+   * that to take effect, then write `script`. `script` should restore echo
+   * (`stty echo`) if the operator needs to type afterwards.
+   */
+  private writeQuiet(s: Session, script: string): void {
+    if (!s.shell) return
+    s.shell.write(STTY_DISABLE_ECHO)
+    const t = setTimeout(() => {
+      if (s.setupTimers) s.setupTimers.delete(t)
+      if (s.shell) s.shell.write(script)
+    }, QUIET_WRITE_GAP_MS)
+    this.trackTimer(s, t)
+  }
+
+  private scheduleQuietWrite(s: Session, script: string, delayMs: number): void {
+    const t = setTimeout(() => {
+      if (s.setupTimers) s.setupTimers.delete(t)
+      this.writeQuiet(s, script)
+    }, delayMs)
+    this.trackTimer(s, t)
+  }
+
+  private writeTmuxAttach(s: Session, name: string, create: boolean): void {
+    if (!s.shell) return
+    s.tmuxClientRunning = true
+    // Drop a pending login-shell inject so it cannot land inside tmux.
+    this.clearSetupTimers(s)
+    this.writeQuiet(s, buildTmuxAttachCommand(name, { create }))
+    // Brand-new sessions start a login shell in the pane — safe to hook.
+    // Existing sessions may be vim/htop; never type the setup into those.
+    if (create && (s.context.os === 'linux' || s.context.os === 'mac')) {
+      this.scheduleQuietWrite(s, buildPosixShellIntegrationSetup(), 1000)
+    }
+  }
+
+  /**
+   * After tmux prints `[detached]`/`[exited]`, or the shell channel closes
+   * while a tmux client was in the foreground: if the login shell is still
+   * there, just drop the flag; if the channel died (classic `exec tmux`
+   * detach), open a fresh normal shell so the pane stays usable.
+   */
+  private scheduleResumeAfterTmux(sessionId: string): void {
+    const s = this.sessions.get(sessionId)
+    if (!s || s.tmuxResumeTimer) return
+    s.tmuxResumeTimer = setTimeout(() => {
+      s.tmuxResumeTimer = undefined
+      this.resumeAfterTmuxClient(sessionId)
+    }, 80)
+  }
+
+  private resumeAfterTmuxClient(sessionId: string): void {
+    const s = this.sessions.get(sessionId)
+    if (!s || s.closing || !s.client || s.reconnect) return
+    if (s.shell) {
+      // Detach returned to the login shell (the no-exec path). Forget the
+      // attach target so a later SSH reconnect does not yank them back in.
+      s.tmuxClientRunning = false
+      if (s.shellRequest) s.shellRequest.tmuxSession = undefined
+      return
+    }
+    s.tmuxClientRunning = false
+    if (s.shellRequest) s.shellRequest.tmuxSession = undefined
+    this.handlers.onData(
+      sessionId,
+      '\r\n\x1b[90m[DevTerm: left tmux; opening a normal shell]\x1b[0m\r\n'
+    )
+    const cols = s.shellRequest?.cols ?? 80
+    const rows = s.shellRequest?.rows ?? 24
+    void this.openShell(sessionId, cols, rows, { detached: false, tmuxSession: '' })
+  }
+
   resize(sessionId: string, cols: number, rows: number): void {
     if (cols > 0 && rows > 0) {
       const session = this.sessions.get(sessionId)
@@ -823,6 +1036,12 @@ export class SSHManager {
   disconnect(sessionId: string): void {
     const s = this.sessions.get(sessionId)
     if (!s) return
+    s.closing = true
+    s.tmuxClientRunning = false
+    if (s.tmuxResumeTimer) {
+      clearTimeout(s.tmuxResumeTimer)
+      s.tmuxResumeTimer = undefined
+    }
     // Cancel any pending shell-setup timers so they don't write to a closed channel.
     if (s.setupTimers) {
       for (const t of s.setupTimers) clearTimeout(t)

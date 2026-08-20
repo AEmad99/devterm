@@ -4,7 +4,7 @@ Guidance for coding agents working in the DevTerm repository.
 
 DevTerm is an Electron 29 desktop terminal: local shells (prebuilt node-pty), SSH/SFTP sessions, workspaces, file browsing/editing (CodeMirror 6), an in-app browser, snippets, a Warp-style Git panel, a persistent transfer queue, offline Whisper dictation, global terminal search, and an embedded multi-provider **DevTerm Agent** with seven external CLI fallbacks (`pi`, `claude`, `opencode`, `kimi`, `grok`, `codex`, `antigravity`). Every agent runs in a local PTY and reaches the remote host only through DevTerm's in-process MCP bridge. Stack: electron-vite, TypeScript strict, React 18, Zustand, xterm.js, ssh2, marked + DOMPurify, `@huggingface/transformers`, `@earendil-works/pi-coding-agent` (bundled runtime), dedicated `node` binary for the agent, electron-updater, zod.
 
-**Current version:** `package.json` → `1.3.16`. Top-level views: **Terminals** (always-mounted workspace: group tabs, split panes, local/remote/browser sessions), **Connections**, **Workspaces**, **Snippets**. DevTerm is a normal framed desktop app; the first screen is the terminal, not a marketing page.
+**Current version:** `package.json` → `1.3.17`. Top-level views: **Terminals** (always-mounted workspace: group tabs, split panes, local/remote/browser sessions), **Connections**, **Workspaces**, **Snippets**. DevTerm is a normal framed desktop app; the first screen is the terminal, not a marketing page.
 
 ## Architecture
 
@@ -52,7 +52,8 @@ Non-obvious behavior and code locations. Prefer reading the code for edge cases;
 - Local PTYs: `src/main/pty/manager.ts` picks the shell from the `defaultShell` pref (`auto` / `pwsh` / `powershell` / `cmd` / `custom`) and injects PowerShell OSC 7/133 prompt hooks (explicit shell args bypass injection). A fresh PTY exiting with no output fires `pty:startup-failure:<id>` with a targeted diagnostic.
 - Remote SSH: **one ssh2 client per session** (`src/main/ssh/manager.ts`) shared by shell, SFTP, exec, watch polling, port forwards, git ops, and agent tools. Direct hops set `setNoDelay(true)` — keep it. Single bastion hop via `profile.jump`. TOFU host keys in `userData/known_hosts.json` (mode 0o600; mismatches rejected). Auto-reconnect with exponential backoff; session ids stay stable across reconnects.
 - Remote shells get OSC 7 (`__dt7`) and OSC 133 (`__dtA`/`__dtB`) hooks (idempotent bash/zsh wraps; PowerShell prompt fn on Windows remotes). Inside tmux, hooks emit DCS-wrapped OSC (`\ePtmux;…`) and DevTerm enables `allow-passthrough` so cwd still reaches the explorer. Preserve when editing shell setup (`buildPosixShellIntegrationSetup`).
-- `remoteDetachedSessions` (default **on**): on POSIX remotes with a *working* tmux, shells attach to a stable `tmux new-session -A -s devterm-<sessionId>` session so work survives transport drops. Availability is probed with `tmux -V` (not just `command -v`) so broken installs — e.g. missing `libncurses.so.5` — fall back to a normal shell instead of leaving a dynamic-linker error. SSH reconnect still restores the human shell channel either way.
+- `remoteDetachedSessions` (default **on**): on POSIX remotes with a *working* tmux (`tmux -V`, not just `command -v`), connecting offers a pane-local picker (`TmuxPicker` + `ssh.listTmux` / `ssh.attachTmux` / `ssh.killTmux`) — live pane preview, window/command/cwd metadata, create-and-attach, kill session, or a normal login shell. Reopen anytime from the remote tab-strip button, Ctrl/Cmd+Alt+T, or the command palette. Attach is a child process, **never** `exec`, so prefix+d returns to the login shell instead of killing the SSH channel. Switching sessions while already attached uses `tmux switch-client` (exec), not typed attach. If a tmux client still exits (`exec tmux` leftovers), main reopens a normal shell without firing `ssh:exit`. Broken tmux installs skip the picker. SSH reconnect re-attaches only when the operator was still inside the chosen session. Remote POSIX shell-integration inject is echo-off + no `clear` so the login banner is not flashed/wiped.
+- Remote POSIX OSC inject (`buildPosixShellIntegrationSetup`): write via `writeQuiet` (`stty -echo` as its own line, then payload). Never `clear`. Do not type the setup into an existing tmux pane (only into a freshly created session). Preserve OSC 7/133 DCS wrapping when editing.
 - `exec` timeouts resolve `timedOut: true` with partial output — not a disconnect. Port forwarding: local `-L` and dynamic `-D` SOCKS5 (no-auth, CONNECT only) in `port-forward.ts` / `PortForwardPanel.tsx`.
 - Tab labels compress long agent/shell activity (`lib/tab-label.ts`); busy tabs are width-capped. One-time welcome hint (Getting started) surfaces real keybindings for palette / new terminal / settings; dismiss is sticky and not resurrected by settings import.
 - **Renderer:** terminals use the **canvas** addon on purpose (`lib/renderer.ts`) — WebGL is avoided because every session stays mounted and Chromium's WebGL context cap (~16) blanked panes. Fall back is xterm DOM. Do not switch to WebGL without a context-budget strategy.
@@ -185,7 +186,7 @@ Bridge & tools:
 
 ## Packaging
 
-- Version = `package.json` `version` (currently **1.3.15**).
+- Version = `package.json` `version` (currently **1.3.17**).
 - electron-builder: `appId com.devterm.app`, `productName DevTerm`, NSIS x64 (`oneClick: false`, `perMachine: false`, `allowToChangeInstallationDirectory: true`), unsigned (`verifyUpdateCodeSignature: false`), `npmRebuild: false`, GitHub publish provider `AEmad99/devterm`.
 - NSIS reinstall close logic: `resources/installer.nsh` (`nsis.include`) — `customInit` + `customCheckAppRunning` force-kill install-dir processes (required because elevated UAC inner installs skip stock `CHECK_APP_RUNNING`); `customUnInstallCheck*` lets upgrades continue if the old uninstaller fails.
 - `asarUnpack` must include: `node-pty`, `ort/*.wasm`, bundled agent Node binary (`node/bin/**`), `@earendil-works/**`, and the listed agent runtime dependency packages in `electron-builder.yml`. Do not drop those entries or the built-in agent fails to start from the installed app.
@@ -210,6 +211,7 @@ Bridge & tools:
 
 ## Recent release notes (for context)
 
+- **1.3.17** — Richer tmux picker (live pane preview, window/command/cwd, kill session); reopen via pane button / Ctrl+Alt+T / palette; attach-while-inside uses `switch-client`; remote shell-integration inject no longer echoes a wall of script then `clear`s the login banner.
 - **1.3.16** — Fix stray `]` around remote bash prompts (detached tmux): the OS-integration prompt markers now reference `${__dtA}`/`${__dtB}` deferred in PS1 instead of baking the tmux DCS envelope bytes in, which let bash's `\]` decoder print a literal bracket. Regression-tested in `detached-session.test.ts`.
 - **1.3.15** — Agent UI modes (`docked` / `floating` / `hidden`) with process lifetime decoupled from layout; Warp-style **Ask agent** strip under remote shells (ensure + inject into live agent PTY); floating agent OS window (multi-monitor) with dock/hide/stop and cross-window confirm routing; session-restore MVP (last groups/local/saved-SSH); `~/.ssh/config` import; global Find hotkey wired through `openTerminalFind`; default scrollback raised to 10 000; multi-window PTY/bridge broadcast for pop-out agent.
 - **1.3.14** — Settings modal scrolling fix (issue #4): the dialog's grid row now tracks its own height (`grid-template-rows: minmax(0, 1fr)`) with `min-height: 0` guards on both columns, so long tabs scroll inside `.settings-content-body` instead of overflowing and getting clipped by `overflow: hidden`. Sidebar nav regrouped into labeled sections with per-tab subtitles; new-tab picker restyled as list rows; terminal context menu gains a clipboard/selection separator; pane tab-strip nav arrows hidden when the strip is collapsed.
@@ -239,7 +241,7 @@ Snapshot of the **implemented** surface area as of this audit. Use this when pri
 | --- | --- | --- |
 | Local shells | **Shipped** | `defaultShell` auto/pwsh/powershell/cmd/custom; ConPTY startup-failure diagnostics; OSC 7/133 PS hooks |
 | SSH remote shells | **Shipped** | Password / key / single bastion hop; TOFU; auto-reconnect; TCP_NODELAY; one client/session |
-| Detached remote sessions | **Shipped** | tmux wrap when `tmux -V` works; setting `remoteDetachedSessions` (default on) |
+| Detached remote sessions | **Shipped** | tmux picker on connect; attach without `exec`; detach returns to login shell |
 | Local session detach/reattach | **Not shipped** | Still planned in `FEATURE-PLANS.md`; PTYs die with the app |
 | Session/layout restore on app restart | **Shipped (MVP)** | `sessionRestore` (default on): last-session snapshot in `userData/session-restore.json`; auto-launch workspaces still win; ad-hoc SSH skipped |
 | Tiling splits + groups | **Shipped** | Binary split tree, drag tabs, focus + zen modes; always-mounted slots |
