@@ -170,13 +170,9 @@ Built-in pi tools are intentionally disabled so the agent cannot read/write the 
 
 Settings queries the bundled runtime's offline model catalog over `agent:capabilities` and reports credential presence without exposing credential values. The DevTerm extension switches subsequent requests to the next authenticated fallback after HTTP 408, 429, or 5xx provider responses. Local process CPU/memory is exposed on demand through `performance:snapshot`; it is never uploaded.
 
-DevTerm policy modes:
-
-- `read_only`: blocks mutating commands and writes.
-- `confirm`: asks for mutating/destructive commands and writes.
-- `full`: allows commands and writes without DevTerm approval prompts.
-
-The current UI defaults the agent to `full`/bypass mode. If a workflow needs operator prompts, switch the mode before opening the agent.
+MCP launches use policy mode `full` (no DevTerm confirm modal). Permission
+prompts belong to the agent CLI. Settings → Agent guardrails still apply
+allow/deny/ask rules as an MCP pre-check.
 
 ### Settings And Theme Flow
 

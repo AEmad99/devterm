@@ -47,18 +47,18 @@ function stripQuoted(cmd: string): string {
 }
 
 /**
- * Per-host guardrail layer enforced at the MCP boundary. Read-only blocks
- * mutations, confirm asks for mutations/destructive commands, and full allows.
+ * MCP-boundary guardrail. Session UI no longer picks a mode — launches use
+ * `full` so the agent CLI owns permission prompts. `read_only` / `confirm`
+ * remain implemented for Settings approval-rule `ask` fall-through and tests.
  *
  * An optional `ruleMatcher` lets the host inject approval rules (e.g. longest
  * prefix match against `approval-rules.json`) as a PRE-CHECK: an explicit
  * `allow` or `deny` rule short-circuits the verdict, and an `ask` rule
- * falls through to the mode-based decision (so the mode remains the
- * authoritative source of truth when no rule applies).
+ * falls through to the mode-based decision.
  */
 export class Policy {
   constructor(
-    public mode: PolicyMode = 'confirm',
+    public mode: PolicyMode = 'full',
     private ruleMatcher?: RuleMatcher
   ) {}
 

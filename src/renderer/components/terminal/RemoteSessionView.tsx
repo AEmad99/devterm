@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useRef, useState } from 'react'
-import type { AgentKind, PolicyMode } from '@shared/types'
+import type { AgentKind } from '@shared/types'
 import { useSessions, type Session } from '../../store/sessions'
 import { useSettings } from '../../store/settings'
 import TerminalView from './TerminalView'
@@ -9,12 +9,7 @@ import AgentAskBar from '../agent/AgentAskBar'
 import AgentActivityPanel from '../agent/AgentActivityPanel'
 import Splitter from '../common/Splitter'
 import PortForwardPanel from './PortForwardPanel'
-import {
-  agentKindLabel,
-  ensureAgent,
-  setAgentUiMode,
-  stopAgent
-} from '../../lib/agent-ui'
+import { AGENT_BRIDGE_POLICY, agentKindLabel, setAgentUiMode, stopAgent } from '../../lib/agent-ui'
 import { useBridgeActivity } from '../../lib/bridge-activity'
 
 const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n))
@@ -67,16 +62,15 @@ function formatAgentTabTask(tool: string | undefined, detail: string | undefined
 /**
  * A remote session: shell or SFTP browser, with an optional agent session in
  * one of three UI modes — docked side column, floating OS window, or hidden
- * (process keeps running). An Ask bar under the shell can start/inject prompts
- * without permanently stealing terminal estate.
+ * (process keeps running). The Ask bar under the shell is the launch surface;
+ * the top bar only places an already-running agent (hide / float / stop).
  */
 function RemoteSessionView({ session }: { session: Session }) {
   const [view, setView] = useState<'terminal' | 'files' | 'ports'>('terminal')
   const [filesOpened, setFilesOpened] = useState(false)
   const [portsOpened, setPortsOpened] = useState(false)
-  // Prefer store-backed kind/policy once the agent is running so float/hide
-  // round-trips keep the same backend.
-  const [mode, setMode] = useState<PolicyMode>(() => session.agentPolicyMode ?? 'full')
+  // Prefer store-backed kind once the agent is running so float/hide round-trips
+  // keep the same backend.
   const [agentKind, setAgentKind] = useState<AgentKind>(
     () => session.agentKind ?? useSettings.getState().agentKind
   )
@@ -84,17 +78,14 @@ function RemoteSessionView({ session }: { session: Session }) {
   const agentUiMode = session.agentUiMode
   const agentAlive = !!agentUiMode
   const agentDocked = agentUiMode === 'docked'
-  const agentLabel = agentKindLabel(agentKind)
   const [agentWidth, setAgentWidth] = useState(480)
   const [filesSideOpen, setFilesSideOpen] = useState(false)
   const [filesWidth, setFilesWidth] = useState(420)
-  const [starting, setStarting] = useState(false)
   const splitRef = useRef<HTMLDivElement>(null)
   const filesSplitRef = useRef<HTMLDivElement>(null)
   const sftpSidePane = useSettings((s) => s.sftpSidePane)
   const setSftpSidePane = useSettings((s) => s.setSftpSidePane)
   const cancelSshReconnect = useSessions((s) => s.cancelSshReconnect)
-  const setAgentUi = useSessions((s) => s.setAgentUi)
   const setAgentTask = useSessions((s) => s.setAgentTask)
   const agentActivityCollapsed = useSettings((s) => s.agentActivityCollapsed)
   const setAgentActivityCollapsed = useSettings((s) => s.setAgentActivityCollapsed)
@@ -104,13 +95,10 @@ function RemoteSessionView({ session }: { session: Session }) {
     status === 'reconnect cancelled' ||
     status?.startsWith('reconnect failed')
 
-  // Sync local pickers from store when another surface (ask bar / float) sets them.
+  // Sync the kind picker from store when another surface (ask bar / float) sets it.
   useEffect(() => {
     if (session.agentKind) setAgentKind(session.agentKind)
   }, [session.agentKind])
-  useEffect(() => {
-    if (session.agentPolicyMode) setMode(session.agentPolicyMode)
-  }, [session.agentPolicyMode])
 
   // Keep tab task labels fresh even when the agent pane is hidden/floating.
   const { entries } = useBridgeActivity(session.id)
@@ -150,66 +138,28 @@ function RemoteSessionView({ session }: { session: Session }) {
   }, [filesSideOpen])
 
   const hostTitle = session.context?.hostname ?? session.title
-  const canStart = !!session.context && !session.closed && !starting
-
-  const startDocked = useCallback(async () => {
-    if (!canStart) return
-    setStarting(true)
-    try {
-      await ensureAgent({
-        sessionId: session.id,
-        kind: agentKind,
-        mode,
-        cwd: session.cwd,
-        uiMode: 'docked'
-      })
-    } catch {
-      /* AgentPane / status pill will surface errors if mount follows */
-      setAgentUi(session.id, { mode: 'docked', kind: agentKind, policyMode: mode })
-    } finally {
-      setStarting(false)
-    }
-  }, [canStart, session.id, session.cwd, agentKind, mode, setAgentUi])
 
   const onStop = useCallback(() => {
     stopAgent(session.id)
   }, [session.id])
 
   const onHide = useCallback(() => {
-    void setAgentUiMode(session.id, 'hidden', { kind: agentKind, policyMode: mode })
-  }, [session.id, agentKind, mode])
+    void setAgentUiMode(session.id, 'hidden', { kind: agentKind })
+  }, [session.id, agentKind])
 
   const onDock = useCallback(() => {
     void setAgentUiMode(session.id, 'docked', {
       kind: agentKind,
-      policyMode: mode,
       title: hostTitle
     })
-  }, [session.id, agentKind, mode, hostTitle])
+  }, [session.id, agentKind, hostTitle])
 
   const onFloat = useCallback(async () => {
-    if (!agentAlive) {
-      setStarting(true)
-      try {
-        await ensureAgent({
-          sessionId: session.id,
-          kind: agentKind,
-          mode,
-          cwd: session.cwd,
-          uiMode: 'floating'
-        })
-      } finally {
-        setStarting(false)
-      }
-    }
     await setAgentUiMode(session.id, 'floating', {
       kind: agentKind,
-      policyMode: mode,
       title: hostTitle
     })
-  }, [agentAlive, session.id, session.cwd, agentKind, mode, hostTitle])
-
-  const locked = agentAlive
+  }, [session.id, agentKind, hostTitle])
 
   return (
     <div className="remote-view">
@@ -281,64 +231,7 @@ function RemoteSessionView({ session }: { session: Session }) {
 
         <span className="vt-spacer" />
 
-        <label
-          className="policy-field"
-          title="DevTerm Agent is the embedded multi-provider default. External CLIs are fallbacks. Every agent acts on this host only through DevTerm's MCP bridge."
-        >
-          <span className="policy-label">Agent</span>
-          <select
-            className="policy-select"
-            value={agentKind}
-            disabled={locked}
-            onChange={(e) => {
-              const next = e.target.value as AgentKind
-              setAgentKind(next)
-              persistAgentKind(next)
-            }}
-          >
-            <optgroup label="Built in">
-              <option value="devterm">DevTerm Agent (all providers)</option>
-            </optgroup>
-            <optgroup label="External CLI fallbacks">
-              <option value="claude">Claude</option>
-              <option value="pi">Pi</option>
-              <option value="opencode">OpenCode</option>
-              <option value="kimi">Kimi</option>
-              <option value="grok">Grok</option>
-              <option value="codex">Codex</option>
-              <option value="antigravity">Antigravity (agy)</option>
-            </optgroup>
-          </select>
-        </label>
-        <label className="policy-field" title="What the in-app agent is allowed to do on this host">
-          <span className="policy-label">Policy</span>
-          <select
-            className="policy-select"
-            value={mode}
-            disabled={locked}
-            onChange={(e) => setMode(e.target.value as PolicyMode)}
-          >
-            <option value="read_only">Read-only</option>
-            <option value="confirm">Ask before changes</option>
-            <option value="full">Bypass permissions</option>
-          </select>
-        </label>
-
-        {!agentAlive ? (
-          <button
-            className={`agent-btn ${session.agentPendingApproval ? 'has-pending' : ''}`}
-            disabled={!canStart}
-            title={
-              !session.context
-                ? 'Connect the SSH session first'
-                : `Launch the ${agentLabel} agent for this host`
-            }
-            onClick={() => void startDocked()}
-          >
-            {starting ? 'Starting…' : `🤖 Open ${agentLabel}`}
-            {session.agentPendingApproval && <span className="agent-pending-dot" />}
-          </button>
-        ) : (
+        {agentAlive && (
           <div className="agent-mode-btns">
             {agentUiMode === 'hidden' && (
               <button
@@ -378,13 +271,13 @@ function RemoteSessionView({ session }: { session: Session }) {
             )}
             <button
               className={`agent-btn active ${session.agentPendingApproval ? 'has-pending' : ''}`}
-              title={`Stop the ${agentLabel} agent`}
+              title={`Stop the ${agentKindLabel(agentKind)} agent`}
               onClick={onStop}
             >
               ✕ Stop
               {session.agentPendingApproval && <span className="agent-pending-dot" />}
             </button>
-            {agentUiMode && agentUiMode !== 'docked' && (
+            {agentUiMode !== 'docked' && (
               <span
                 className={`agent-ui-chip agent-ui-chip--${agentUiMode}`}
                 title={
@@ -418,12 +311,10 @@ function RemoteSessionView({ session }: { session: Session }) {
                   <AgentAskBar
                     session={session}
                     kind={agentKind}
-                    mode={mode}
                     onKindChange={(k) => {
                       setAgentKind(k)
                       persistAgentKind(k)
                     }}
-                    onModeChange={setMode}
                     disabled={!session.context || !!session.closed}
                   />
                 </div>
@@ -447,7 +338,7 @@ function RemoteSessionView({ session }: { session: Session }) {
                     <AgentPane
                       sessionId={session.id}
                       kind={agentKind}
-                      mode={mode}
+                      mode={AGENT_BRIDGE_POLICY}
                       active={agentDocked}
                       closeOnUnmount={false}
                       mirrorToStore

@@ -3,6 +3,30 @@
 All notable changes to DevTerm are documented here. The most recent section is
 at the top. Dates are ISO `YYYY-MM-DD`.
 
+## 1.3.18 — 2026-08-23
+
+### Changed
+
+- **Ask bar is the remote agent launch surface.** Kind picker + compose live
+  under the shell; Enter/Ask starts the agent. The top bar no longer duplicates
+  Open agent / Agent / Policy. While the agent is running it only shows Hide /
+  Float / Stop.
+- **Permission prompts belong to the agent CLI.** The session Policy picker is
+  gone (it did not map onto Claude/Grok/Codex). MCP launches unrestricted;
+  Settings approval rules remain a hard pre-check. Claude no longer starts with
+  `--dangerously-skip-permissions`; Grok no longer `--always-approve`; Codex no
+  longer gets a DevTerm-written `approval_policy`.
+- **First DevTerm Agent / Pi prompt** is passed as the CLI message (`pi "…"`)
+  so the process starts working instead of opening an empty editor. Follow-ups
+  inject into the live PTY after the TUI is idle, with Enter as a separate
+  keystroke.
+
+### Fixed
+
+- **Quiet remote inject leftover rows:** POSIX shell-integration restore now
+  reclaims the blank lines left under the login prompt instead of leaving a
+  gap (still no `clear`, so the MOTD stays).
+
 ## 1.3.17 — 2026-08-20
 
 ### Added

@@ -357,6 +357,25 @@
   opacity: 0.45;
   cursor: not-allowed;
 }
+.agent-ask-open {
+  margin-left: auto;
+  padding: 3px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--fg);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.agent-ask-open:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--agent) 14%, transparent);
+  border-color: var(--agent);
+}
+.agent-ask-open:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
 
 /* Floating agent OS window */
 body.agent-float-body,

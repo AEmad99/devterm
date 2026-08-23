@@ -56,7 +56,7 @@ export async function prepareOpencodeLaunch(
     },
     // Scope the agent to MCP tools only. OpenCode ships these built-in tools
     // (https://opencode.ai/docs/tools/) — turning every one off means every
-    // host action has to go through `devterm_*`, which the bridge policy-gates.
+    // host action has to go through `devterm_*` on this SSH session.
     // Earlier revisions named `patch`, `task`, `todoread` and missed
     // `apply_patch` / `websearch` / `lsp` / `question`: the real tool is
     // `apply_patch` (NOT `patch` — opencode explicitly distinguishes them in

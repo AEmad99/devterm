@@ -272,7 +272,7 @@ export function registerAgentIpc(
 
     if (opts.cwd) cwds.set(opts.sessionId, opts.cwd)
 
-    const policy = new Policy(opts.mode, (sessionId, command) =>
+    const policy = new Policy(opts.mode ?? 'full', (sessionId, command) =>
       approvalRules.match(sessionId, command).then((r) => (r ? { outcome: r.outcome } : undefined))
     )
     const airGapped = opts.airGapped ?? false
@@ -312,7 +312,8 @@ export function registerAgentIpc(
                 {
                   preferences: opts.preferences,
                   sessionDir,
-                  sessionId: persistentSessionId
+                  sessionId: persistentSessionId,
+                  initialPrompt: opts.initialPrompt
                 }
               )
             })()
@@ -334,20 +335,17 @@ export function registerAgentIpc(
                 : opts.kind === 'grok'
                   ? prepareGrokLaunch(
                       buildGrokMd(context, airGapped, cwds.get(opts.sessionId)),
-                      info,
-                      opts.mode
+                      info
                     )
                   : opts.kind === 'codex'
                     ? prepareCodexLaunch(
                         buildCodexMd(context, airGapped, cwds.get(opts.sessionId)),
-                        info,
-                        opts.mode
+                        info
                       )
                     : opts.kind === 'antigravity'
                       ? await prepareAntigravityLaunch(
                           buildAntigravityMd(context, airGapped, cwds.get(opts.sessionId)),
-                          info,
-                          opts.mode
+                          info
                         )
                       : await (async () => {
                           const sessionDir = join(app.getPath('userData'), 'agent-sessions')
@@ -358,7 +356,8 @@ export function registerAgentIpc(
                             {
                               preferences: opts.preferences,
                               sessionDir,
-                              sessionId: persistentSessionId
+                              sessionId: persistentSessionId,
+                              initialPrompt: opts.initialPrompt
                             }
                           )
                         })()
@@ -504,7 +503,7 @@ export function registerAgentIpc(
         sshDispose,
         ptyDispose,
         agentExited: false,
-        lastOpts: opts
+        lastOpts: { ...opts, initialPrompt: undefined }
       })
       return { ptyId, mcpUrl: info.url }
     } catch (err) {
@@ -534,7 +533,7 @@ export function registerAgentIpc(
     return {
       ptyId: s.ptyId,
       kind: opts.kind,
-      mode: opts.mode,
+      mode: opts.mode ?? 'full',
       bridge: s.bridge.getStatus(),
       uiMode: uiModes.get(sessionId)
     }

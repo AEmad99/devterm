@@ -399,7 +399,12 @@ export interface AgentOpenOpts {
   sessionId: string
   /** Which agent CLI to launch. */
   kind: AgentKind
-  mode: PolicyMode
+  /**
+   * MCP tool policy. Omitted defaults to `full` (no DevTerm confirm modal).
+   * Permission prompts belong to the agent CLI; Settings approval rules still
+   * apply as an MCP pre-check.
+   */
+  mode?: PolicyMode
   /** Tell the agent the host has no internet. Optional; defaults to false. */
   airGapped?: boolean
   /** Built-in DevTerm Agent launch preferences. Ignored by external fallbacks. */
@@ -418,6 +423,11 @@ export interface AgentOpenOpts {
    * so UI mode changes (dock / float / hide) do not kill the process.
    */
   forceRestart?: boolean
+  /**
+   * First user message for a brand-new DevTerm Agent / Pi process (`pi "…"`).
+   * Ignored on reuse. Other CLIs still receive the prompt via PTY inject.
+   */
+  initialPrompt?: string
 }
 
 export interface SSHOpenShellOptions {

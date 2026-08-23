@@ -4,7 +4,7 @@ Guidance for coding agents working in the DevTerm repository.
 
 DevTerm is an Electron 29 desktop terminal: local shells (prebuilt node-pty), SSH/SFTP sessions, workspaces, file browsing/editing (CodeMirror 6), an in-app browser, snippets, a Warp-style Git panel, a persistent transfer queue, offline Whisper dictation, global terminal search, and an embedded multi-provider **DevTerm Agent** with seven external CLI fallbacks (`pi`, `claude`, `opencode`, `kimi`, `grok`, `codex`, `antigravity`). Every agent runs in a local PTY and reaches the remote host only through DevTerm's in-process MCP bridge. Stack: electron-vite, TypeScript strict, React 18, Zustand, xterm.js, ssh2, marked + DOMPurify, `@huggingface/transformers`, `@earendil-works/pi-coding-agent` (bundled runtime), dedicated `node` binary for the agent, electron-updater, zod.
 
-**Current version:** `package.json` → `1.3.17`. Top-level views: **Terminals** (always-mounted workspace: group tabs, split panes, local/remote/browser sessions), **Connections**, **Workspaces**, **Snippets**. DevTerm is a normal framed desktop app; the first screen is the terminal, not a marketing page.
+**Current version:** `package.json` → `1.3.18`. Top-level views: **Terminals** (always-mounted workspace: group tabs, split panes, local/remote/browser sessions), **Connections**, **Workspaces**, **Snippets**. DevTerm is a normal framed desktop app; the first screen is the terminal, not a marketing page.
 
 ## Architecture
 
@@ -93,7 +93,7 @@ Bridge & tools:
 
 - MCP bridge (`src/main/mcp/server.ts`) on `127.0.0.1:<random-port>` gated by a random bearer token.
 - Tools (`src/main/mcp/tools.ts`): `ping`, `get_host_context`, `run_command`, `list_dir`, `read_file`, `write_file`. Relative paths and `run_command` honor the operator's live POSIX cwd from OSC 7; Windows remotes keep login-default semantics for cwd prefixing.
-- Policy modes `read_only` / `confirm` / `full` in `policy.ts`. Approval rules (`approval-rules.ts`, `userData/approval-rules.json`) are a **PRE-CHECK**: explicit allow/deny short-circuits the mode; `ask` falls through. UI for rules lives under Settings → Agent guardrails.
+- MCP launch uses policy mode `full` (no DevTerm confirm modal). Permission prompts belong to the agent CLI (Claude `/permissions`, Codex approval, etc.). Approval rules (`approval-rules.ts`, `userData/approval-rules.json`) remain a **PRE-CHECK** allow/deny/ask at the MCP boundary. UI for rules lives under Settings → Agent guardrails. The old per-session Policy picker is gone — it did not map onto Claude/Grok (always bypassed) or Codex the way the UI implied.
 - Built-in local fs/shell tools are disabled for every agent so host work crosses the bridge over the session's shared ssh2 client (Claude keeps Read/Write/Edit for **local** scratch only).
 - Bridge status over `agent:bridge-status:<id>`; MCP `notifications/message` heartbeat every 25s; renderer pushes live cwd via `agent:set-cwd`; confirmations (`agent:confirm`) time out after 120s as `'timeout'`. Confirms and PTY data are **broadcast** to every `BrowserWindow` so a floating agent window can approve and stream.
 - Agent PTY is **not** killed on its own exit — bridge + temp dir stay up for auto-restart after SSH reconnect; cleaned up only on explicit **Stop** / session close / quit. Activity log: `bridge-activity.ts` → `AgentActivityPanel.tsx` (filterable, exportable JSONL).
@@ -110,7 +110,7 @@ Bridge & tools:
 - Store fields: `session.agentUiMode` / `agentPtyId` / `agentPolicyMode` (`store/sessions.setAgentUi`). Main tracks mode via `agent:set-ui-mode` and broadcasts `agent:ui-mode-changed` so the main window store stays in sync when the float window docks/hides.
 - `agent:open` is **idempotent** unless `forceRestart` (Restart button). Mode switches reattach; they must not kill the agent.
 - Main window keeps a **stashed** `AgentPane` (`.agent-ui-stash` + `.term-hidden`) while the agent is alive so scrollback survives hide/float; only the **active** surface sends input/resize and attention chimes.
-- **Ask bar** under every remote shell (`AgentAskBar`): ensure agent → inject prompt into the live agent PTY (Ctrl+Enter). Starts docked if the agent was fully stopped.
+- **Ask bar** under every remote shell (`AgentAskBar`): the launch surface. Kind picker (when stopped) + compose; Enter/Ask starts the agent. A first DevTerm Agent / Pi prompt is passed as the CLI message (`pi "…"`) so the process starts working instead of opening an empty editor. Follow-up prompts (and other CLIs) inject into the live PTY after the TUI is idle, with Enter as a separate keystroke. **Open pane** starts the TUI without a prompt (login / agent UI). The remote top bar no longer duplicates Open agent / Agent / Policy — while the process is alive it only shows Hide / Float / Stop (and a chip when hidden or floating).
 - Floating window controls: Dock / Hide / Stop; OS close (X) demotes to `hidden` without killing the process. Closing the remote tab calls `agent.close` + `agent.closeWindow`.
 - Helpers: `lib/agent-ui.ts` (`ensureAgent`, `stopAgent`, `injectAgentPrompt`, `setAgentUiMode`). Renderer entry: `agent-window.html` + `agent-window.tsx` (electron-vite multi-page input).
 
@@ -186,7 +186,7 @@ Bridge & tools:
 
 ## Packaging
 
-- Version = `package.json` `version` (currently **1.3.17**).
+- Version = `package.json` `version` (currently **1.3.18**).
 - electron-builder: `appId com.devterm.app`, `productName DevTerm`, NSIS x64 (`oneClick: false`, `perMachine: false`, `allowToChangeInstallationDirectory: true`), unsigned (`verifyUpdateCodeSignature: false`), `npmRebuild: false`, GitHub publish provider `AEmad99/devterm`.
 - NSIS reinstall close logic: `resources/installer.nsh` (`nsis.include`) — `customInit` + `customCheckAppRunning` force-kill install-dir processes (required because elevated UAC inner installs skip stock `CHECK_APP_RUNNING`); `customUnInstallCheck*` lets upgrades continue if the old uninstaller fails.
 - `asarUnpack` must include: `node-pty`, `ort/*.wasm`, bundled agent Node binary (`node/bin/**`), `@earendil-works/**`, and the listed agent runtime dependency packages in `electron-builder.yml`. Do not drop those entries or the built-in agent fails to start from the installed app.
@@ -211,6 +211,7 @@ Bridge & tools:
 
 ## Recent release notes (for context)
 
+- **1.3.18** — Remote ask bar is the agent launch surface (no duplicated Open agent / Policy picker); first DevTerm Agent prompt is passed on the CLI so the agent starts working; permission prompts belong to the agent CLI; SSH shell-integration reclaim leftover inject rows without `clear`.
 - **1.3.17** — Richer tmux picker (live pane preview, window/command/cwd, kill session); reopen via pane button / Ctrl+Alt+T / palette; attach-while-inside uses `switch-client`; remote shell-integration inject no longer echoes a wall of script then `clear`s the login banner.
 - **1.3.16** — Fix stray `]` around remote bash prompts (detached tmux): the OS-integration prompt markers now reference `${__dtA}`/`${__dtB}` deferred in PS1 instead of baking the tmux DCS envelope bytes in, which let bash's `\]` decoder print a literal bracket. Regression-tested in `detached-session.test.ts`.
 - **1.3.15** — Agent UI modes (`docked` / `floating` / `hidden`) with process lifetime decoupled from layout; Warp-style **Ask agent** strip under remote shells (ensure + inject into live agent PTY); floating agent OS window (multi-monitor) with dock/hide/stop and cross-window confirm routing; session-restore MVP (last groups/local/saved-SSH); `~/.ssh/config` import; global Find hotkey wired through `openTerminalFind`; default scrollback raised to 10 000; multi-window PTY/bridge broadcast for pop-out agent.
@@ -265,7 +266,7 @@ Snapshot of the **implemented** surface area as of this audit. Use this when pri
 | Ask-agent strip | **Shipped** | Bottom compose bar on remote shells; inject into live agent PTY |
 | Floating agent window | **Shipped** | Separate OS window (`agent-window.html`); dock/hide/stop |
 | MCP tools | **Shipped (narrow)** | `ping`, `get_host_context`, `run_command`, `list_dir`, `read_file`, `write_file` only |
-| Agent guardrails | **Shipped** | Policy modes + prefix approval rules + activity log/export |
+| Agent guardrails | **Shipped** | Prefix approval rules + activity log; permission prompts belong to the agent CLI |
 | Attention signals | **Shipped** | Agent-only idle chime, tab badge, OS notify when backgrounded |
 | QuickConnect / known hosts UI | **Shipped** | MRU host triples; Connections known-hosts management |
 | Workspaces auto-launch | **Shipped** | `autoLaunch` on boot into separate groups |

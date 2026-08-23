@@ -2,7 +2,6 @@ import { execSync } from 'child_process'
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { homedir, tmpdir } from 'os'
 import { join } from 'path'
-import type { PolicyMode } from '@shared/types'
 import type { BridgeInfo } from '../mcp/server'
 import type { AgentLaunchSpec } from './launch'
 import { resolveCached } from './launch'
@@ -57,8 +56,7 @@ export async function resolveAntigravityBin(): Promise<string> {
  */
 export async function prepareAntigravityLaunch(
   hostContextMd: string,
-  bridge: BridgeInfo,
-  _policyMode?: PolicyMode
+  bridge: BridgeInfo
 ): Promise<AgentLaunchSpec> {
   const cwd = mkdtempSync(join(tmpdir(), 'devterm-antigravity-'))
   writeFileSync(join(cwd, 'AGENTS.md'), hostContextMd, { mode: 0o600 })

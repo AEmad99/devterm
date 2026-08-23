@@ -161,6 +161,8 @@ interface BuiltinLaunchOptions {
   preferences?: AgentPreferences
   sessionDir?: string
   sessionId?: string
+  /** Passed as the trailing CLI message so interactive `pi "…"` starts working. */
+  initialPrompt?: string
 }
 
 function isolatedAgentArgs(extensionPath: string, options?: BuiltinLaunchOptions): string[] {
@@ -203,6 +205,8 @@ function isolatedAgentArgs(extensionPath: string, options?: BuiltinLaunchOptions
       /* Missing or modified skills remain disabled until explicitly re-approved. */
     }
   }
+  const prompt = options?.initialPrompt?.replace(/\s+$/u, '')
+  if (prompt) args.push(prompt)
   return args
 }
 

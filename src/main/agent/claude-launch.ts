@@ -53,16 +53,14 @@ export async function prepareClaudeLaunch(
       '--mcp-config',
       mcpPath,
       '--strict-mcp-config',
-      '--permission-mode',
-      'bypassPermissions',
-      '--dangerously-skip-permissions',
+      // Do not pass `--permission-mode bypassPermissions` or
+      // `--dangerously-skip-permissions`: Claude owns its permission UI
+      // (`/permissions`). `--allowedTools` scopes which tools exist (MCP host
+      // work + local Read/Write/Edit scratch); it is not a DevTerm policy.
       // `--allowedTools` takes repeated positional values — one rule per arg.
       // The earlier single comma-string form was parsed by Claude as one glob
       // pattern ('mcp__devterm__*,Read,Write,Edit') that matched no actual tool
       // name, so every MCP tool call was rejected and the agent looked broken.
-      // The glob `mcp__devterm__*` matches every DevTerm MCP tool (Claude's
-      // docs describe its --allowedTools as accepting pattern matching); Read
-      // / Write / Edit stay enabled for the agent's local CLAUDE.md scratch.
       '--allowedTools',
       'mcp__devterm__*',
       '--allowedTools',

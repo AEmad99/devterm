@@ -55,7 +55,6 @@ function AgentFloatingApp() {
             onClick={() => {
               void setAgentUiMode(params.sessionId, 'docked', {
                 kind: params.kind,
-                policyMode: params.mode,
                 title: params.title
               })
             }}
@@ -68,8 +67,7 @@ function AgentFloatingApp() {
             title="Hide the agent UI; keep the process running"
             onClick={() => {
               void setAgentUiMode(params.sessionId, 'hidden', {
-                kind: params.kind,
-                policyMode: params.mode
+                kind: params.kind
               })
             }}
           >

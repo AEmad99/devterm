@@ -144,7 +144,18 @@ export const DEFAULT_RECONNECT_POLICY: ReconnectPolicy = {
  *  1. enable `allow-passthrough` on the current session (best-effort), and
  *  2. wrap each OSC in the DCS form `\ePtmux;\e<esc-doubled-payload>\e\\`
  * so xterm.js still sees OSC 7 / 133 and the file explorer follows `cd`.
+ *
+ * After install, the script restores echo and reclaims leftover rows from the
+ * quiet inject (see `SHELL_INTEGRATION_RECLAIM_LINES`) instead of `clear`.
  */
+
+/**
+ * Rows the POSIX inject must reclaim after writeQuiet. Matches the blank
+ * lines left under the login prompt when echo is off (command text hidden,
+ * newlines still committed).
+ */
+export const SHELL_INTEGRATION_RECLAIM_LINES = 3
+
 export function buildPosixShellIntegrationSetup(): string {
   // DCS-wrapped OSC payloads: every ESC in the inner sequence is doubled.
   // BEL (`\007`) is left as-is. Terminator is ESC \ (ST).
@@ -185,7 +196,13 @@ export function buildPosixShellIntegrationSetup(): string {
     // the injection until after `\[`/`\]` are bound, keeping the prompt clean.
     `case "$PS1" in *'\${__dtA}'*) ;; *) PS1='\\[\${__dtA}\\]'"$PS1"'\\[\${__dtB}\\]';; esac; fi; ` +
     `fi; ` +
-    `stty echo 2>/dev/null; __dt7\n`
+    // Restore echo, then eat leftover rows from the quiet inject. writeQuiet
+    // submits `stty -echo` and this payload as two commands; with echo off the
+    // text is hidden but the newlines still land (typically three blank rows
+    // under the login prompt). Do not `clear` — that wipes the MOTD. The next
+    // prompt runs `__dt7` via PROMPT_COMMAND / precmd, so do not call it here
+    // (it would print OSC 7 on a row we are about to delete).
+    `stty echo 2>/dev/null; printf '\\033[${SHELL_INTEGRATION_RECLAIM_LINES}A\\r\\033[J'\n`
   )
 }
 

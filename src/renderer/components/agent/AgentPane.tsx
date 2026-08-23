@@ -8,16 +8,10 @@ import { fitNow, fitSoon } from '../../lib/fit'
 import { attachRenderer, attachClipboard } from '../../lib/renderer'
 import { createIdleChime, AGENT_ATTENTION_BODY } from '../../lib/attention'
 import { useBridgeActivity } from '../../lib/bridge-activity'
-import { agentKindLabel } from '../../lib/agent-ui'
+import { AGENT_BRIDGE_POLICY, agentKindLabel } from '../../lib/agent-ui'
 
 /** Live state of the agent's link to this host (what the status pill reflects). */
 type BridgeState = AgentBridgeStatus['state'] | 'connecting' | 'exited'
-
-const MODE_LABEL: Record<PolicyMode, string> = {
-  read_only: 'Read-only',
-  confirm: 'Ask first',
-  full: 'Bypass'
-}
 
 /**
  * Build a compact agent-task string for the session tab.
@@ -59,7 +53,7 @@ function formatAgentTabTask(tool: string | undefined, detail: string | undefined
 export default function AgentPane({
   sessionId,
   kind,
-  mode,
+  mode = AGENT_BRIDGE_POLICY,
   /** When false, the PTY is display-only (stashed / non-active surface). */
   active = true,
   /**
@@ -74,7 +68,7 @@ export default function AgentPane({
 }: {
   sessionId: string
   kind: AgentKind
-  mode: PolicyMode
+  mode?: PolicyMode
   active?: boolean
   closeOnUnmount?: boolean
   mirrorToStore?: boolean
@@ -167,7 +161,11 @@ export default function AgentPane({
 
     ;(async () => {
       try {
-        const { ptyId, mcpUrl: url, reused } = await window.devterm.agent.open({
+        const {
+          ptyId,
+          mcpUrl: url,
+          reused
+        } = await window.devterm.agent.open({
           sessionId,
           kind,
           mode,
@@ -189,7 +187,7 @@ export default function AgentPane({
         setBridge((cur) => (cur === 'connecting' ? (reused ? 'connected' : 'listening') : cur))
         if (reused) {
           term.write(
-            `\x1b[90mReattached to running ${label} agent (MCP: ${url || '…'} | policy: ${mode}).\x1b[0m\r\n`
+            `\x1b[90mReattached to running ${label} agent (MCP: ${url || '…'}).\x1b[0m\r\n`
           )
         } else {
           const toolNote =
@@ -208,9 +206,7 @@ export default function AgentPane({
                         : kind === 'antigravity'
                           ? 'use mcp__devterm__* tools for host work'
                           : 'built-in tools off'
-          term.write(
-            `\x1b[90mMCP bridge: ${url} | policy: ${mode} | agent: ${kind} (${toolNote})\x1b[0m\r\n`
-          )
+          term.write(`\x1b[90mMCP bridge: ${url} | agent: ${kind} (${toolNote})\x1b[0m\r\n`)
         }
         const attention = createIdleChime({
           sessionId,
@@ -326,10 +322,7 @@ export default function AgentPane({
                 : { tone: 'down', text: 'Failed to start' }
   const canRestart =
     !hostClosed &&
-    (bridge === 'disconnected' ||
-      bridge === 'stopped' ||
-      bridge === 'exited' ||
-      bridge === 'error')
+    (bridge === 'disconnected' || bridge === 'stopped' || bridge === 'exited' || bridge === 'error')
   const statusTitle = [
     bridgeMessage,
     mcpUrl,
@@ -357,9 +350,6 @@ export default function AgentPane({
             Restart
           </button>
         )}
-        <span className="agent-mode" title="What the agent is allowed to do on this host">
-          {MODE_LABEL[mode]}
-        </span>
         {toolbar && <div className="agent-status-toolbar">{toolbar}</div>}
       </div>
       <div className="terminal-host agent-host" ref={hostRef} />

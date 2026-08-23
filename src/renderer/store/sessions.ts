@@ -48,7 +48,7 @@ export interface Session {
    * desired (process stopped). Process can still run while `hidden`.
    */
   agentUiMode?: AgentUiMode
-  /** Policy mode used for the active agent (fixed while the process is up). */
+  /** MCP policy used for the active agent (always `full`; kept for IPC). */
   agentPolicyMode?: PolicyMode
   /** PTY id of the live agent process, if known (for prompt inject without open). */
   agentPtyId?: string

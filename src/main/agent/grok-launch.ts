@@ -2,7 +2,6 @@ import { execSync } from 'child_process'
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { homedir, tmpdir } from 'os'
 import { join } from 'path'
-import type { PolicyMode } from '@shared/types'
 import type { BridgeInfo } from '../mcp/server'
 import type { AgentLaunchSpec } from './launch'
 import { buildGrokMd } from './context'
@@ -58,15 +57,10 @@ export function resolveGrokBin(): string {
  * interactive `grok` — NEVER `-p` / headless mode.
  *
  * Grok discovers project MCP servers from `.grok/config.toml` in cwd. The
- * bearer token never leaves the temp dir's config file (mode 0o600). DevTerm's
- * bridge policy (read-only / confirm / full) remains the real authorization
- * boundary, so Grok itself auto-approves MCP tool calls.
+ * bearer token never leaves the temp dir's config file (mode 0o600). Grok
+ * owns its own permission prompts; DevTerm does not auto-approve MCP calls.
  */
-export function prepareGrokLaunch(
-  hostContextMd: string,
-  bridge: BridgeInfo,
-  _policyMode: PolicyMode
-): AgentLaunchSpec {
+export function prepareGrokLaunch(hostContextMd: string, bridge: BridgeInfo): AgentLaunchSpec {
   const cwd = mkdtempSync(join(tmpdir(), 'devterm-grok-'))
   const grokDir = join(cwd, '.grok')
   const claudeDir = join(cwd, '.claude')
@@ -85,9 +79,8 @@ Authorization = "Bearer ${bridge.token}"
   writeFileSync(join(grokDir, 'config.toml'), grokConfig, { mode: 0o600 })
 
   // Deny-by-default at the Grok layer: only the DevTerm MCP tools are allowed.
-  // Host mutations are gated by the bridge's policy, not Grok's local bash/edit.
+  // Permission prompts stay in Grok; do not set defaultMode/dontAsk.
   const claudeSettings = {
-    defaultMode: 'dontAsk',
     permissions: {
       allow: ['MCPTool(devterm__*)']
     }
@@ -99,8 +92,6 @@ Authorization = "Bearer ${bridge.token}"
   return {
     bin: resolveGrokBin(),
     args: [
-      // DevTerm's bridge policy is the real gate; skip Grok's redundant MCP prompts.
-      '--always-approve',
       // Remote-bridge sessions don't need web tools; keeps air-gapped hosts quiet.
       '--disable-web-search',
       // Embedded pane: one agent, no subagent fan-out.

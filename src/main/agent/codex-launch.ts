@@ -2,7 +2,6 @@ import { execSync } from 'child_process'
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { homedir, tmpdir } from 'os'
 import { join } from 'path'
-import type { PolicyMode } from '@shared/types'
 import type { BridgeInfo } from '../mcp/server'
 import type { AgentLaunchSpec } from './launch'
 import { buildCodexMd } from './context'
@@ -51,12 +50,6 @@ export function resolveCodexBin(): string {
   return 'codex'
 }
 
-function approvalPolicyToml(mode: PolicyMode): string {
-  if (mode === 'full') return 'approval_policy = "never"'
-  if (mode === 'read_only') return 'approval_policy = "untrusted"'
-  return 'approval_policy = "on-request"'
-}
-
 /**
  * Prepare a per-session working directory containing an `AGENTS.md` briefing and
  * an isolated `CODEX_HOME` with a `config.toml` that wires the in-process MCP
@@ -68,12 +61,9 @@ function approvalPolicyToml(mode: PolicyMode): string {
  * operator's real install when present) so the session does not inherit the
  * user's global MCP servers or shell-tool settings. Built-in shell access stays
  * off via `features.shell_tool = false`; host work goes through `mcp__devterm__*`.
+ * Approval prompts stay in Codex — DevTerm does not write `approval_policy`.
  */
-export function prepareCodexLaunch(
-  hostContextMd: string,
-  bridge: BridgeInfo,
-  policyMode: PolicyMode
-): AgentLaunchSpec {
+export function prepareCodexLaunch(hostContextMd: string, bridge: BridgeInfo): AgentLaunchSpec {
   const cwd = mkdtempSync(join(tmpdir(), 'devterm-codex-'))
   const codexHome = join(cwd, 'codex-home')
   mkdirSync(codexHome, { recursive: true })
@@ -88,7 +78,6 @@ export function prepareCodexLaunch(
   const codexConfig = `# DevTerm per-session isolated Codex config
 sandbox_mode = "read-only"
 web_search = "disabled"
-${approvalPolicyToml(policyMode)}
 
 [history]
 persistence = "none"
@@ -106,12 +95,9 @@ Authorization = "Bearer ${bridge.token}"
 `
   writeFileSync(join(codexHome, 'config.toml'), codexConfig, { mode: 0o600 })
 
-  const args =
-    policyMode === 'full'
-      ? ['--sandbox', 'read-only', '--ask-for-approval', 'never']
-      : policyMode === 'read_only'
-        ? ['--sandbox', 'read-only', '--ask-for-approval', 'untrusted']
-        : ['--sandbox', 'read-only', '--ask-for-approval', 'on-request']
+  // Sandbox stays read-only so host work goes through MCP. Do not pass
+  // `--ask-for-approval`: Codex owns its permission UI.
+  const args = ['--sandbox', 'read-only']
 
   return {
     bin: resolveCodexBin(),

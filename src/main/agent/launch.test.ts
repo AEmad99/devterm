@@ -54,6 +54,19 @@ describe('bundled DevTerm Agent launch', () => {
     }
   })
 
+  it('appends an initial prompt as the trailing CLI message', async () => {
+    const spec = await prepareBuiltinAgentLaunch(
+      'host briefing',
+      { url: 'http://127.0.0.1:12345/mcp', token: 'test-token', port: 12345 },
+      { initialPrompt: 'list files on this host' }
+    )
+    try {
+      assert.equal(spec.args[spec.args.length - 1], 'list files on this host')
+    } finally {
+      spec.cleanup()
+    }
+  })
+
   it('pins provider routing and resumes a stable per-host conversation', async () => {
     const sessionDir = mkdtempSync(join(tmpdir(), 'devterm-agent-sessions-'))
     const skillPath = join(sessionDir, 'SKILL.md')

@@ -1225,7 +1225,7 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                   <div className="settings-card-header">
                     <h4>Approval Guardrails</h4>
                     <p className="settings-card-subtitle">
-                      Rules overriding per-session policy prompts.
+                      Hard allow / deny / ask rules for MCP tools on the host.
                     </p>
                   </div>
                   <div className="settings-card-body">

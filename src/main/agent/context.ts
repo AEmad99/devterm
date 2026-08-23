@@ -56,9 +56,8 @@ connection. Do not \`ssh\` elsewhere.
 - \`mcp__devterm__ping\` — confirm the bridge is still alive.
 
 The DevTerm MCP bridge is a real HTTP server on localhost; its bearer token is
-in the \`DEVTERM_BRIDGE_TOKEN\` env var. The bridge enforces the operator's
-policy (read-only / confirm / full) before running any tool, and destructive
-operations may prompt the operator for approval.
+in the \`DEVTERM_BRIDGE_TOKEN\` env var. Permission prompts come from this agent, not a DevTerm session policy.
+DevTerm Settings approval rules may still allow or deny a tool before it runs.
 
 ${workingDirSection(cwd)}
 ## Built-in tools are disabled in this session
@@ -81,8 +80,8 @@ This host has outbound internet, but prefer local/organisational mirrors when av
 }
 
 ## Safety
-Destructive operations are gated by an operator-approval guardrail. Explain what
-a command does before running anything that changes state.
+Permission prompts for host tools come from this agent. Explain what a command
+does before running anything that changes state.
 `
 }
 
@@ -140,8 +139,8 @@ This host has outbound internet, but prefer local/organisational mirrors when av
 }
 
 ## Safety
-Destructive operations are gated by an operator-approval guardrail. Explain what
-a command does before running anything that changes state.
+Permission prompts for host tools come from this agent. Explain what a command
+does before running anything that changes state.
 `
 }
 
@@ -185,9 +184,8 @@ built-in read/write/edit/bash tool (they are disabled in this session's config).
 - \`devterm_ping\` — confirm the bridge is still alive.
 
 The DevTerm MCP bridge is a real HTTP server on localhost; its bearer token is
-in the bridge config OpenCode loaded. The bridge enforces the operator's
-policy (read-only / confirm / full) before running any tool, and destructive
-operations may prompt the operator for approval.
+in the bridge config OpenCode loaded. Permission prompts come from this agent, not a DevTerm session policy.
+DevTerm Settings approval rules may still allow or deny a tool before it runs.
 
 ${workingDirSection(cwd)}
 ## Your working directory is a throwaway
@@ -209,8 +207,8 @@ This host has outbound internet, but prefer local/organisational mirrors when av
 }
 
 ## Safety
-Destructive operations are gated by an operator-approval guardrail. Explain what
-a command does before running anything that changes state.
+Permission prompts for host tools come from this agent. Explain what a command
+does before running anything that changes state.
 `
 }
 
@@ -252,9 +250,8 @@ built-in read/write/edit/bash tool for host work.
 - \`mcp__devterm__ping\` — confirm the bridge is still alive.
 
 The DevTerm MCP bridge is a real HTTP server on localhost; the \`mcp.json\` it
-loaded contains the bearer token. The bridge enforces the operator's policy
-(read-only / confirm / full) before running any tool, and destructive
-operations may prompt the operator for approval.
+loaded contains the bearer token. Permission prompts come from this agent, not a DevTerm session policy.
+DevTerm Settings approval rules may still allow or deny a tool before it runs.
 
 ${workingDirSection(cwd)}
 ## Your working directory is a throwaway
@@ -276,8 +273,8 @@ This host has outbound internet, but prefer local/organisational mirrors when av
 }
 
 ## Safety
-Destructive operations are gated by an operator-approval guardrail. Explain what
-a command does before running anything that changes state.
+Permission prompts for host tools come from this agent. Explain what a command
+does before running anything that changes state.
 `
 }
 
@@ -319,9 +316,8 @@ built-in shell or file tool (they are disabled in this session's config).
 - \`devterm__ping\` — confirm the bridge is still alive.
 
 The DevTerm MCP bridge is a real HTTP server on localhost; its bearer token is
-in the \`.grok/config.toml\` Grok loaded. The bridge enforces the operator's
-policy (read-only / confirm / full) before running any tool, and destructive
-operations may prompt the operator for approval.
+in the \`.grok/config.toml\` Grok loaded. Permission prompts come from this agent, not a DevTerm session policy.
+DevTerm Settings approval rules may still allow or deny a tool before it runs.
 
 ${workingDirSection(cwd)}
 ## Your working directory is a throwaway
@@ -343,8 +339,8 @@ This host has outbound internet, but prefer local/organisational mirrors when av
 }
 
 ## Safety
-Destructive operations are gated by an operator-approval guardrail. Explain what
-a command does before running anything that changes state.
+Permission prompts for host tools come from this agent. Explain what a command
+does before running anything that changes state.
 `
 }
 
@@ -386,9 +382,8 @@ built-in shell or file tool (they are disabled in this session's config).
 - \`mcp__devterm__ping\` — confirm the bridge is still alive.
 
 The DevTerm MCP bridge is a real HTTP server on localhost; its bearer token is
-in the Codex config this session loaded. The bridge enforces the operator's
-policy (read-only / confirm / full) before running any tool, and destructive
-operations may prompt the operator for approval.
+in the Codex config this session loaded. Permission prompts come from this agent, not a DevTerm session policy.
+DevTerm Settings approval rules may still allow or deny a tool before it runs.
 
 ${workingDirSection(cwd)}
 ## Your working directory is a throwaway
@@ -410,8 +405,8 @@ This host has outbound internet, but prefer local/organisational mirrors when av
 }
 
 ## Safety
-Destructive operations are gated by an operator-approval guardrail. Explain what
-a command does before running anything that changes state.
+Permission prompts for host tools come from this agent. Explain what a command
+does before running anything that changes state.
 `
 }
 
@@ -451,9 +446,8 @@ built-in shell or file tool for host work.
 - \`mcp__devterm__ping\` — confirm the bridge is still alive.
 
 The DevTerm MCP bridge is a real HTTP server on localhost; its bearer token is
-in the Antigravity MCP config this session loaded. The bridge enforces the operator's
-policy (read-only / confirm / full) before running any tool, and destructive
-operations may prompt the operator for approval.
+in the Antigravity MCP config this session loaded. Permission prompts come from this agent, not a DevTerm session policy.
+DevTerm Settings approval rules may still allow or deny a tool before it runs.
 
 ${workingDirSection(cwd)}
 ## Your working directory is a throwaway
@@ -475,7 +469,7 @@ This host has outbound internet, but prefer local/organisational mirrors when av
 }
 
 ## Safety
-Destructive operations are gated by an operator-approval guardrail. Explain what
-a command does before running anything that changes state.
+Permission prompts for host tools come from this agent. Explain what a command
+does before running anything that changes state.
 `
 }
