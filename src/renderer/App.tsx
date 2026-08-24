@@ -30,6 +30,7 @@ import { dictation } from './lib/stt/dictation'
 import { useDictation } from './store/dictation'
 import DictationStatus from './components/dictation/DictationStatus'
 import GitPanel from './components/git/GitPanel'
+import { initBrowserControl } from './lib/browser-control'
 import type { HostContext } from '@shared/types'
 import type { View, BottomPanelMode } from './components/chrome/types'
 
@@ -55,6 +56,8 @@ export default function App() {
   const syncLayout = useLayout((s) => s.sync)
 
   useTransfersSync()
+  // Agent browser control: route main's browser_open requests into panes.
+  useEffect(() => initBrowserControl(), [])
   const transfersPanelOpen = useSettings((s) => s.transfersPanelOpen)
   const setTransfersPanelOpen = useSettings((s) => s.setTransfersPanelOpen)
   const agentActivityCollapsed = useSettings((s) => s.agentActivityCollapsed)

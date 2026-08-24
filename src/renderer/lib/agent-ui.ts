@@ -26,9 +26,17 @@ export async function ensureAgent(opts: {
   forceRestart?: boolean
   uiMode?: AgentUiMode
   initialPrompt?: string
+  /**
+   * Which surface the agent is bound to. Derived from the session store when
+   * omitted, so callers (ask bar / pane) never need to care.
+   */
+  sessionKind?: 'local' | 'remote'
 }): Promise<AgentOpenResult> {
   const preferences = opts.kind === 'devterm' ? useSettings.getState().agentPreferences : undefined
   const mode = opts.mode ?? AGENT_BRIDGE_POLICY
+  const session =
+    useSessions.getState().sessions.find((x) => x.id === opts.sessionId) ?? undefined
+  const sessionKind = opts.sessionKind ?? (session?.kind === 'local' ? 'local' : 'remote')
   const result = await window.devterm.agent.open({
     sessionId: opts.sessionId,
     kind: opts.kind,
@@ -38,7 +46,9 @@ export async function ensureAgent(opts: {
     cols: opts.cols ?? 100,
     rows: opts.rows ?? 30,
     forceRestart: opts.forceRestart,
-    initialPrompt: opts.initialPrompt
+    initialPrompt: opts.initialPrompt,
+    sessionKind,
+    browserTools: useSettings.getState().agentPreferences.browserTools !== false
   })
   useSessions.getState().setAgentUi(opts.sessionId, {
     mode: opts.uiMode,

@@ -83,6 +83,7 @@ describe('bundled DevTerm Agent launch', () => {
           model: 'anthropic/claude-sonnet-4.6',
           fallbackModels: ['openai/gpt-5', 'google/gemini-2.5-pro'],
           resumeSessions: true,
+          browserTools: true,
           trustedSkills: [
             {
               name: 'SKILL.md',

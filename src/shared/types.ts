@@ -360,6 +360,11 @@ export interface AgentPreferences {
   fallbackModels: string[]
   /** Persist one conversation per remote session and reopen it after reconnects. */
   resumeSessions: boolean
+  /**
+   * Expose the `browser_*` MCP tools so the agent can drive in-app browser
+   * panes (its own tabs freely; operator tabs only after a per-tab confirm).
+   */
+  browserTools: boolean
   /** Hash-pinned, instruction-only skills. Executable third-party extensions stay disabled. */
   trustedSkills: AgentTrustedSkill[]
 }
@@ -397,6 +402,13 @@ export type AgentUiMode = 'docked' | 'floating' | 'hidden'
 
 export interface AgentOpenOpts {
   sessionId: string
+  /**
+   * Which surface the agent is attached to: a remote SSH session (default,
+   * host tools run over its ssh2 client) or a local terminal (host tools run
+   * on the workstation via child_process). Browser tools work identically on
+   * both.
+   */
+  sessionKind?: 'local' | 'remote'
   /** Which agent CLI to launch. */
   kind: AgentKind
   /**
@@ -428,6 +440,12 @@ export interface AgentOpenOpts {
    * Ignored on reuse. Other CLIs still receive the prompt via PTY inject.
    */
   initialPrompt?: string
+  /**
+   * Enable the `browser_*` MCP tools for this agent (agent can drive in-app
+   * browser panes). Defaults to true; mirrored from the renderer's
+   * DevTerm Agent settings at launch time.
+   */
+  browserTools?: boolean
 }
 
 export interface SSHOpenShellOptions {
@@ -763,6 +781,18 @@ export const IPC = {
   // in-app browser: a guest page asked to open a new window → open it as a tab
   browserOpenTab: 'browser:open-tab',
 
+  // agent browser control: main ↔ renderer plumbing so MCP tools can drive
+  // in-app browser panes. `request` is a main→renderer broadcast asking for an
+  // agent-owned pane/tab; register/update/unregister are renderer→main
+  // lifecycle reports for EVERY browser tab (user-opened and agent-owned) that
+  // feed the BrowserControlService registry.
+  browserControlRequest: 'browser:control:request',
+  browserControlRegister: 'browser:control:register',
+  browserControlUpdate: 'browser:control:update',
+  browserControlUnregister: 'browser:control:unregister',
+  /** Main → renderer: close the pane tab whose key matches (browser_close tool). */
+  browserControlCloseTab: 'browser:control:close-tab',
+
   // window appearance (glass/translucent material)
   windowSetGlass: 'window:set-glass',
   // attention: OS notification + taskbar flash when an agent/terminal wants the
@@ -1073,6 +1103,26 @@ export interface DevTermApi {
      * webContents id, so the renderer can add the tab to the right pane.
      */
     onOpenTab(cb: (e: { sourceId: number; url: string }) => void): () => void
+  }
+  /**
+   * Agent browser control plumbing. Every browser tab reports its lifecycle to
+   * main (feeding the MCP `browser_*` tools' registry), and the renderer
+   * listens for agent open requests to create/extend panes.
+   */
+  browserControl: {
+    /** Report a newly attached guest webContents (fires once per tab). */
+    register(info: BrowserControlTabInfo): Promise<void>
+    /** Report the tab's guest is gone (tab closed / pane unmounted). */
+    unregister(tabKey: string): void
+    /** Push url/title changes for a registered tab. Fire-and-forget. */
+    update(tabKey: string, patch: BrowserControlTabPatch): void
+    /**
+     * Main asks the renderer to open an agent-owned tab (creating its pane on
+     * first use, or adding a tab to the agent's existing pane).
+     */
+    onRequest(cb: (req: BrowserOpenRequest) => void): () => void
+    /** Main asks the renderer to close the pane tab with this key. */
+    onCloseTab(cb: (tabKey: string) => void): () => void
   }
   /** Window appearance hooks. Native window controls are owned by the OS frame. */
   window: {
@@ -1954,6 +2004,48 @@ export interface BrowserDownloadItem {
 /** Per-origin zoom level (1 = 100%, 1.5 = 150%). */
 export interface BrowserZoomMap {
   [origin: string]: number
+}
+
+// ---------------------------------------------------------------------------
+// Agent browser control (MCP `browser_*` tools)
+// ---------------------------------------------------------------------------
+
+/** Renderer → main lifecycle report for one in-app browser tab. */
+export interface BrowserControlTabInfo {
+  /** The browser pane's session id (kind:'browser'). */
+  paneSessionId: string
+  /**
+   * Stable tab key. For agent-requested tabs this is the pre-agreed key the
+   * main process generated in the open request; user tabs self-generate.
+   * This is the id MCP tools address tabs by.
+   */
+  tabKey: string
+  /** The guest webContents id once attached. */
+  wcId: number
+  url: string
+  title: string
+  /** True when this pane/tab was created on behalf of an agent. */
+  agentOwned: boolean
+  /** For agent-owned tabs: the owning agent's session id (survives remounts). */
+  ownerAgentSessionId?: string
+}
+
+/** Partial metadata update for a registered tab (url/title changes). */
+export interface BrowserControlTabPatch {
+  url?: string
+  title?: string
+}
+
+/** Main → renderer request to open an agent-owned browser pane + tab. */
+export interface BrowserOpenRequest {
+  /** Pre-agreed tab key — registration must use exactly this value. */
+  tabKey: string
+  /** Absolute URL to load (already validated against the guest URL guard). */
+  url: string
+  /** Terminal group to create/locate the pane in (caller's group). */
+  groupId?: string
+  /** The calling agent's session id; recorded as the tab's owner. */
+  ownerAgentSessionId: string
 }
 
 // ---------------------------------------------------------------------------

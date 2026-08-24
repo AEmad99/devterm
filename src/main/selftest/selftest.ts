@@ -12,6 +12,7 @@ import { TransferManager } from '../transfers/transfer'
 import { startSftpServer } from './selftest-sftp'
 import { McpBridge } from '../mcp/server'
 import { Policy } from '../mcp/policy'
+import { SshHostBackend } from '../agent/host-backend'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import type { SSHStatus, TransferProgress } from '@shared/types'
@@ -586,9 +587,9 @@ async function testBridge(): Promise<void> {
 
     bridge = new McpBridge({
       sessionId,
-      ssh: mgr,
+      host: new SshHostBackend(mgr, sessionId),
       getContext: () => context,
-      sshDown: () => false,
+      hostDown: () => false,
       airGapped: true,
       policy: new Policy('full'),
       confirm: async () => 'approved' as const
@@ -653,9 +654,9 @@ async function testBridge(): Promise<void> {
     // Guardrail at the boundary: read-only bridge refuses a destructive command.
     const roBridge = new McpBridge({
       sessionId,
-      ssh: mgr,
+      host: new SshHostBackend(mgr, sessionId),
       getContext: () => context,
-      sshDown: () => false,
+      hostDown: () => false,
       airGapped: true,
       policy: new Policy('read_only'),
       confirm: async () => 'approved' as const

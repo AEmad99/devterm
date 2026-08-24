@@ -95,4 +95,29 @@ export class Policy {
     if (this.mode === 'confirm') return { allow: true, needConfirm: true }
     return { allow: true, needConfirm: false }
   }
+
+  /**
+   * Verdicts for the `browser_*` MCP tools. The match string is the target
+   * URL (open/navigate/attach) or the page origin (click/type/press).
+   *
+   * Deliberately does NOT run the shell destructive/mutating regexes — URLs
+   * legitimately contain words like "delete", and driving a web page is not
+   * host mutation. Approval rules still pre-check exactly as they do for
+   * commands; non-mutating reads are allowed everywhere; interactions follow
+   * the same ladder as writes (read_only blocks, confirm asks, full allows).
+   */
+  async evaluateBrowserAsync(
+    sessionId: string,
+    match: string,
+    mutating: boolean
+  ): Promise<PolicyVerdict> {
+    if (this.ruleMatcher) {
+      const r = await this.ruleMatcher(sessionId, match)
+      if (r?.outcome === 'allow') return { allow: true, needConfirm: false }
+      if (r?.outcome === 'deny')
+        return { allow: false, needConfirm: false, reason: 'denied by approval rule' }
+    }
+    if (!mutating) return { allow: true, needConfirm: false }
+    return this.evaluateWrite()
+  }
 }

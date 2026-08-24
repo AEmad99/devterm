@@ -1,30 +1,28 @@
 import { z } from 'zod'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { HostContext } from '@shared/types'
-import type { SSHManager } from '../ssh/manager'
-import { listRemote } from '../ssh/sftp'
 import { looksBinary } from '../fs/content'
 import { Policy } from './policy'
 import { recordBridgeActivity } from '../ipc/foundation'
 import { sanitizeDetail } from './server'
+import { registerBrowserTools, type BrowserToolsDeps } from './tools-browser'
+import type { HostBackend } from '../agent/host-backend'
 
 /** Why a guarded action did/didn't proceed — distinct so the agent can report the real cause. */
 export type ConfirmOutcome = 'approved' | 'denied' | 'timeout'
 
 export interface ToolDeps {
   sessionId: string
-  ssh: SSHManager
   /**
-   * Live getter for the SSH session's host context. Returns the current
-   * context from the SSH manager so it refreshes across reconnects; falls
-   * back to the snapshot taken at bridge start if the session is briefly
-   * between disconnect and reconnect. The bridge used to freeze the context
-   * at start time, which left `ping` / `get_host_context` reporting a stale
-   * hostname after a successful reconnect.
+   * Host operations backend: SSH channels for remote sessions, local
+   * child_process/fs for local terminals. The five host tools are written
+   * against this interface so a DevTerm Agent works identically on both.
    */
+  host: HostBackend
+  /** Live getter for the session's host context. */
   getContext: () => HostContext
-  /** True while the SSH session is disconnected or reconnecting. */
-  sshDown: () => boolean
+  /** True while the host is disconnected or reconnecting (always false locally). */
+  hostDown: () => boolean
   airGapped: boolean
   policy: Policy
   /**
@@ -35,6 +33,11 @@ export interface ToolDeps {
   getCwd?: () => string | undefined
   /** Ask the operator to approve a guarded action. 'timeout' = no response in time, NOT a disconnect. */
   confirm: (tool: string, detail: string) => Promise<ConfirmOutcome>
+  /**
+   * Agent browser control (in-app browser panes). Present for every launch;
+   * tools self-disable when the settings toggle is off.
+   */
+  browser?: BrowserToolsDeps
 }
 
 // Cluster ops (helm install, oc apply + rollout, image pulls) routinely run well
@@ -49,14 +52,14 @@ const errorText = (s: string) => ({
 
 /**
  * Wording for the "SSH is down" branch shared by every tool that touches the
- * remote host. Surfaces as a non-fatal `isError: true` result so the agent
+ * host transport. Surfaces as a non-fatal `isError: true` result so the agent
  * pauses and retries instead of interpreting a stream of "unknown session"
  * errors as a hard failure and crashing. Wording deliberately distinguishes
  * the policy block / approval-timeout / SSH-down cases the agent used to
  * conflate.
  */
-const sshDownMessage = () =>
-  'SSH is temporarily disconnected (auto-reconnect in progress). ' +
+const hostDownMessage = () =>
+  'The host transport is temporarily disconnected (auto-reconnect in progress). ' +
   'Retry this call shortly — the connection will come back on its own. ' +
   'Do NOT interpret this as a permanent failure or exit.'
 
@@ -120,7 +123,7 @@ function wrapConfirm(
 }
 
 export function registerTools(mcp: McpServer, deps: ToolDeps): void {
-  const { ssh, sessionId, getContext, sshDown, airGapped, policy, confirm, getCwd } = deps
+  const { host, sessionId, getContext, hostDown, airGapped, policy, confirm, getCwd } = deps
   // Pre-bound confirm wrapper that records bridge activity around every ask.
   const confirmWithActivity = (tool: string, detail: string) =>
     wrapConfirm(sessionId, tool, detail, confirm)
@@ -129,13 +132,13 @@ export function registerTools(mcp: McpServer, deps: ToolDeps): void {
     'ping',
     {
       description:
-        'Check whether the DevTerm MCP bridge and remote SSH session are still reachable.',
+        'Check whether the DevTerm MCP bridge and the host session (SSH or local) are still reachable.',
       inputSchema: {}
     },
     async () => {
       const context = getContext()
-      const status = sshDown()
-        ? { ok: false, reason: 'SSH temporarily disconnected (reconnecting). Retry shortly.' }
+      const status = hostDown()
+        ? { ok: false, reason: 'Host temporarily disconnected (reconnecting). Retry shortly.' }
         : { ok: true }
       return text(
         JSON.stringify(
@@ -187,10 +190,10 @@ export function registerTools(mcp: McpServer, deps: ToolDeps): void {
     'run_command',
     {
       description:
-        'Run a shell command on the connected remote host and return stdout/stderr/exit code. ' +
+        'Run a shell command on the host (the SSH remote, or this workstation for a local agent) and return stdout/stderr/exit code. ' +
         "It runs in the operator's current terminal directory (their live `cd`); pass absolute paths to act elsewhere.",
       inputSchema: {
-        command: z.string().describe('The command line to execute on the remote host.'),
+        command: z.string().describe('The command line to execute on the host.'),
         timeout_ms: z
           .number()
           .int()
@@ -202,7 +205,7 @@ export function registerTools(mcp: McpServer, deps: ToolDeps): void {
       }
     },
     async ({ command, timeout_ms }) => {
-      if (sshDown()) return errorText(sshDownMessage())
+      if (hostDown()) return errorText(hostDownMessage())
       const v = await policy.evaluateCommandAsync(sessionId, command)
       if (!v.allow)
         return errorText(
@@ -228,7 +231,7 @@ export function registerTools(mcp: McpServer, deps: ToolDeps): void {
         // `command`, never our prefix.
         const cwd = posixCwd(getCwd)
         const toRun = cwd ? `cd ${shQuote(cwd)} && ${command}` : command
-        const { stdout, stderr, code, timedOut } = await ssh.exec(sessionId, toRun, ms)
+        const { stdout, stderr, code, timedOut } = await host.exec(toRun, ms)
         // A timeout is reported as a normal (non-error) result with explicit wording:
         // marking it isError historically led the agent to misreport it as a dropped connection.
         if (timedOut)
@@ -250,21 +253,20 @@ export function registerTools(mcp: McpServer, deps: ToolDeps): void {
   mcp.registerTool(
     'list_dir',
     {
-      description: 'List a directory on the remote host (name, type, size, perms).',
+      description: 'List a directory on the host (name, type, size, perms).',
       inputSchema: {
         path: z
           .string()
           .describe(
-            "Remote directory path — absolute, or relative to the operator's current directory."
+            "Host directory path — absolute, or relative to the operator's current directory."
           )
       }
     },
     async ({ path }) => {
-      if (sshDown()) return errorText(sshDownMessage())
+      if (hostDown()) return errorText(hostDownMessage())
       try {
         const target = resolvePosix(posixCwd(getCwd), path)
-        const sftp = await ssh.getSftp(sessionId)
-        const listing = await listRemote(sftp, target)
+        const listing = await host.listDir(target)
         const lines = listing.entries.map(
           (e) => `${e.mode} ${String(e.size).padStart(10)} ${e.name}${e.isDir ? '/' : ''}`
         )
@@ -278,12 +280,12 @@ export function registerTools(mcp: McpServer, deps: ToolDeps): void {
   mcp.registerTool(
     'read_file',
     {
-      description: 'Read a text file from the remote host.',
+      description: 'Read a text file from the host.',
       inputSchema: {
         path: z
           .string()
           .describe(
-            "Remote file path — absolute, or relative to the operator's current directory."
+            "Host file path — absolute, or relative to the operator's current directory."
           ),
         max_bytes: z
           .number()
@@ -294,40 +296,24 @@ export function registerTools(mcp: McpServer, deps: ToolDeps): void {
       }
     },
     async ({ path, max_bytes }) => {
-      if (sshDown()) return errorText(sshDownMessage())
+      if (hostDown()) return errorText(hostDownMessage())
       try {
         const target = resolvePosix(posixCwd(getCwd), path)
-        const sftp = await ssh.getSftp(sessionId)
         const cap = max_bytes ?? 200000
-        // Read at most `cap + 1` bytes through an explicit handle instead of
-        // sftp.readFile: readFile streams the ENTIRE remote file into memory
-        // before we capped the output, so a 2 GB log pulled 2 GB across the
-        // wire. The extra byte tells us whether the file continues past cap.
-        const buf = await new Promise<Buffer>((resolve, reject) => {
-          sftp.open(target, 'r', (openErr, handle) => {
-            if (openErr) return reject(openErr)
-            const out = Buffer.alloc(cap + 1)
-            sftp.read(handle, out, 0, cap + 1, 0, (readErr, bytesRead) => {
-              sftp.close(handle, () => {
-                /* best-effort close; surface the read result either way */
-              })
-              if (readErr) return reject(readErr)
-              resolve(out.subarray(0, bytesRead))
-            })
-          })
-        })
+        // The backend reads at most `cap + 1` bytes (SFTP handle locally /
+        // bounded read on disk) so a 2 GB log never crosses the wire whole;
+        // the extra byte reports truncation.
+        const { data: buf, truncated } = await host.readFile(target, cap)
         // Guard against binary files: decoding arbitrary bytes as UTF-8 emits
         // U+FFFD noise which the agent then prints into its terminal — the
-        // "random gibberish" symptom. Force the agent to use SFTP download for
-        // binary content instead.
+        // "random gibberish" symptom. Force file transfers for binary content.
         if (looksBinary(buf)) {
           return errorText(
             `read_file failed: ${target} appears to be a binary file ` +
               `(detected by NUL/non-text bytes in the first scan window). ` +
-              `Use SFTP download instead of read_file for binary content.`
+              `Use an SFTP download instead of read_file for binary content.`
           )
         }
-        const truncated = buf.length > cap
         return text(
           buf.subarray(0, cap).toString('utf8') +
             (truncated ? `\n…[truncated at ${cap} bytes]` : '')
@@ -341,18 +327,18 @@ export function registerTools(mcp: McpServer, deps: ToolDeps): void {
   mcp.registerTool(
     'write_file',
     {
-      description: 'Write/overwrite a text file on the remote host.',
+      description: 'Write/overwrite a text file on the host.',
       inputSchema: {
         path: z
           .string()
           .describe(
-            "Remote file path — absolute, or relative to the operator's current directory."
+            "Host file path — absolute, or relative to the operator's current directory."
           ),
         content: z.string().describe('Full file contents to write.')
       }
     },
     async ({ path, content }) => {
-      if (sshDown()) return errorText(sshDownMessage())
+      if (hostDown()) return errorText(hostDownMessage())
       const target = resolvePosix(posixCwd(getCwd), path)
       const v = policy.evaluateWrite()
       if (!v.allow)
@@ -374,14 +360,13 @@ export function registerTools(mcp: McpServer, deps: ToolDeps): void {
         if (outcome === 'denied') return errorText(`Operator denied write to ${target}`)
       }
       try {
-        const sftp = await ssh.getSftp(sessionId)
-        await new Promise<void>((resolve, reject) =>
-          sftp.writeFile(target, content, (err) => (err ? reject(err) : resolve()))
-        )
+        await host.writeFile(target, content)
         return text(`wrote ${Buffer.byteLength(content, 'utf8')} bytes to ${target}`)
       } catch (e) {
         return errorText(`write_file failed: ${(e as Error).message}`)
       }
     }
   )
+
+  registerBrowserTools(mcp, deps)
 }

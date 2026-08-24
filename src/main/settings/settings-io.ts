@@ -108,6 +108,7 @@ export function defaultSettingsSnapshot(): SettingsSnapshot {
       model: '',
       fallbackModels: [],
       resumeSessions: true,
+      browserTools: true,
       trustedSkills: []
     },
     remoteDetachedSessions: true,

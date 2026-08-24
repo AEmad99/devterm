@@ -26,7 +26,8 @@ Every renderer→main capability must be added in **all three places** together:
 | Local PTY | `src/main/pty/manager.ts` |
 | SSH / SFTP / reconnect / detached shells | `src/main/ssh/*` (incl. `quick-connect.ts`) |
 | Port forwards (`-L`, SOCKS `-D`) | `src/main/ssh/port-forward.ts`, UI `PortForwardPanel.tsx` |
-| MCP server / tools / policy | `src/main/mcp/server.ts`, `tools.ts`, `policy.ts` |
+| MCP server / tools / policy | `src/main/mcp/server.ts`, `tools.ts`, `tools-browser.ts`, `policy.ts` |
+| Agent browser control | `src/main/browser/*` (control registry, snapshot refs, URL guard), `ipc/browser-control.ts` |
 | Agent launch (bundled + fallbacks) | `src/main/agent/launch.ts`, `*-launch.ts`, `context.ts`, `extension.ts` |
 | Agent UI modes / ask strip | `lib/agent-ui.ts`, `AgentAskBar.tsx`, `AgentPane.tsx`, `agent-window.tsx`, main `ipc/agent.ts` + `ipc/broadcast.ts` |
 | Approval rules & activity | `src/main/agent/approval-rules.ts`, `bridge-activity.ts` |
@@ -92,12 +93,13 @@ Launch layers:
 Bridge & tools:
 
 - MCP bridge (`src/main/mcp/server.ts`) on `127.0.0.1:<random-port>` gated by a random bearer token.
-- Tools (`src/main/mcp/tools.ts`): `ping`, `get_host_context`, `run_command`, `list_dir`, `read_file`, `write_file`. Relative paths and `run_command` honor the operator's live POSIX cwd from OSC 7; Windows remotes keep login-default semantics for cwd prefixing.
+- Host tools (`src/main/mcp/tools.ts`): `ping`, `get_host_context`, `run_command`, `list_dir`, `read_file`, `write_file` — written against a **HostBackend** (`agent/host-backend.ts`): `SshHostBackend` over the session's ssh2 client, `LocalHostBackend` over child_process/fs. Local terminals can therefore launch the same agents (ask bar on local panes via `LocalSessionView`; resume identity `'local'`). Relative paths and `run_command` honor the operator's live POSIX cwd from OSC 7 on remotes; Windows remotes keep login-default semantics for cwd prefixing.
+- Browser tools (`src/main/mcp/tools-browser.ts`, toggle in Settings → DevTerm Agent, default on): `browser_list/open/navigate/snapshot/click/type/press_key/screenshot/attach/detach/close`. The agent freely drives tabs it opened (badged `AGT`); operator-opened tabs are readable/drivable only after a one-time per-tab confirm (`browser_attach`), grants live in-memory and clear on Stop/close. Snapshots inject ref tags (`data-dt-ref`) resolved by later click/type calls; results carry an UNTRUSTED banner (prompt-injection defense). Navigation reuses the guest URL guard (`browser/url-guard.ts`) — http(s)/about:blank only, same allowlist as interactive panes. Password fields follow the policy ladder; approval-rule prefixes match URLs/origins.
 - MCP launch uses policy mode `full` (no DevTerm confirm modal). Permission prompts belong to the agent CLI (Claude `/permissions`, Codex approval, etc.). Approval rules (`approval-rules.ts`, `userData/approval-rules.json`) remain a **PRE-CHECK** allow/deny/ask at the MCP boundary. UI for rules lives under Settings → Agent guardrails. The old per-session Policy picker is gone — it did not map onto Claude/Grok (always bypassed) or Codex the way the UI implied.
-- Built-in local fs/shell tools are disabled for every agent so host work crosses the bridge over the session's shared ssh2 client (Claude keeps Read/Write/Edit for **local** scratch only).
+- Built-in local fs/shell tools are disabled for every agent so host work crosses the bridge (over the session's shared ssh2 client, or locally for local agents) (Claude keeps Read/Write/Edit for **local** scratch only).
 - Bridge status over `agent:bridge-status:<id>`; MCP `notifications/message` heartbeat every 25s; renderer pushes live cwd via `agent:set-cwd`; confirmations (`agent:confirm`) time out after 120s as `'timeout'`. Confirms and PTY data are **broadcast** to every `BrowserWindow` so a floating agent window can approve and stream.
 - Agent PTY is **not** killed on its own exit — bridge + temp dir stay up for auto-restart after SSH reconnect; cleaned up only on explicit **Stop** / session close / quit. Activity log: `bridge-activity.ts` → `AgentActivityPanel.tsx` (filterable, exportable JSONL).
-- Briefings: `src/main/agent/context.ts` writes per-session `AGENTS.md` (host facts, air-gap rules, tool map).
+- Briefings: `src/main/agent/context.ts` writes per-session `AGENTS.md` (host facts, air-gap rules, tool map, browser-tool injection rules).
 
 **Agent UI modes (1.3.15+):** process lifetime ≠ UI placement.
 
@@ -165,6 +167,7 @@ Bridge & tools:
 | `userData/bridge-activity.jsonl` | Agent bridge activity log |
 | `userData/settings.json` | Settings mirror from renderer |
 | `userData/agent-sessions/` | Optional resumable DevTerm Agent transcripts |
+| `userData/agent-artifacts/` | Agent browser screenshots (`browser_screenshot`) |
 | `userData/search/<sessionId>.jsonl` | Optional persistent search tail |
 | `userData/quick-connect.json` | MRU host triples |
 | `userData/session-restore.json` | Last-session groups/layout snapshot (no secrets) |
@@ -263,9 +266,11 @@ Snapshot of the **implemented** surface area as of this audit. Use this when pri
 | Bundled DevTerm Agent | **Shipped (default)** | Multi-provider Pi runtime + packaged Node; resume + model failover |
 | External agent CLIs | **Shipped** | pi, claude, opencode, kimi, grok, codex, antigravity — all via MCP bridge |
 | Agent UI modes | **Shipped** | `docked` / `floating` / `hidden`; process keeps running when hidden/floated |
-| Ask-agent strip | **Shipped** | Bottom compose bar on remote shells; inject into live agent PTY |
+| Ask-agent strip | **Shipped** | Bottom compose bar on remote + local shells; inject into live agent PTY |
 | Floating agent window | **Shipped** | Separate OS window (`agent-window.html`); dock/hide/stop |
-| MCP tools | **Shipped (narrow)** | `ping`, `get_host_context`, `run_command`, `list_dir`, `read_file`, `write_file` only |
+| Local DevTerm Agent | **Shipped** | Same launch path as remote via `HostBackend` (`LocalHostBackend`); ask bar on `LocalSessionView`; resume key `'local'` |
+| Agent browser tools | **Shipped** | 11 `browser_*` MCP tools; agent-owned tabs + confirm-gated attach to operator tabs; ref-based snapshots; screenshots to `userData/agent-artifacts` |
+| MCP host tools | **Shipped** | `ping`, `get_host_context`, `run_command`, `list_dir`, `read_file`, `write_file` over HostBackend (SSH or local) |
 | Agent guardrails | **Shipped** | Prefix approval rules + activity log; permission prompts belong to the agent CLI |
 | Attention signals | **Shipped** | Agent-only idle chime, tab badge, OS notify when backgrounded |
 | QuickConnect / known hosts UI | **Shipped** | MRU host triples; Connections known-hosts management |

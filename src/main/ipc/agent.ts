@@ -33,6 +33,12 @@ import { buildOpencodeMd, prepareOpencodeLaunch } from '../agent/opencode-launch
 import { buildGrokMd, prepareGrokLaunch } from '../agent/grok-launch'
 import { buildCodexMd, prepareCodexLaunch } from '../agent/codex-launch'
 import { buildAntigravityMd, prepareAntigravityLaunch } from '../agent/antigravity-launch'
+import {
+  LocalHostBackend,
+  SshHostBackend,
+  localContext as buildLocalContext
+} from '../agent/host-backend'
+import { browserControl } from '../browser/control-instance'
 import type { SSHManager } from '../ssh/manager'
 import type { PtyManager } from '../pty/manager'
 import { broadcast } from './broadcast'
@@ -194,6 +200,8 @@ export function registerAgentIpc(
     }
     sessions.delete(sessionId)
     cwds.delete(sessionId)
+    // Drop browser-control grants/default targets owned by this agent.
+    browserControl().releaseAgent(sessionId)
   }
 
   // Live cwd updates from the renderer's OSC 7 tracking. Fire-and-forget: a
@@ -267,8 +275,12 @@ export function registerAgentIpc(
     opts: AgentOpenOpts,
     reusePtyId?: string
   ): Promise<AgentOpenResult> => {
-    const context = ssh.getContext(opts.sessionId)
-    if (!context) throw new Error('Connect the SSH session before opening the agent.')
+    // Local agents run on this workstation; remote agents over the session's
+    // ssh2 client. Browser tools are host-agnostic and work on both.
+    const isLocal = opts.sessionKind === 'local'
+    const context = isLocal ? buildLocalContext() : ssh.getContext(opts.sessionId)
+    if (!context)
+      throw new Error('Connect the SSH session before opening the agent.')
 
     if (opts.cwd) cwds.set(opts.sessionId, opts.cwd)
 
@@ -279,13 +291,19 @@ export function registerAgentIpc(
     const bridge = new McpBridge(
       {
         sessionId: opts.sessionId,
-        ssh,
-        getContext: () => ssh.getContext(opts.sessionId) ?? context,
-        sshDown: () => sessions.get(opts.sessionId)?.sshDown ?? false,
+        host: isLocal
+          ? new LocalHostBackend()
+          : new SshHostBackend(ssh, opts.sessionId, () => sessions.get(opts.sessionId)?.sshDown ?? false),
+        getContext: () =>
+          isLocal
+            ? sessions.get(opts.sessionId)?.lastContext ?? context
+            : ssh.getContext(opts.sessionId) ?? context,
+        hostDown: () => (isLocal ? false : sessions.get(opts.sessionId)?.sshDown ?? false),
         airGapped,
         policy,
         getCwd: () => cwds.get(opts.sessionId),
-        confirm: (tool, detail) => confirm(opts.sessionId, tool, detail)
+        confirm: (tool, detail) => confirm(opts.sessionId, tool, detail),
+        browser: { service: browserControl(), enabled: opts.browserTools !== false }
       },
       (status) => {
         // Cache the latest status so the SSH status listener can mirror a
@@ -299,8 +317,8 @@ export function registerAgentIpc(
     let spec: Awaited<ReturnType<typeof prepareAgentLaunch>> | undefined
     try {
       const info = await bridge.start()
-      const profile = ssh.getProfile(opts.sessionId)
-      const persistentSessionId = deriveAgentSessionId(opts.sessionId, profile)
+      const profile = isLocal ? undefined : ssh.getProfile(opts.sessionId)
+      const persistentSessionId = isLocal ? 'local' : deriveAgentSessionId(opts.sessionId, profile)
       spec =
         opts.kind === 'devterm'
           ? await (async () => {
@@ -373,7 +391,12 @@ export function registerAgentIpc(
         reusePtyId
       )
 
-      const sshDispose = ssh.addStatusListener(opts.sessionId, (status: SSHStatus) => {
+      // Remote only: track SSH state so tool calls can return a clear
+      // reconnect message instead of "unknown session". Local agents have no
+      // transport to drop.
+      const sshDispose = isLocal
+        ? undefined
+        : ssh.addStatusListener(opts.sessionId, (status: SSHStatus) => {
         const sess = sessions.get(opts.sessionId)
         if (!sess) return
         // Track SSH state so tool calls can return a clear reconnect message

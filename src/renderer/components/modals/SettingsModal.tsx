@@ -1153,6 +1153,19 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                       </span>
                     </label>
 
+                    <label className="settings-row-grid" title="Let the agent open and drive in-app browser tabs. Its own tabs are free; your tabs require a one-time confirmation per tab.">
+                      <span className="settings-label">Browser tools</span>
+                      <span className="settings-control">
+                        <input
+                          type="checkbox"
+                          checked={agentPreferences.browserTools}
+                          onChange={(e) =>
+                            setAgentPreferences({ browserTools: e.target.checked })
+                          }
+                        />
+                      </span>
+                    </label>
+
                     <div className="settings-row-grid">
                       <span className="settings-label">Trusted skills</span>
                       <span className="settings-control">

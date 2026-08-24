@@ -115,6 +115,9 @@ import { registerFoundationIpc } from './ipc/foundation'
 import { registerGitIpc } from './ipc/git'
 import { registerTransfersIpc } from './ipc/transfers'
 import { registerBrowserIpc } from './ipc/browser'
+import { registerBrowserControlIpc } from './ipc/browser-control'
+import { browserControl } from './browser/control-instance'
+import { externalUrlOk, guestUrlOk } from './browser/url-guard'
 import { registerPerformanceIpc } from './ipc/performance'
 import { initAutoUpdater, registerUpdaterIpc } from './updater'
 import { flushScheduledSnapshot } from './settings/settings-io'
@@ -131,14 +134,7 @@ import type { FileController } from './ipc/files'
  */
 function openExternalSafe(url: string | undefined): void {
   if (!url) return
-  try {
-    const { protocol } = new URL(url)
-    if (protocol === 'http:' || protocol === 'https:' || protocol === 'mailto:') {
-      void shell.openExternal(url)
-    }
-  } catch {
-    /* not a parseable URL — ignore */
-  }
+  if (externalUrlOk(url)) void shell.openExternal(url)
 }
 
 let mainWindow: BrowserWindow | null = null
@@ -261,6 +257,7 @@ function registerIpc(): void {
   // Cluster D: persistent transfer queue + in-app browser enhancements.
   transfersController = registerTransfersIpc(sshManager, () => mainWindow)
   browserController = registerBrowserIpc(() => mainWindow)
+  registerBrowserControlIpc(browserControl())
   registerPerformanceIpc()
   registerUpdaterIpc()
 
@@ -353,15 +350,15 @@ if (process.argv.includes('--self-test')) {
         // reaching `file://`/`chrome://`/`devtools://` — those would let untrusted
         // web content read the local filesystem from a web origin. Allow http(s)
         // and about:blank; send anything else to the OS browser (if it's safe).
-        const guestNavOk = (url: string): boolean =>
-          /^https?:\/\//i.test(url) || url === 'about:blank'
+        // The guard lives in browser/url-guard.ts because the MCP browser tools
+        // must enforce the exact same allowlist for agent-driven navigation.
         contents.on('will-navigate', (evt, url) => {
-          if (guestNavOk(url)) return
+          if (guestUrlOk(url)) return
           evt.preventDefault()
           openExternalSafe(url)
         })
         contents.on('will-redirect', (evt, url) => {
-          if (!guestNavOk(url)) evt.preventDefault()
+          if (!guestUrlOk(url)) evt.preventDefault()
         })
         // The app has no application menu, so the guest gets no edit accelerators or
         // default context menu. Build one on right-click, driving the guest's own

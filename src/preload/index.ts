@@ -217,6 +217,19 @@ const api: DevTermApi = {
   browser: {
     onOpenTab: (cb) => subscribe<{ sourceId: number; url: string }>(IPC.browserOpenTab, cb)
   },
+  browserControl: {
+    register: (info: import('@shared/types').BrowserControlTabInfo): Promise<void> =>
+      ipcRenderer.invoke(IPC.browserControlRegister, info),
+    unregister: (tabKey: string): void => {
+      ipcRenderer.send(IPC.browserControlUnregister, tabKey)
+    },
+    update: (tabKey: string, patch: import('@shared/types').BrowserControlTabPatch): void => {
+      ipcRenderer.send(IPC.browserControlUpdate, tabKey, patch)
+    },
+    onRequest: (cb) =>
+      subscribe<import('@shared/types').BrowserOpenRequest>(IPC.browserControlRequest, cb),
+    onCloseTab: (cb) => subscribe<string>(IPC.browserControlCloseTab, cb)
+  },
   window: {
     setGlass: (enabled: boolean): Promise<void> => ipcRenderer.invoke(IPC.windowSetGlass, enabled),
     flashAttention: (notice: { title: string; body?: string }) =>

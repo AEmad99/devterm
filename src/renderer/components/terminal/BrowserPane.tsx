@@ -10,6 +10,14 @@ import {
 } from 'react'
 import { useSessions, type Session } from '../../store/sessions'
 import { registerBrowserGuest } from '../../lib/browserTabs'
+import {
+  registerPaneOpener,
+  registerTabCloser,
+  reportTabRegistered,
+  reportTabTitle,
+  reportTabUnregistered,
+  reportTabUrl
+} from '../../lib/browser-control'
 import { formatBytes } from '../../lib/format'
 import type { BrowserDownloadItem } from '@shared/types'
 
@@ -71,9 +79,9 @@ interface TabState {
   findActive: number
 }
 
-function makeTab(url: string, zoom = 1): TabState {
+function makeTab(url: string, zoom = 1, presetId?: string): TabState {
   return {
-    id: newTabId(),
+    id: presetId ?? newTabId(),
     initialUrl: url,
     title: 'New Tab',
     current: url,
@@ -131,8 +139,17 @@ const BrowserTab = memo(
       onTitle: (id: string, title: string) => void
       onOpenTab: (url: string) => void
       onWebContents: (id: string, wcId: number | null) => void
+      /** Agent browser control: whose pane this is (ownership reporting). */
+      paneSessionId: string
+      agentOwned?: boolean
+      ownerAgentSessionId?: string
+      /** Pane-level closeTab, registered so the browser_close tool can reach it. */
+      onClose: () => void
     }
-  >(function BrowserTab({ tab, onState, onTitle, onOpenTab, onWebContents }, ref) {
+  >(function BrowserTab(
+    { tab, onState, onTitle, onOpenTab, onWebContents, paneSessionId, agentOwned, ownerAgentSessionId, onClose },
+    ref
+  ) {
     const el = useRef<Electron.WebviewTag | null>(null)
     // Refs to the latest tab/props so the imperative handle stays stable
     // (no churn) while still reading live state when invoked.
@@ -215,6 +232,8 @@ const BrowserTab = memo(
       const wv = el.current
       if (!wv) return
       const id = tab.id
+      // Expose this tab to main's browser_close tool for its lifetime.
+      const unclose = registerTabCloser(id, onClose)
       const setLoading = (v: boolean) => {
         onState(id, { loading: v })
       }
@@ -254,6 +273,7 @@ const BrowserTab = memo(
       wv.addEventListener('did-navigate', async (e) => {
         onState(id, { current: e.url, findMatches: 0, findActive: 0 })
         refreshNav()
+        reportTabUrl(id, e.url)
         const origin = originOf(e.url)
         if (origin) {
           const z = await window.devterm.browserZoom.get(origin)
@@ -266,14 +286,31 @@ const BrowserTab = memo(
         }
       })
       wv.addEventListener('did-navigate-in-page', (e) => {
-        if (e.isMainFrame) onState(id, { current: e.url })
+        if (e.isMainFrame) {
+          onState(id, { current: e.url })
+          reportTabUrl(id, e.url)
+        }
       })
-      wv.addEventListener('page-title-updated', (e) => onTitle(id, e.title || 'New Tab'))
+      wv.addEventListener('page-title-updated', (e) => {
+        onTitle(id, e.title || 'New Tab')
+        reportTabTitle(id, e.title)
+      })
       // Apply the initial zoom level (from store or default) once the guest is
       // alive, so the very first paint reflects the user's saved preference.
+      // Also report the guest to agent browser control — every tab registers,
+      // user-opened and agent-owned alike; ownership rides along.
       wv.addEventListener('dom-ready', () => {
         const wcId = wv.getWebContentsId()
         onWebContents(id, wcId)
+        reportTabRegistered({
+          paneSessionId,
+          tabKey: id,
+          wcId,
+          url: tabRef.current.current || tabRef.current.initialUrl,
+          title: tabRef.current.title,
+          agentOwned: !!agentOwned,
+          ownerAgentSessionId
+        })
         try {
           wv.setZoomLevel(Math.log(tab.zoom) / Math.log(1.2))
         } catch {
@@ -291,8 +328,10 @@ const BrowserTab = memo(
       }
       wv.addEventListener('dom-ready', onReady)
       return () => {
+        unclose()
         unregister()
         onWebContents(id, null)
+        reportTabUnregistered(id)
       }
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [tab.id])
@@ -527,7 +566,11 @@ const BrowserFindBar = memo(function BrowserFindBar({
 })
 
 function BrowserPane({ session }: { session: Session }) {
-  const [tabs, setTabs] = useState<TabState[]>(() => [makeTab(session.url ?? HOME_URL)])
+  // An agent-created pane's first tab must carry the pre-agreed tabKey from
+  // the browser_open request so its registration resolves the pending waiter.
+  const [tabs, setTabs] = useState<TabState[]>(() => [
+    makeTab(session.url ?? HOME_URL, undefined, session.firstTabKey)
+  ])
   const [activeId, setActiveId] = useState(tabs[0].id)
   const [address, setAddress] = useState(tabs[0].current)
   const [dlDrawerOpen, setDlDrawerOpen] = useState(false)
@@ -547,6 +590,17 @@ function BrowserPane({ session }: { session: Session }) {
     })
     return off
   }, [])
+
+  // Agent browser control: let open requests add a tab to this pane. The
+  // opener creates the tab with the request's pre-agreed key so main's
+  // pending waiter resolves deterministically.
+  useEffect(() => {
+    return registerPaneOpener(session.id, (tabKey, url) => {
+      const t = makeTab(url, undefined, tabKey)
+      setTabs((ts) => [...ts, t])
+      setActiveId(t.id)
+    })
+  }, [session.id])
 
   // Global keyboard shortcuts scoped to the active pane. Ctrl/Cmd+Plus /
   // Minus / 0 zoom the active tab. `/` opens the find bar.
@@ -756,6 +810,10 @@ function BrowserPane({ session }: { session: Session }) {
               onTitle={onTitle}
               onWebContents={onWebContents}
               onOpenTab={addTab}
+              paneSessionId={session.id}
+              agentOwned={!!session.agentOwnedBy}
+              ownerAgentSessionId={session.agentOwnedBy}
+              onClose={() => closeTab(t.id)}
             />
           </div>
         ))}

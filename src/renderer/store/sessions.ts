@@ -66,6 +66,17 @@ export interface Session {
   /** Browser panes only: initial URL to load on mount (consumed once, like startCwd). */
   url?: string
   /**
+   * Browser panes created by an agent (browser_* MCP tools): the owning
+   * agent's session id. Drives the AGENT tab chip and lets open requests
+   * extend this pane instead of spawning new ones.
+   */
+  agentOwnedBy?: string
+  /**
+   * Browser panes only: pre-agreed key for the FIRST tab so its registration
+   * matches an in-flight agent browser_open request. Consumed once on mount.
+   */
+  firstTabKey?: string
+  /**
    * Live state of the MCP bridge for this session's agent (the `pi` CLI wired
    * to a per-session MCP server). Pushed by AgentPane from the bridge-status
    * channel; the tab dot uses it to color the indicator when the bridge is
@@ -111,7 +122,12 @@ interface SessionState {
   /** Cancel any in-flight auto-reconnect loop for the given session. */
   cancelSshReconnect: (sessionId: string) => void
   /** Open an in-app browser pane; returns the new session id. Spawns no pty/ssh. */
-  addBrowser: (opts?: { url?: string; groupId?: string }) => string
+  addBrowser: (opts?: {
+    url?: string
+    groupId?: string
+    agentOwnedBy?: string
+    firstTabKey?: string
+  }) => string
   setActive: (id: string) => void
   /** Move a session into another terminal group (the layout sync reconciles trees). */
   setGroup: (id: string, groupId: string) => void
@@ -296,7 +312,9 @@ export const useSessions = create<SessionState>((set, get) => ({
       kind: 'browser',
       title: 'Browser',
       url: opts?.url,
-      groupId: opts?.groupId ?? useLayout.getState().activeGroupId
+      groupId: opts?.groupId ?? useLayout.getState().activeGroupId,
+      agentOwnedBy: opts?.agentOwnedBy,
+      firstTabKey: opts?.firstTabKey
     }
     // The App-level layout sync effect drops this id into the active group's
     // active leaf (same path as addLocal); no pty/ssh is created for it.

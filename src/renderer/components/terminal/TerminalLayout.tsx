@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import TerminalView from './TerminalView'
 import RemoteSessionView from './RemoteSessionView'
+import LocalSessionView from './LocalSessionView'
 import BrowserPane from './BrowserPane'
 import { useSessions, type Session } from '../../store/sessions'
 import { useEditors } from '../../store/editors'
@@ -295,6 +296,8 @@ export default function TerminalLayout({
                 <BrowserPane session={s} />
               ) : s.kind === 'remote' ? (
                 <RemoteSessionView session={s} />
+              ) : s.kind === 'local' ? (
+                <LocalSessionView session={s} />
               ) : (
                 <TerminalView session={s} />
               )}
@@ -529,6 +532,7 @@ function PaneChrome({
                 }}
               >
                 <TabStatusDot sessionId={sid} />
+                {s.agentOwnedBy && <span className="tab-agent-chip">AGT</span>}
                 {editing?.id === sid ? (
                   <input
                     className="tab-rename"

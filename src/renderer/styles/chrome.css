@@ -261,6 +261,22 @@
   opacity: 1;
   color: var(--danger);
 }
+
+/* AGENT chip — browser panes created by the agent's browser_* tools. Tiny,
+   accent-tinted tag so operators can tell agent tabs from their own at a
+   glance without stealing tab width. */
+.tab-agent-chip {
+  flex-shrink: 0;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 4px;
+  color: var(--accent-fg);
+  background: color-mix(in srgb, var(--accent) 78%, transparent);
+}
+
 .pane-merge {
   margin-left: auto;
   align-self: center;
