@@ -305,6 +305,13 @@ interface LayoutState {
   reorderTab: (sid: string, targetLeafId: string, index: number) => void
   /** Drag-drop a session onto a pane: center = stack as tab, edge = split. */
   drop: (sid: string, targetLeafId: string, zone: DropZone) => void
+  /**
+   * Pull `newSid` out of `anchorSid`'s leaf and split it to an edge so both
+   * stay on screen. Used when an agent opens an in-app browser beside the
+   * occupying local agent pane (a sibling tab would hide the agent and can
+   * leave the webview off-screen).
+   */
+  splitBeside: (anchorSid: string, newSid: string, zone?: DropZone) => void
   /** Collapse a split pane: move all its tabs into another leaf and prune. */
   mergeLeaf: (leafId: string) => void
   /** Adjust a split divider; delta is a fraction of the container. */
@@ -521,6 +528,45 @@ export const useLayout = create<LayoutState>((set) => ({
         return { root, activeLeaf: nl.id }
       })
     ),
+
+  splitBeside: (anchorSid, newSid, zone = 'right') =>
+    set((s) => {
+      if (anchorSid === newSid) return s
+      const group = s.groups.find(
+        (g) => g.root && (leafOf(g.root, anchorSid) || leafOf(g.root, newSid))
+      )
+      if (!group?.root) return s
+      const target = leafOf(group.root, anchorSid)
+      const src = leafOf(group.root, newSid)
+      if (!target || !src) return s
+      if (src.id === target.id && src.tabs.length === 1) return s
+      const dir: SplitDir = zone === 'left' || zone === 'right' ? 'row' : 'col'
+      const before = zone === 'left' || zone === 'top'
+      let root: LayoutNode | null = group.root
+      if (src.id === target.id) {
+        const rest = target.tabs.filter((t) => t !== newSid)
+        root = updateLeaf(root, target.id, (l) => ({
+          ...l,
+          tabs: rest,
+          active: l.active === newSid ? (rest[rest.length - 1] ?? null) : l.active
+        }))
+      } else {
+        root = removeTab(root, newSid)
+      }
+      if (!root || !findLeaf(root, target.id)) return s
+      const nl = mkLeaf([newSid])
+      root = replaceLeaf(root, target.id, (t) => ({
+        type: 'split',
+        id: nid('split'),
+        dir,
+        children: before ? [nl, t] : [t, nl],
+        sizes: [0.5, 0.5]
+      }))
+      return {
+        groups: s.groups.map((g) => (g.id === group.id ? { ...g, root, activeLeaf: nl.id } : g)),
+        focusedId: null
+      }
+    }),
 
   mergeLeaf: (leafId) =>
     set((s) =>

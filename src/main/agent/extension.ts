@@ -10,11 +10,11 @@
  * objects for tool parameter schemas (pi's `registerTool` accepts any object
  * whose `.static` field is a JSON schema).
  *
- * Bridge URL and bearer token are passed in via env vars so we never need to
- * serialize secrets into the file on disk. The MCP session id is persisted to
- * cwd (the per-session temp dir) so the extension can rejoin an existing
- * session after pi's `/reload` re-imports it; the bridge rejects a second
- * `initialize` with 400 "Server already initialized".
+ * Bridge URL, bearer token, and overlay dir are passed in via env vars so we
+ * never serialize secrets into the file on disk. The MCP session id is
+ * persisted under `DEVTERM_MCP_DIR` (the per-session overlay — not the
+ * operator's project cwd) so the extension can rejoin after pi's `/reload`;
+ * the bridge rejects a second `initialize` with 400 "Server already initialized".
  */
 
 export const PI_EXTENSION_SOURCE = String.raw`// DevTerm MCP bridge extension for the pi coding agent.
@@ -25,6 +25,9 @@ import { join } from 'node:path'
 
 const BRIDGE_URL = process.env.DEVTERM_BRIDGE_URL
 const BRIDGE_TOKEN = process.env.DEVTERM_BRIDGE_TOKEN
+// Overlay dir (not the operator's project). Native local agents spawn with
+// cwd = the project, so the MCP session file must not land in the repo.
+const MCP_DIR = process.env.DEVTERM_MCP_DIR || process.cwd()
 const MODEL_FALLBACKS = (() => {
   try {
     const parsed = JSON.parse(process.env.DEVTERM_MODEL_FALLBACKS || '[]')
@@ -38,15 +41,16 @@ if (!BRIDGE_URL || !BRIDGE_TOKEN) {
   throw new Error('DevTerm MCP bridge env vars not set (DEVTERM_BRIDGE_URL / DEVTERM_BRIDGE_TOKEN)')
 }
 
-// Persisted in cwd (= the per-session temp dir set by prepareAgentLaunch) so
-// the MCP session id survives a pi \`/reload\`. The bridge rejects a second
-// \`initialize\` with 400 once it's up; the only way to keep working after a
-// reload is to rejoin the existing session with its id.
-const SESSION_FILE = 'devterm-mcp-session.json'
+// Persisted in DEVTERM_MCP_DIR (the per-session overlay) so the MCP session
+// id survives a pi \`/reload\`. Native local agents use the project as cwd, so
+// this must not be process.cwd(). The bridge rejects a second \`initialize\`
+// with 400 once it's up; the only way to keep working after a reload is to
+// rejoin the existing session with its id.
+const SESSION_FILE = join(MCP_DIR, 'devterm-mcp-session.json')
 
 function loadSessionId() {
   try {
-    const data = readFileSync(join(process.cwd(), SESSION_FILE), 'utf8')
+    const data = readFileSync(SESSION_FILE, 'utf8')
     const obj = JSON.parse(data)
     return typeof obj.sessionId === 'string' && obj.sessionId ? obj.sessionId : null
   } catch {
@@ -56,7 +60,7 @@ function loadSessionId() {
 
 function saveSessionId(sessionId) {
   try {
-    writeFileSync(join(process.cwd(), SESSION_FILE), JSON.stringify({ sessionId }))
+    writeFileSync(SESSION_FILE, JSON.stringify({ sessionId }))
   } catch {
     /* best-effort; a future reload will just re-handshake */
   }
@@ -132,15 +136,39 @@ async function mcpCall(method, params, sessionIdRef) {
 }
 
 function registerMcpTools(pi, tools, sessionIdRef) {
-  for (const tool of tools) {
+  const names = new Set((tools || []).map((t) => t && t.name).filter(Boolean))
+  // Browser tools first so they sit at the top of the model's tool list.
+  const list = (tools || []).slice().sort(function (a, b) {
+    var ab = String((a && a.name) || '').indexOf('browser_') === 0 ? 0 : 1
+    var bb = String((b && b.name) || '').indexOf('browser_') === 0 ? 0 : 1
+    return ab - bb
+  })
+  for (const tool of list) {
     const piName = 'mcp__devterm__' + tool.name
     const parameters = jsonSchemaToTypebox(tool.inputSchema)
     const description = tool.description || ('DevTerm MCP tool: ' + tool.name)
+    const isBrowser = String(tool.name || '').indexOf('browser_') === 0
+    // Pi only lists custom tools in the default "Available tools" prompt
+    // section when promptSnippet is set. Without it the model discovers
+    // browser_* late (or never) and reaches for bash/start instead.
+    const promptSnippet = isBrowser
+      ? (tool.name + ' — FIRST-CLASS DevTerm in-app browser. Never the OS browser.')
+      : (tool.name + ' — DevTerm host MCP tool.')
+    const promptGuidelines = tool.name === 'browser_open'
+      ? [
+          'Any URL or web UI: call mcp__devterm__browser_open (in-app pane). Never bash, start, xdg-open, or open.',
+          'After open/navigate, mcp__devterm__browser_snapshot, then click/type by snapshot ref.'
+        ]
+      : undefined
 
     pi.registerTool({
       name: piName,
-      label: tool.name,
-      description,
+      label: isBrowser ? ('Browser · ' + tool.name.replace(/^browser_/, '')) : tool.name,
+      description: isBrowser
+        ? (description + ' This is a first-class DevTerm in-app browser tool; do not use the OS browser.')
+        : description,
+      promptSnippet: promptSnippet,
+      promptGuidelines: promptGuidelines,
       parameters,
       async execute(_toolCallId, params) {
         const result = await mcpCall('tools/call', { name: tool.name, arguments: params || {} }, sessionIdRef)
@@ -154,9 +182,10 @@ function registerMcpTools(pi, tools, sessionIdRef) {
     })
   }
 
-  // If the user explicitly runs \`!command\` we route it to the remote host via
-  // the bridge's run_command tool. pi emits this event for built-in bash; we
-  // provide a result backed by the remote bridge.
+  // Remote: \`!command\` goes through MCP run_command on the SSH host.
+  // Local native: that host tool is not registered — leave built-in bash alone
+  // so \`!\` still runs on this machine.
+  if (!names.has('run_command')) return
   pi.on('user_bash', async (event) => {
     if (!event || typeof event.command !== 'string') return
     return {

@@ -84,6 +84,10 @@ export default function AgentPane({
   const [lastHeartbeatAt, setLastHeartbeatAt] = useState<number | undefined>()
   const [restartNonce, setRestartNonce] = useState(0)
   const hostClosed = useSessions((s) => s.sessions.find((x) => x.id === sessionId)?.closed ?? false)
+  const sessionKind = useSessions(
+    (s) => s.sessions.find((x) => x.id === sessionId)?.kind ?? 'remote'
+  )
+  const isLocal = sessionKind === 'local'
   // The operator's live shell cwd (tracked from OSC 7 in TerminalView). Pushed
   // to main so the agent's commands follow the operator's `cd`. Kept out of the
   // agent-launch effect's deps so a `cd` never restarts the agent.
@@ -150,10 +154,13 @@ export default function AgentPane({
     const disposeClipboard = attachClipboard(term, host)
     fitNow(fit, host)
     const forceRestart = restartNonce > 0
+    const localCwd = useSessions.getState().sessions.find((x) => x.id === sessionId)?.cwd
     term.write(
       forceRestart
         ? `\x1b[90mRestarting ${label} agent...\x1b[0m\r\n`
-        : `\x1b[90mStarting ${label} agent bridged to this host...\x1b[0m\r\n`
+        : isLocal
+          ? `\x1b[90mStarting ${label} agent in ${localCwd || 'this folder'}...\x1b[0m\r\n`
+          : `\x1b[90mStarting ${label} agent bridged to this host...\x1b[0m\r\n`
     )
 
     let disposed = false
@@ -193,8 +200,11 @@ export default function AgentPane({
             `\x1b[90mReattached to running ${label} agent (MCP: ${url || '…'}).\x1b[0m\r\n`
           )
         } else {
-          const toolNote =
-            kind === 'devterm'
+          const toolNote = isLocal
+            ? kind === 'devterm' || kind === 'pi'
+              ? 'native local tools; in-app browser via MCP'
+              : 'native local tools; browser via MCP'
+            : kind === 'devterm'
               ? 'embedded multi-provider runtime, MCP-only host tools'
               : kind === 'claude'
                 ? 'local file tools scratch-only'
@@ -209,7 +219,11 @@ export default function AgentPane({
                         : kind === 'antigravity'
                           ? 'use mcp__devterm__* tools for host work'
                           : 'built-in tools off'
-          term.write(`\x1b[90mMCP bridge: ${url} | agent: ${kind} (${toolNote})\x1b[0m\r\n`)
+          term.write(
+            isLocal
+              ? `\x1b[90m${toolNote}${url ? ` | browser MCP: ${url}` : ''}\x1b[0m\r\n`
+              : `\x1b[90mMCP bridge: ${url} | agent: ${kind} (${toolNote})\x1b[0m\r\n`
+          )
         }
         const attention = createIdleChime({
           sessionId,
@@ -315,7 +329,7 @@ export default function AgentPane({
       : bridge === 'starting' || bridge === 'listening'
         ? { tone: 'busy', text: bridge === 'starting' ? 'Starting bridge' : 'Waiting for agent' }
         : bridge === 'connected'
-          ? { tone: 'ok', text: 'Bridge connected' }
+          ? { tone: 'ok', text: isLocal ? 'Local agent' : 'Bridge connected' }
           : bridge === 'disconnected'
             ? { tone: 'down', text: 'Bridge disconnected' }
             : bridge === 'stopped'
@@ -340,7 +354,12 @@ export default function AgentPane({
     <div className={`agent-pane${active ? '' : ' is-inactive'}`}>
       <div
         className={`agent-status agent-status--${pill.tone}`}
-        title={statusTitle || 'Live state of the agent bridge to this host'}
+        title={
+          statusTitle ||
+          (isLocal
+            ? 'Native local agent (browser tools use MCP)'
+            : 'Live state of the agent bridge to this host')
+        }
       >
         <span className="agent-dot" />
         <span className="agent-status-text">{pill.text}</span>

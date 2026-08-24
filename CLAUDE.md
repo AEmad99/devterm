@@ -157,8 +157,8 @@ For each agent session DevTerm:
 1. Starts an in-process MCP server on `127.0.0.1:<random-port>` gated by a random bearer token.
 2. Writes a per-session working directory containing `AGENTS.md` (the host briefing) and `devterm-mcp.mjs` (the pi extension source).
 3. Spawns DevTerm Agent (or the selected fallback CLI) in a node-pty with:
-   - `--session-dir <userData>/agent-sessions --session-id <remote-id>` when resume is enabled, otherwise `--no-session`
-   - `--no-builtin-tools` (scope the Pi-based agent to the explicit DevTerm MCP extension; no local fs/shell)
+   - `--session-dir <userData>/agent-sessions --session-id <id>` when resume is enabled, otherwise `--no-session` (local ids are per-directory)
+   - **Remote:** `--no-builtin-tools` so host work is MCP over ssh2. **Local:** builtins on, cwd = operator folder, `--append-system-prompt` briefing, `--approve`
    - discovery disabled for user extensions/skills/templates/themes
    - `-e <abs-path>/devterm-mcp.mjs` (load our MCP bridge adapter)
    - `--offline` (skip pi's startup network checks)
@@ -166,7 +166,7 @@ For each agent session DevTerm:
    - optional `--skill` paths only while the selected file matches its approved SHA-256 digest; arbitrary executable extensions remain disabled
 4. The pi extension reads `DEVTERM_BRIDGE_URL` / `DEVTERM_BRIDGE_TOKEN` from the inherited env, performs the MCP `initialize` → `notifications/initialized` → `tools/list` handshake with `fetch` against the bridge, and re-registers each discovered tool with pi as `mcp__devterm__<name>`. Tool calls go back through the same bridge as streamable-HTTP POSTs.
 
-Built-in pi tools are intentionally disabled so the agent cannot read/write the local machine; everything the model does goes through the MCP bridge, which runs on the shared `ssh2` client for the session. The agent's terminal output is raw and must not be parsed as state. Bridge state is reported by main over `agent:bridge-status:<sessionId>` based on actual MCP HTTP activity. The UI shows connecting, waiting, connected, disconnected, stopped, error, and exited states. Recoverable states show a Restart button that recreates the bridge and agent process. The bridge disables Node HTTP idle/request/socket timeouts and sends a standard MCP `notifications/message` heartbeat every 25 seconds while the agent's standalone SSE stream is connected, so a quiet agent session does not look stale to the client or OS.
+On **remote** sessions, built-in pi tools are disabled so the agent cannot read/write the local machine; everything the model does on the host goes through the MCP bridge on the shared `ssh2` client. On **local** sessions the agent is a native coding agent in the operator's folder; MCP host tools are not registered and MCP is used for in-app `browser_*` tools only. The agent's terminal output is raw and must not be parsed as state. Bridge state is reported by main over `agent:bridge-status:<sessionId>` based on actual MCP HTTP activity. The UI shows connecting, waiting, connected, disconnected, stopped, error, and exited states. Recoverable states show a Restart button that recreates the bridge and agent process. The bridge disables Node HTTP idle/request/socket timeouts and sends a standard MCP `notifications/message` heartbeat every 25 seconds while the agent's standalone SSE stream is connected, so a quiet agent session does not look stale to the client or OS.
 
 Settings queries the bundled runtime's offline model catalog over `agent:capabilities` and reports credential presence without exposing credential values. The DevTerm extension switches subsequent requests to the next authenticated fallback after HTTP 408, 429, or 5xx provider responses. Local process CPU/memory is exposed on demand through `performance:snapshot`; it is never uploaded.
 

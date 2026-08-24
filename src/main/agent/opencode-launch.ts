@@ -3,7 +3,7 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import type { BridgeInfo } from '../mcp/server'
 import { resolveCached } from './launch'
-import type { AgentLaunchSpec } from './launch'
+import type { AgentLaunchExtras, AgentLaunchSpec } from './launch'
 import { buildOpencodeMd } from './context'
 
 /**
@@ -37,12 +37,16 @@ export async function resolveOpencodeBin(): Promise<string> {
  */
 export async function prepareOpencodeLaunch(
   hostContextMd: string,
-  bridge: BridgeInfo
+  bridge: BridgeInfo,
+  extras?: AgentLaunchExtras
 ): Promise<AgentLaunchSpec> {
-  const cwd = mkdtempSync(join(tmpdir(), 'devterm-opencode-'))
-  writeFileSync(join(cwd, 'AGENTS.md'), hostContextMd, { mode: 0o600 })
+  const overlay = mkdtempSync(join(tmpdir(), 'devterm-opencode-'))
+  if (!extras?.nativeLocal) {
+    writeFileSync(join(overlay, 'AGENTS.md'), hostContextMd, { mode: 0o600 })
+  }
 
-  const opencodeConfig = {
+  const native = extras?.nativeLocal === true
+  const opencodeConfig: Record<string, unknown> = {
     $schema: 'https://opencode.ai/config.json',
     mcp: {
       devterm: {
@@ -54,17 +58,22 @@ export async function prepareOpencodeLaunch(
         }
       }
     },
-    // Scope the agent to MCP tools only. OpenCode ships these built-in tools
-    // (https://opencode.ai/docs/tools/) — turning every one off means every
-    // host action has to go through `devterm_*` on this SSH session.
-    // Earlier revisions named `patch`, `task`, `todoread` and missed
-    // `apply_patch` / `websearch` / `lsp` / `question`: the real tool is
-    // `apply_patch` (NOT `patch` — opencode explicitly distinguishes them in
-    // its tool-execute hooks), `task` / `todoread` are not built-in tool names
-    // at all, and the schema rejects unknown keys the same way it rejects
-    // `server.port: 0` (see the comment on `server` below). The `tools`
-    // section matches by exact tool name, not pattern.
-    tools: {
+    // The bridge is a short-lived localhost HTTP endpoint. autoupdate
+    // would interrupt the session with a download prompt; sharing would try
+    // to upload session JSON to opencode.ai and break the air-gapped rule;
+    // snapshot is local-only but adds startup indexing cost we don't need.
+    autoupdate: false,
+    share: 'disabled',
+    snapshot: false
+    // We intentionally omit the `server` block: the defaults already bind the
+    // opencode control server to 127.0.0.1 with an OS-assigned port, and the
+    // opencode config schema rejects an explicit port of 0.
+  }
+  if (!native) {
+    // Remote: scope the agent to MCP tools only. OpenCode ships these built-in
+    // tools (https://opencode.ai/docs/tools/) — turning every one off means
+    // every host action has to go through `devterm_*` on this SSH session.
+    opencodeConfig.tools = {
       bash: false,
       read: false,
       write: false,
@@ -78,39 +87,28 @@ export async function prepareOpencodeLaunch(
       skill: false,
       todowrite: false,
       question: false
-    },
-    // The bridge is a short-lived localhost HTTP endpoint. autoupdate
-    // would interrupt the session with a download prompt; sharing would try
-    // to upload session JSON to opencode.ai and break the air-gapped rule;
-    // snapshot is local-only but adds startup indexing cost we don't need.
-    autoupdate: false,
-    share: 'disabled',
-    snapshot: false
-    // We intentionally omit the `server` block: the defaults already bind the
-    // opencode control server to 127.0.0.1 with an OS-assigned port, and the
-    // opencode config schema rejects an explicit port of 0.
+    }
+  } else if (extras?.appendSystemPrompt) {
+    opencodeConfig.instructions = extras.appendSystemPrompt
   }
-  writeFileSync(join(cwd, 'opencode.json'), JSON.stringify(opencodeConfig, null, 2), {
+  writeFileSync(join(overlay, 'opencode.json'), JSON.stringify(opencodeConfig, null, 2), {
     mode: 0o600
   })
 
+  const project = extras?.spawnCwd || overlay
   return {
     bin: await resolveOpencodeBin(),
     // `opencode [project]` is the default command — when no subcommand is
     // given, opencode starts the TUI against the project at `[project]` (or
-    // cwd). The TUI loads the bridge MCP server from `opencode.json` in cwd.
-    args: [cwd],
-    cwd,
-    // OPENCODE_CONFIG points opencode at the per-session config file we just
-    // wrote. Setting it via env rather than relying on project-file discovery
-    // (which walks up to the nearest git root and may pick up the user's
-    // real project config) keeps the session fully isolated.
+    // cwd). MCP config is always the overlay file via OPENCODE_CONFIG.
+    args: [project],
+    cwd: project,
     env: {
-      OPENCODE_CONFIG: join(cwd, 'opencode.json')
+      OPENCODE_CONFIG: join(overlay, 'opencode.json')
     },
     cleanup: () => {
       try {
-        rmSync(cwd, { recursive: true, force: true })
+        rmSync(overlay, { recursive: true, force: true })
       } catch {
         /* ignore */
       }

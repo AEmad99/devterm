@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { homedir, tmpdir } from 'os'
 import { join } from 'path'
 import type { BridgeInfo } from '../mcp/server'
-import type { AgentLaunchSpec } from './launch'
+import type { AgentLaunchExtras, AgentLaunchSpec } from './launch'
 import { buildGrokMd } from './context'
 
 /**
@@ -60,14 +60,20 @@ export function resolveGrokBin(): string {
  * bearer token never leaves the temp dir's config file (mode 0o600). Grok
  * owns its own permission prompts; DevTerm does not auto-approve MCP calls.
  */
-export function prepareGrokLaunch(hostContextMd: string, bridge: BridgeInfo): AgentLaunchSpec {
-  const cwd = mkdtempSync(join(tmpdir(), 'devterm-grok-'))
-  const grokDir = join(cwd, '.grok')
-  const claudeDir = join(cwd, '.claude')
+export function prepareGrokLaunch(
+  hostContextMd: string,
+  bridge: BridgeInfo,
+  extras?: AgentLaunchExtras
+): AgentLaunchSpec {
+  const overlay = mkdtempSync(join(tmpdir(), 'devterm-grok-'))
+  const grokDir = join(overlay, '.grok')
+  const claudeDir = join(overlay, '.claude')
   mkdirSync(grokDir, { recursive: true })
   mkdirSync(claudeDir, { recursive: true })
 
-  writeFileSync(join(cwd, 'AGENTS.md'), hostContextMd, { mode: 0o600 })
+  if (!extras?.nativeLocal) {
+    writeFileSync(join(overlay, 'AGENTS.md'), hostContextMd, { mode: 0o600 })
+  }
 
   const grokConfig = `[mcp_servers.devterm]
 url = "${bridge.url}"
@@ -77,14 +83,23 @@ enabled = true
 Authorization = "Bearer ${bridge.token}"
 `
   writeFileSync(join(grokDir, 'config.toml'), grokConfig, { mode: 0o600 })
-
-  // Deny-by-default at the Grok layer: only the DevTerm MCP tools are allowed.
-  // Permission prompts stay in Grok; do not set defaultMode/dontAsk.
-  const claudeSettings = {
-    permissions: {
-      allow: ['MCPTool(devterm__*)']
-    }
+  if (extras?.appendSystemPrompt) {
+    writeFileSync(join(overlay, 'DEVTERM.md'), extras.appendSystemPrompt, { mode: 0o600 })
   }
+
+  // Remote: deny-by-default, MCP host tools only. Native local: builtins plus
+  // MCP (browser). Permission prompts stay in Grok; do not set defaultMode/dontAsk.
+  const claudeSettings = extras?.nativeLocal
+    ? {
+        permissions: {
+          allow: ['Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'MCPTool(devterm__*)']
+        }
+      }
+    : {
+        permissions: {
+          allow: ['MCPTool(devterm__*)']
+        }
+      }
   writeFileSync(join(claudeDir, 'settings.json'), JSON.stringify(claudeSettings, null, 2), {
     mode: 0o600
   })
@@ -97,7 +112,7 @@ Authorization = "Bearer ${bridge.token}"
       // Embedded pane: one agent, no subagent fan-out.
       '--no-subagents'
     ],
-    cwd,
+    cwd: extras?.spawnCwd || overlay,
     env: {
       // The temp dir is throwaway DevTerm state, not an operator project tree.
       // Skip the folder-trust gate so the per-session MCP config loads immediately.
@@ -105,7 +120,7 @@ Authorization = "Bearer ${bridge.token}"
     },
     cleanup: () => {
       try {
-        rmSync(cwd, { recursive: true, force: true })
+        rmSync(overlay, { recursive: true, force: true })
       } catch {
         /* ignore */
       }

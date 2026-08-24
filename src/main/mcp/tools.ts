@@ -15,9 +15,8 @@ export type ConfirmOutcome = 'approved' | 'denied' | 'timeout'
 export interface ToolDeps {
   sessionId: string
   /**
-   * Host operations backend: SSH channels for remote sessions, local
-   * child_process/fs for local terminals. The five host tools are written
-   * against this interface so a DevTerm Agent works identically on both.
+   * Host operations backend: SSH channels for remote sessions. Local agents
+   * still pass a LocalHostBackend but `hostTools: false` skips these tools.
    */
   host: HostBackend
   /** Live getter for the session's host context. */
@@ -39,6 +38,13 @@ export interface ToolDeps {
    * tools self-disable when the settings toggle is off.
    */
   browser?: BrowserToolsDeps
+  /**
+   * When false, skip ping / get_host_context / run_command / list_dir /
+   * read_file / write_file. Local agents use the CLI's own fs/shell tools
+   * against the workstation; MCP is reserved for `browser_*`. Default true
+   * (remote SSH host tools).
+   */
+  hostTools?: boolean
 }
 
 // Cluster ops (helm install, oc apply + rollout, image pulls) routinely run well
@@ -140,6 +146,10 @@ function wrapConfirm(
 }
 
 export function registerTools(mcp: McpServer, deps: ToolDeps): void {
+  if (deps.hostTools === false) {
+    registerBrowserTools(mcp, deps)
+    return
+  }
   const { host, sessionId, getContext, hostDown, airGapped, policy, confirm, getCwd } = deps
   // Pre-bound confirm wrapper that records bridge activity around every ask.
   const confirmWithActivity = (tool: string, detail: string) =>

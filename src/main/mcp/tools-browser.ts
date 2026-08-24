@@ -6,11 +6,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { IPC } from '@shared/types'
 import type { BrowserControlService, BrowserTabEntry } from '../browser/control'
 import { guestUrlOk, toLoadableUrl } from '../browser/url-guard'
-import {
-  buildSnapshotScript,
-  formatOutline,
-  parseSnapshot
-} from '../browser/snapshot'
+import { buildSnapshotScript, formatOutline, parseSnapshot } from '../browser/snapshot'
 import {
   buildClickScript,
   buildKeyPressScript,
@@ -90,8 +86,7 @@ export function registerBrowserTools(mcp: McpServer, deps: ToolDeps): void {
       )
     if (v.needConfirm) {
       const outcome = await confirmWithActivity(tool, match)
-      if (outcome === 'timeout')
-        return errorText(`Approval timed out for ${tool}: ${match}`)
+      if (outcome === 'timeout') return errorText(`Approval timed out for ${tool}: ${match}`)
       if (outcome === 'denied') return errorText(`Operator denied: ${match}`)
     }
     return null
@@ -101,8 +96,8 @@ export function registerBrowserTools(mcp: McpServer, deps: ToolDeps): void {
     'browser_list',
     {
       description:
-        'List the in-app browser tabs you can drive: your own agent tabs plus tabs the operator opened. ' +
-        'Metadata only (title/URL) — page content requires browser_snapshot.',
+        'FIRST-CLASS in-app browser: list DevTerm browser tabs you can drive (your AGT tabs plus operator tabs). ' +
+        'Metadata only (title/URL) — page content requires browser_snapshot. Never use the OS browser.',
       inputSchema: {}
     },
     async () => {
@@ -128,9 +123,10 @@ export function registerBrowserTools(mcp: McpServer, deps: ToolDeps): void {
     'browser_open',
     {
       description:
-        "Open YOUR OWN tab in DevTerm's in-app browser pane and navigate to a URL (http/https only). " +
-        'Shares cookies with the operator\'s browsing (logins carry over), but the operator can always see this tab. ' +
-        'Subsequent browser_* calls default to this tab.',
+        "FIRST-CLASS: open a tab in DevTerm's in-app browser and go to a URL (http/https only). " +
+        'This is the correct way to open web pages — do not use bash, start, xdg-open, or the OS browser. ' +
+        "Shares cookies with the operator's browsing; they can always see this tab. " +
+        'Later browser_* calls default to this tab.',
       inputSchema: {
         url: z.string().describe('Absolute http(s) URL to load.')
       }
@@ -161,10 +157,13 @@ export function registerBrowserTools(mcp: McpServer, deps: ToolDeps): void {
     'browser_navigate',
     {
       description:
-        'Navigate a browser tab to a new http(s) URL and wait for the load to settle.',
+        'FIRST-CLASS in-app browser: navigate a DevTerm browser tab to a new http(s) URL and wait for load. Do not use the OS browser.',
       inputSchema: {
         url: z.string().describe('Absolute http(s) URL.'),
-        tabId: z.string().optional().describe('From browser_list/browser_open; default = your latest tab.'),
+        tabId: z
+          .string()
+          .optional()
+          .describe('From browser_list/browser_open; default = your latest tab.'),
         wait: z.enum(['load', 'none']).optional().describe('Wait for load settle (default load).')
       }
     },
@@ -196,7 +195,7 @@ export function registerBrowserTools(mcp: McpServer, deps: ToolDeps): void {
     'browser_snapshot',
     {
       description:
-        'Read the current page as a compact accessibility outline. Interactive elements carry stable refs like [e12] — pass those to browser_click / browser_type. Always take a fresh snapshot after navigation or clicks before acting on refs.',
+        'FIRST-CLASS in-app browser: read the page as a compact accessibility outline. Interactive elements carry refs like [e12] for browser_click / browser_type. Always snapshot after navigation or clicks before using refs.',
       inputSchema: {
         tabId: z.string().optional(),
         max_chars: z.number().int().positive().max(60000).optional()
@@ -219,7 +218,7 @@ export function registerBrowserTools(mcp: McpServer, deps: ToolDeps): void {
     'browser_click',
     {
       description:
-        'Click an element by its snapshot ref (e.g. e12). The page may change afterwards — take a fresh browser_snapshot.',
+        'FIRST-CLASS in-app browser: click an element by snapshot ref (e.g. e12). A visible agent cursor moves to the target. Snapshot again after the page may have changed.',
       inputSchema: {
         ref: z.string().describe('Element ref from your last browser_snapshot.'),
         tabId: z.string().optional()
@@ -248,7 +247,7 @@ export function registerBrowserTools(mcp: McpServer, deps: ToolDeps): void {
     'browser_type',
     {
       description:
-        'Type text into an input by its snapshot ref (replaces existing value). submit=true presses Enter / submits the form. Typing into password fields follows the operator\u2019s policy mode.',
+        'FIRST-CLASS in-app browser: type into an input by snapshot ref (replaces existing value). A visible agent cursor moves to the field. submit=true presses Enter. Password fields follow the operator policy.',
       inputSchema: {
         ref: z.string(),
         text: z.string().max(10000),
@@ -273,18 +272,18 @@ export function registerBrowserTools(mcp: McpServer, deps: ToolDeps): void {
               `Blocked by guardrail (policy mode: ${policy.mode}): typing into a password field on ${origin} is not allowed.`
             )
           if (verdict.needConfirm) {
-            const outcome = await confirmWithActivity(
-              'browser_type',
-              `password field on ${origin}`
-            )
+            const outcome = await confirmWithActivity('browser_type', `password field on ${origin}`)
             if (outcome === 'timeout')
               return errorText('Approval timed out for typing into the password field.')
-            if (outcome === 'denied') return errorText('Operator denied typing into the password field.')
+            if (outcome === 'denied')
+              return errorText('Operator denied typing into the password field.')
           }
           out = parseInteraction(await run(true))
         }
         if (out.err) return errorText(out.err)
-        return text(`typed into ${ref}${submit ? ' + submitted' : ''}${out.detail ? ` (${out.detail})` : ''}`)
+        return text(
+          `typed into ${ref}${submit ? ' + submitted' : ''}${out.detail ? ` (${out.detail})` : ''}`
+        )
       } catch (e) {
         return errorText(`browser_type failed: ${(e as Error).message}`)
       }
@@ -342,8 +341,7 @@ export function registerBrowserTools(mcp: McpServer, deps: ToolDeps): void {
         // Inline the image only when it is small enough to be useful as model
         // context; the file path is always returned either way.
         const content: Array<
-          | { type: 'text'; text: string }
-          | { type: 'image'; data: string; mimeType: string }
+          { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }
         > = []
         if (png.length <= 3_500_000) {
           content.push({ type: 'image', data: png.toString('base64'), mimeType: 'image/png' })

@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { homedir, tmpdir } from 'os'
 import { join } from 'path'
 import type { BridgeInfo } from '../mcp/server'
-import type { AgentLaunchSpec } from './launch'
+import type { AgentLaunchExtras, AgentLaunchSpec } from './launch'
 import { resolveCached } from './launch'
 import { buildAntigravityMd } from './context'
 
@@ -56,10 +56,15 @@ export async function resolveAntigravityBin(): Promise<string> {
  */
 export async function prepareAntigravityLaunch(
   hostContextMd: string,
-  bridge: BridgeInfo
+  bridge: BridgeInfo,
+  extras?: AgentLaunchExtras
 ): Promise<AgentLaunchSpec> {
-  const cwd = mkdtempSync(join(tmpdir(), 'devterm-antigravity-'))
-  writeFileSync(join(cwd, 'AGENTS.md'), hostContextMd, { mode: 0o600 })
+  const overlay = mkdtempSync(join(tmpdir(), 'devterm-antigravity-'))
+  if (!extras?.nativeLocal) {
+    writeFileSync(join(overlay, 'AGENTS.md'), hostContextMd, { mode: 0o600 })
+  } else if (extras.appendSystemPrompt) {
+    writeFileSync(join(overlay, 'DEVTERM.md'), extras.appendSystemPrompt, { mode: 0o600 })
+  }
 
   const mcpConfig = {
     mcpServers: {
@@ -73,24 +78,24 @@ export async function prepareAntigravityLaunch(
   }
 
   const jsonContent = JSON.stringify(mcpConfig, null, 2)
-  const antiDir = join(cwd, '.antigravity')
+  const antiDir = join(overlay, '.antigravity')
   mkdirSync(antiDir, { recursive: true })
   writeFileSync(join(antiDir, 'mcp.json'), jsonContent, { mode: 0o600 })
 
-  const geminiDir = join(cwd, '.gemini', 'antigravity-cli')
+  const geminiDir = join(overlay, '.gemini', 'antigravity-cli')
   mkdirSync(geminiDir, { recursive: true })
   writeFileSync(join(geminiDir, 'mcp.json'), jsonContent, { mode: 0o600 })
 
-  writeFileSync(join(cwd, 'mcp.json'), jsonContent, { mode: 0o600 })
+  writeFileSync(join(overlay, 'mcp.json'), jsonContent, { mode: 0o600 })
 
   return {
     bin: await resolveAntigravityBin(),
     args: [],
-    cwd,
+    cwd: extras?.spawnCwd || overlay,
     env: {},
     cleanup: () => {
       try {
-        rmSync(cwd, { recursive: true, force: true })
+        rmSync(overlay, { recursive: true, force: true })
       } catch {
         /* ignore */
       }

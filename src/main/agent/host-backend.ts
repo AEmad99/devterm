@@ -11,8 +11,9 @@ import type { SSHManager } from '../ssh/manager'
  *
  * Remote sessions wrap the session's ssh2 client (shell/SFTP/exec channels);
  * local sessions run on the workstation itself via child_process + fs. The
- * DevTerm Agent is therefore identical on both surfaces — same tool surface,
- * same policy boundary, different transport.
+ * Remote agents use this for MCP host tools. Local agents still construct a
+ * LocalHostBackend for the bridge deps, but those host tools are not
+ * registered — the CLI's built-in fs/shell runs in the operator's folder.
  */
 
 export interface HostExecResult {

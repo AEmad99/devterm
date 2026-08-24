@@ -3,7 +3,7 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import type { BridgeInfo } from '../mcp/server'
 import { resolveCached } from './launch'
-import type { AgentLaunchSpec } from './launch'
+import type { AgentLaunchExtras, AgentLaunchSpec } from './launch'
 import { buildKimiMd } from './context'
 
 /**
@@ -36,10 +36,15 @@ export async function resolveKimiBin(): Promise<string> {
  */
 export async function prepareKimiLaunch(
   hostContextMd: string,
-  bridge: BridgeInfo
+  bridge: BridgeInfo,
+  extras?: AgentLaunchExtras
 ): Promise<AgentLaunchSpec> {
-  const cwd = mkdtempSync(join(tmpdir(), 'devterm-kimi-'))
-  writeFileSync(join(cwd, 'AGENTS.md'), hostContextMd, { mode: 0o600 })
+  const overlay = mkdtempSync(join(tmpdir(), 'devterm-kimi-'))
+  if (!extras?.nativeLocal) {
+    writeFileSync(join(overlay, 'AGENTS.md'), hostContextMd, { mode: 0o600 })
+  } else if (extras.appendSystemPrompt) {
+    writeFileSync(join(overlay, 'DEVTERM.md'), extras.appendSystemPrompt, { mode: 0o600 })
+  }
 
   const mcpConfig = {
     mcpServers: {
@@ -51,18 +56,18 @@ export async function prepareKimiLaunch(
       }
     }
   }
-  const kimiCodeDir = join(cwd, '.kimi-code')
+  const kimiCodeDir = join(overlay, '.kimi-code')
   mkdirSync(kimiCodeDir, { recursive: true })
   writeFileSync(join(kimiCodeDir, 'mcp.json'), JSON.stringify(mcpConfig, null, 2), { mode: 0o600 })
 
   return {
     bin: await resolveKimiBin(),
     args: [],
-    cwd,
+    cwd: extras?.spawnCwd || overlay,
     env: {},
     cleanup: () => {
       try {
-        rmSync(cwd, { recursive: true, force: true })
+        rmSync(overlay, { recursive: true, force: true })
       } catch {
         /* ignore */
       }

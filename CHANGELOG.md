@@ -3,6 +3,27 @@
 All notable changes to DevTerm are documented here. The most recent section is
 at the top. Dates are ISO `YYYY-MM-DD`.
 
+## 1.3.19 — 2026-08-24
+
+### Added
+
+- **Native local agent.** Opening Agent on a local pane uses the CLI's own
+  Read/Write/Bash tools in the operator's folder. MCP host tools stay remote-only;
+  in-app `browser_*` tools remain on the MCP bridge.
+- **Visible agent cursor** in the in-app browser: clicks and typing glide a
+  branded pointer to the target so you can follow the agent live.
+
+### Changed
+
+- **In-app browser is first-class.** Pi lists `browser_*` in Available tools
+  (`promptSnippet`), local briefings lead with them, and `browser_open` splits
+  a pane beside the agent instead of hiding as a sibling tab.
+
+### Fixed
+
+- Local `browser_open` no longer times out on an off-screen webview.
+- MCP session file for local agents stays in the overlay, not the project tree.
+
 ## 1.3.18 — 2026-08-23
 
 ### Changed

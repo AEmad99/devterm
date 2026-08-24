@@ -3,7 +3,7 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync
 import { homedir, tmpdir } from 'os'
 import { join } from 'path'
 import type { BridgeInfo } from '../mcp/server'
-import type { AgentLaunchSpec } from './launch'
+import type { AgentLaunchExtras, AgentLaunchSpec } from './launch'
 import { buildCodexMd } from './context'
 
 /**
@@ -63,27 +63,35 @@ export function resolveCodexBin(): string {
  * off via `features.shell_tool = false`; host work goes through `mcp__devterm__*`.
  * Approval prompts stay in Codex — DevTerm does not write `approval_policy`.
  */
-export function prepareCodexLaunch(hostContextMd: string, bridge: BridgeInfo): AgentLaunchSpec {
-  const cwd = mkdtempSync(join(tmpdir(), 'devterm-codex-'))
-  const codexHome = join(cwd, 'codex-home')
+export function prepareCodexLaunch(
+  hostContextMd: string,
+  bridge: BridgeInfo,
+  extras?: AgentLaunchExtras
+): AgentLaunchSpec {
+  const overlay = mkdtempSync(join(tmpdir(), 'devterm-codex-'))
+  const codexHome = join(overlay, 'codex-home')
   mkdirSync(codexHome, { recursive: true })
 
-  writeFileSync(join(cwd, 'AGENTS.md'), hostContextMd, { mode: 0o600 })
+  if (!extras?.nativeLocal) {
+    writeFileSync(join(overlay, 'AGENTS.md'), hostContextMd, { mode: 0o600 })
+  }
 
   const userAuth = join(homedir(), '.codex', 'auth.json')
   if (existsSync(userAuth)) {
     copyFileSync(userAuth, join(codexHome, 'auth.json'))
   }
 
+  const native = extras?.nativeLocal === true
+  const sandbox = native ? 'workspace-write' : 'read-only'
   const codexConfig = `# DevTerm per-session isolated Codex config
-sandbox_mode = "read-only"
+sandbox_mode = "${sandbox}"
 web_search = "disabled"
 
 [history]
 persistence = "none"
 
 [features]
-shell_tool = false
+shell_tool = ${native ? 'true' : 'false'}
 
 [mcp_servers.devterm]
 enabled = true
@@ -95,20 +103,21 @@ Authorization = "Bearer ${bridge.token}"
 `
   writeFileSync(join(codexHome, 'config.toml'), codexConfig, { mode: 0o600 })
 
-  // Sandbox stays read-only so host work goes through MCP. Do not pass
+  // Remote: read-only sandbox so host work goes through MCP. Local native:
+  // workspace-write + shell in the operator's folder. Do not pass
   // `--ask-for-approval`: Codex owns its permission UI.
-  const args = ['--sandbox', 'read-only']
+  const args = ['--sandbox', sandbox]
 
   return {
     bin: resolveCodexBin(),
     args,
-    cwd,
+    cwd: extras?.spawnCwd || overlay,
     env: {
       CODEX_HOME: codexHome
     },
     cleanup: () => {
       try {
-        rmSync(cwd, { recursive: true, force: true })
+        rmSync(overlay, { recursive: true, force: true })
       } catch {
         /* ignore */
       }

@@ -403,10 +403,10 @@ export type AgentUiMode = 'docked' | 'floating' | 'hidden'
 export interface AgentOpenOpts {
   sessionId: string
   /**
-   * Which surface the agent is attached to: a remote SSH session (default,
-   * host tools run over its ssh2 client) or a local terminal (host tools run
-   * on the workstation via child_process). Browser tools work identically on
-   * both.
+   * Which surface the agent is attached to. Remote (default): MCP host tools
+   * over the session's ssh2 client, built-in fs/shell off. Local: native
+   * coding agent in the operator's folder (built-in tools on); MCP is
+   * browser-only.
    */
   sessionKind?: 'local' | 'remote'
   /** Which agent CLI to launch. */

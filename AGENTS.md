@@ -4,7 +4,7 @@ Guidance for coding agents working in the DevTerm repository.
 
 DevTerm is an Electron 29 desktop terminal: local shells (prebuilt node-pty), SSH/SFTP sessions, workspaces, file browsing/editing (CodeMirror 6), an in-app browser, snippets, a Warp-style Git panel, a persistent transfer queue, offline Whisper dictation, global terminal search, and an embedded multi-provider **DevTerm Agent** with seven external CLI fallbacks (`pi`, `claude`, `opencode`, `kimi`, `grok`, `codex`, `antigravity`). Every agent runs in a local PTY and reaches the remote host only through DevTerm's in-process MCP bridge. Stack: electron-vite, TypeScript strict, React 18, Zustand, xterm.js, ssh2, marked + DOMPurify, `@huggingface/transformers`, `@earendil-works/pi-coding-agent` (bundled runtime), dedicated `node` binary for the agent, electron-updater, zod.
 
-**Current version:** `package.json` → `1.3.18`. Top-level views: **Terminals** (always-mounted workspace: group tabs, split panes, local/remote/browser sessions), **Connections**, **Workspaces**, **Snippets**. DevTerm is a normal framed desktop app; the first screen is the terminal, not a marketing page.
+**Current version:** `package.json` → `1.3.19`. Top-level views: **Terminals** (always-mounted workspace: group tabs, split panes, local/remote/browser sessions), **Connections**, **Workspaces**, **Snippets**. DevTerm is a normal framed desktop app; the first screen is the terminal, not a marketing page.
 
 ## Architecture
 
@@ -81,7 +81,7 @@ Launch layers:
 
 | Kind | Prep | How it reaches MCP |
 | --- | --- | --- |
-| `devterm` | `prepareBuiltinAgentLaunch` in `launch.ts` | Bundled Node + CLI + `devterm-mcp.mjs` extension; `--no-builtin-tools`, discovery of user extensions/skills/templates/themes disabled |
+| `devterm` | `prepareBuiltinAgentLaunch` in `launch.ts` | Bundled Node + CLI + `devterm-mcp.mjs` extension. **Remote:** `--no-builtin-tools` (host work is MCP). **Local:** builtin fs/shell on, process cwd = operator folder; MCP is browser-only |
 | `pi` | `prepareAgentLaunch` | PATH `pi` + same extension isolation flags |
 | `claude` | `claude-launch.ts` | Native MCP via `--mcp-config`; keeps local Read/Write/Edit for scratch |
 | `opencode` | `opencode-launch.ts` | Per-session `opencode.json` remote MCP entry; tools as `devterm_*` |
@@ -93,13 +93,15 @@ Launch layers:
 Bridge & tools:
 
 - MCP bridge (`src/main/mcp/server.ts`) on `127.0.0.1:<random-port>` gated by a random bearer token.
-- Host tools (`src/main/mcp/tools.ts`): `ping`, `get_host_context`, `run_command`, `list_dir`, `read_file`, `write_file` — written against a **HostBackend** (`agent/host-backend.ts`): `SshHostBackend` over the session's ssh2 client, `LocalHostBackend` over child_process/fs. Local terminals launch the same agents from the pane header (Open Agent); host tools run locally and `browser_*` tools drive in-app panes. Relative paths and `run_command` honor the operator's live cwd on local sessions (Windows `C:\...` or POSIX, via child_process `cwd` + Node path resolution) and the live POSIX cwd from OSC 7 on remotes; Windows remotes keep login-default semantics for cwd prefixing.
+- Host tools (`src/main/mcp/tools.ts`): `ping`, `get_host_context`, `run_command`, `list_dir`, `read_file`, `write_file` — **remote only**, against `SshHostBackend` on the session's ssh2 client. Local agents do **not** register these tools (`hostTools: false`); they use the CLI's own Read/Write/Bash/Grep in the operator's folder (`resolveLocalSpawnCwd`). `browser_*` tools still register on both surfaces.
+- Relative paths and `run_command` on remotes honor the live POSIX cwd from OSC 7; Windows remotes keep login-default semantics for cwd prefixing.
 - Browser tools (`src/main/mcp/tools-browser.ts`, toggle in Settings → DevTerm Agent, default on): `browser_list/open/navigate/snapshot/click/type/press_key/screenshot/attach/detach/close`. The agent freely drives tabs it opened (badged `AGT`); operator-opened tabs are readable/drivable only after a one-time per-tab confirm (`browser_attach`), grants live in-memory and clear on Stop/close. Snapshots inject ref tags (`data-dt-ref`) resolved by later click/type calls; results carry an UNTRUSTED banner (prompt-injection defense). Navigation reuses the guest URL guard (`browser/url-guard.ts`) — http(s)/about:blank only, same allowlist as interactive panes. Password fields follow the policy ladder; approval-rule prefixes match URLs/origins.
 - MCP launch uses policy mode `full` (no DevTerm confirm modal). Permission prompts belong to the agent CLI (Claude `/permissions`, Codex approval, etc.). Approval rules (`approval-rules.ts`, `userData/approval-rules.json`) remain a **PRE-CHECK** allow/deny/ask at the MCP boundary. UI for rules lives under Settings → Agent guardrails. The old per-session Policy picker is gone — it did not map onto Claude/Grok (always bypassed) or Codex the way the UI implied.
-- Built-in local fs/shell tools are disabled for every agent so host work crosses the bridge (over the session's shared ssh2 client, or locally for local agents) (Claude keeps Read/Write/Edit for **local** scratch only).
+- Built-in local fs/shell tools are disabled for **remote** agents so host work crosses the MCP bridge (shared ssh2 client). **Local** agents keep builtins and skip MCP host tools. Claude on a remote still keeps Read/Write/Edit for **scratch** only; Claude on a local pane also gets Bash/Glob/Grep.
+- Briefings: remote writes per-session `AGENTS.md` in a temp overlay (`buildAgentsMd`). Local appends `buildLocalNativeMd` via `--append-system-prompt` and does not plant AGENTS.md in the project.
 - Bridge status over `agent:bridge-status:<id>`; MCP `notifications/message` heartbeat every 25s; renderer pushes live cwd via `agent:set-cwd`; confirmations (`agent:confirm`) time out after 120s as `'timeout'`. Confirms and PTY data are **broadcast** to every `BrowserWindow` so a floating agent window can approve and stream.
 - Agent PTY is **not** killed on its own exit — bridge + temp dir stay up for auto-restart after SSH reconnect; cleaned up only on explicit **Stop** / session close / quit. Activity log: `bridge-activity.ts` → `AgentActivityPanel.tsx` (filterable, exportable JSONL).
-- Briefings: `src/main/agent/context.ts` writes per-session `AGENTS.md` (host facts, air-gap rules, tool map, browser-tool injection rules).
+- Resume keys: remote uses `deriveAgentSessionId` (saved connection / `user@host:port`). Local uses `deriveLocalAgentSessionId(cwd)` so two folders do not share one transcript.
 
 **Agent UI modes (1.3.15+):** process lifetime ≠ UI placement.
 
@@ -189,7 +191,7 @@ Bridge & tools:
 
 ## Packaging
 
-- Version = `package.json` `version` (currently **1.3.18**).
+- Version = `package.json` `version` (currently **1.3.19**).
 - electron-builder: `appId com.devterm.app`, `productName DevTerm`, NSIS x64 (`oneClick: false`, `perMachine: false`, `allowToChangeInstallationDirectory: true`), unsigned (`verifyUpdateCodeSignature: false`), `npmRebuild: false`, GitHub publish provider `AEmad99/devterm`.
 - NSIS reinstall close logic: `resources/installer.nsh` (`nsis.include`) — `customInit` + `customCheckAppRunning` force-kill install-dir processes (required because elevated UAC inner installs skip stock `CHECK_APP_RUNNING`); `customUnInstallCheck*` lets upgrades continue if the old uninstaller fails.
 - `asarUnpack` must include: `node-pty`, `ort/*.wasm`, bundled agent Node binary (`node/bin/**`), `@earendil-works/**`, and the listed agent runtime dependency packages in `electron-builder.yml`. Do not drop those entries or the built-in agent fails to start from the installed app.
@@ -214,6 +216,7 @@ Bridge & tools:
 
 ## Recent release notes (for context)
 
+- **1.3.19** — Native local agent (builtin tools in the operator folder; MCP is browser-only); first-class in-app `browser_*` tools with a visible agent cursor; `browser_open` splits beside the agent.
 - **1.3.18** — Remote ask bar is the agent launch surface (no duplicated Open agent / Policy picker); first DevTerm Agent prompt is passed on the CLI so the agent starts working; permission prompts belong to the agent CLI; SSH shell-integration reclaim leftover inject rows without `clear`.
 - **1.3.17** — Richer tmux picker (live pane preview, window/command/cwd, kill session); reopen via pane button / Ctrl+Alt+T / palette; attach-while-inside uses `switch-client`; remote shell-integration inject no longer echoes a wall of script then `clear`s the login banner.
 - **1.3.16** — Fix stray `]` around remote bash prompts (detached tmux): the OS-integration prompt markers now reference `${__dtA}`/`${__dtB}` deferred in PS1 instead of baking the tmux DCS envelope bytes in, which let bash's `\]` decoder print a literal bracket. Regression-tested in `detached-session.test.ts`.
@@ -268,7 +271,7 @@ Snapshot of the **implemented** surface area as of this audit. Use this when pri
 | Agent UI modes | **Shipped** | `docked` / `floating` / `hidden`; process keeps running when hidden/floated |
 | Ask-agent strip | **Removed** | Header Open Agent is the launch surface; no bottom compose bar |
 | Floating agent window | **Shipped** | Separate OS window (`agent-window.html`); dock/hide/stop |
-| Local DevTerm Agent | **Shipped** | Header Open Agent on `LocalSessionView` occupies the pane (not a side split); `LocalHostBackend` + `browser_*`; resume key `'local'` |
+| Local DevTerm Agent | **Shipped** | Header Open Agent on `LocalSessionView` occupies the pane (not a side split); native builtin tools in the operator cwd; MCP is `browser_*` only; resume key is per-directory |
 | Agent browser tools | **Shipped** | 11 `browser_*` MCP tools; agent-owned tabs + confirm-gated attach to operator tabs; ref-based snapshots; screenshots to `userData/agent-artifacts` |
 | MCP host tools | **Shipped** | `ping`, `get_host_context`, `run_command`, `list_dir`, `read_file`, `write_file` over HostBackend (SSH or local) |
 | Agent guardrails | **Shipped** | Prefix approval rules + activity log; permission prompts belong to the agent CLI |

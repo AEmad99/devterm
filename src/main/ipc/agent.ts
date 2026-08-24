@@ -22,11 +22,15 @@ import * as approvalRules from '../agent/approval-rules'
 import {
   buildAgentsMd,
   deriveAgentSessionId,
+  deriveLocalAgentSessionId,
   getBuiltinAgentCapabilities,
   prepareAgentLaunch,
   prepareBuiltinAgentLaunch,
-  sweepStaleAgentTempDirs
+  resolveLocalSpawnCwd,
+  sweepStaleAgentTempDirs,
+  type AgentLaunchExtras
 } from '../agent/launch'
+import { buildLocalNativeMd } from '../agent/context'
 import { buildClaudeMd, prepareClaudeLaunch } from '../agent/claude-launch'
 import { buildKimiMd, prepareKimiLaunch } from '../agent/kimi-launch'
 import { buildOpencodeMd, prepareOpencodeLaunch } from '../agent/opencode-launch'
@@ -279,8 +283,7 @@ export function registerAgentIpc(
     // ssh2 client. Browser tools are host-agnostic and work on both.
     const isLocal = opts.sessionKind === 'local'
     const context = isLocal ? buildLocalContext() : ssh.getContext(opts.sessionId)
-    if (!context)
-      throw new Error('Connect the SSH session before opening the agent.')
+    if (!context) throw new Error('Connect the SSH session before opening the agent.')
 
     if (opts.cwd) cwds.set(opts.sessionId, opts.cwd)
 
@@ -288,22 +291,44 @@ export function registerAgentIpc(
       approvalRules.match(sessionId, command).then((r) => (r ? { outcome: r.outcome } : undefined))
     )
     const airGapped = opts.airGapped ?? false
+    const browserOn = opts.browserTools !== false
+    const spawnCwd = isLocal
+      ? resolveLocalSpawnCwd(cwds.get(opts.sessionId) ?? opts.cwd)
+      : undefined
+    const extras: AgentLaunchExtras | undefined = isLocal
+      ? {
+          nativeLocal: true,
+          spawnCwd,
+          appendSystemPrompt: buildLocalNativeMd(context, {
+            cwd: spawnCwd,
+            browserTools: browserOn
+          })
+        }
+      : undefined
+    const remoteBriefing = (builder: typeof buildAgentsMd) =>
+      builder(context, airGapped, cwds.get(opts.sessionId))
     const bridge = new McpBridge(
       {
         sessionId: opts.sessionId,
         host: isLocal
           ? new LocalHostBackend()
-          : new SshHostBackend(ssh, opts.sessionId, () => sessions.get(opts.sessionId)?.sshDown ?? false),
+          : new SshHostBackend(
+              ssh,
+              opts.sessionId,
+              () => sessions.get(opts.sessionId)?.sshDown ?? false
+            ),
         getContext: () =>
           isLocal
-            ? sessions.get(opts.sessionId)?.lastContext ?? context
-            : ssh.getContext(opts.sessionId) ?? context,
-        hostDown: () => (isLocal ? false : sessions.get(opts.sessionId)?.sshDown ?? false),
+            ? (sessions.get(opts.sessionId)?.lastContext ?? context)
+            : (ssh.getContext(opts.sessionId) ?? context),
+        hostDown: () => (isLocal ? false : (sessions.get(opts.sessionId)?.sshDown ?? false)),
         airGapped,
         policy,
         getCwd: () => cwds.get(opts.sessionId),
         confirm: (tool, detail) => confirm(opts.sessionId, tool, detail),
-        browser: { service: browserControl(), enabled: opts.browserTools !== false }
+        browser: { service: browserControl(), enabled: browserOn },
+        // Local agents use built-in fs/shell tools. MCP is browser-only.
+        hostTools: !isLocal
       },
       (status) => {
         // Cache the latest status so the SSH status listener can mirror a
@@ -318,66 +343,42 @@ export function registerAgentIpc(
     try {
       const info = await bridge.start()
       const profile = isLocal ? undefined : ssh.getProfile(opts.sessionId)
-      const persistentSessionId = isLocal ? 'local' : deriveAgentSessionId(opts.sessionId, profile)
+      const persistentSessionId = isLocal
+        ? deriveLocalAgentSessionId(spawnCwd)
+        : deriveAgentSessionId(opts.sessionId, profile)
+      const piOpts = {
+        preferences: opts.preferences,
+        sessionDir: join(app.getPath('userData'), 'agent-sessions'),
+        sessionId: persistentSessionId,
+        initialPrompt: opts.initialPrompt,
+        ...extras,
+        approveProject: isLocal
+      }
       spec =
         opts.kind === 'devterm'
           ? await (async () => {
-              const sessionDir = join(app.getPath('userData'), 'agent-sessions')
-              mkdirSync(sessionDir, { recursive: true })
-              return prepareBuiltinAgentLaunch(
-                buildAgentsMd(context, airGapped, cwds.get(opts.sessionId)),
-                info,
-                {
-                  preferences: opts.preferences,
-                  sessionDir,
-                  sessionId: persistentSessionId,
-                  initialPrompt: opts.initialPrompt
-                }
-              )
+              mkdirSync(piOpts.sessionDir, { recursive: true })
+              return prepareBuiltinAgentLaunch(remoteBriefing(buildAgentsMd), info, piOpts)
             })()
           : opts.kind === 'claude'
-            ? await prepareClaudeLaunch(
-                buildClaudeMd(context, airGapped, cwds.get(opts.sessionId)),
-                info
-              )
+            ? await prepareClaudeLaunch(remoteBriefing(buildClaudeMd), info, extras)
             : opts.kind === 'kimi'
-              ? await prepareKimiLaunch(
-                  buildKimiMd(context, airGapped, cwds.get(opts.sessionId)),
-                  info
-                )
+              ? await prepareKimiLaunch(remoteBriefing(buildKimiMd), info, extras)
               : opts.kind === 'opencode'
-                ? await prepareOpencodeLaunch(
-                    buildOpencodeMd(context, airGapped, cwds.get(opts.sessionId)),
-                    info
-                  )
+                ? await prepareOpencodeLaunch(remoteBriefing(buildOpencodeMd), info, extras)
                 : opts.kind === 'grok'
-                  ? prepareGrokLaunch(
-                      buildGrokMd(context, airGapped, cwds.get(opts.sessionId)),
-                      info
-                    )
+                  ? prepareGrokLaunch(remoteBriefing(buildGrokMd), info, extras)
                   : opts.kind === 'codex'
-                    ? prepareCodexLaunch(
-                        buildCodexMd(context, airGapped, cwds.get(opts.sessionId)),
-                        info
-                      )
+                    ? prepareCodexLaunch(remoteBriefing(buildCodexMd), info, extras)
                     : opts.kind === 'antigravity'
                       ? await prepareAntigravityLaunch(
-                          buildAntigravityMd(context, airGapped, cwds.get(opts.sessionId)),
-                          info
+                          remoteBriefing(buildAntigravityMd),
+                          info,
+                          extras
                         )
                       : await (async () => {
-                          const sessionDir = join(app.getPath('userData'), 'agent-sessions')
-                          mkdirSync(sessionDir, { recursive: true })
-                          return prepareAgentLaunch(
-                            buildAgentsMd(context, airGapped, cwds.get(opts.sessionId)),
-                            info,
-                            {
-                              preferences: opts.preferences,
-                              sessionDir,
-                              sessionId: persistentSessionId,
-                              initialPrompt: opts.initialPrompt
-                            }
-                          )
+                          mkdirSync(piOpts.sessionDir, { recursive: true })
+                          return prepareAgentLaunch(remoteBriefing(buildAgentsMd), info, piOpts)
                         })()
       const { id: ptyId } = pty.create(
         {
@@ -397,103 +398,103 @@ export function registerAgentIpc(
       const sshDispose = isLocal
         ? undefined
         : ssh.addStatusListener(opts.sessionId, (status: SSHStatus) => {
-        const sess = sessions.get(opts.sessionId)
-        if (!sess) return
-        // Track SSH state so tool calls can return a clear reconnect message
-        // instead of "unknown session" (which the agent used to read as a
-        // hard failure and crash on).
-        if (status.type === 'closed') {
-          sess.sshDown = true
-          sendBridgeStatus(opts.sessionId, {
-            ...(sess.lastBridgeStatus ?? {
-              state: 'disconnected',
-              mcpUrl: undefined,
-              message: 'SSH disconnected',
-              lastActivityAt: undefined,
-              lastHeartbeatAt: undefined,
-              activeStreams: 0
-            }),
-            state: 'disconnected',
-            message: 'SSH disconnected; reconnecting…'
-          })
-        } else if (status.type === 'reconnecting') {
-          sess.sshDown = true
-          sendBridgeStatus(opts.sessionId, {
-            ...(sess.lastBridgeStatus ?? {
-              state: 'disconnected',
-              mcpUrl: undefined,
-              message: 'SSH reconnecting',
-              lastActivityAt: undefined,
-              lastHeartbeatAt: undefined,
-              activeStreams: 0
-            }),
-            state: 'disconnected',
-            message: `SSH reconnecting (attempt ${status.attempt}/${status.maxAttempts})…`
-          })
-        } else if (status.type === 'reconnected') {
-          sess.sshDown = false
-          // Refresh the cached host context now that a fresh detectRemoteContext
-          // has run on the new ssh2 client; tool handlers read this through
-          // `getContext()`.
-          const fresh = ssh.getContext(opts.sessionId)
-          if (fresh) sess.lastContext = fresh
-          sendBridgeStatus(opts.sessionId, {
-            ...(sess.lastBridgeStatus ?? {
-              state: 'connected',
-              mcpUrl: undefined,
-              message: 'SSH reconnected',
-              lastActivityAt: Date.now(),
-              lastHeartbeatAt: undefined,
-              activeStreams: 0
-            }),
-            state: 'connected',
-            message: `SSH reconnected (attempt ${status.attempt})`
-          })
-          // If the agent process died while SSH was down (most agents exit
-          // when their MCP tool loop can't make progress), relaunch it now
-          // that the connection is back. The renderer's pane stays mounted;
-          // the new PTY binds to the same pane id.
-          if (sess.agentExited && sess.lastOpts) {
-            sess.agentExited = false
-            const restartOpts = {
-              ...sess.lastOpts,
-              cwd: cwds.get(opts.sessionId) ?? sess.lastOpts.cwd
-            }
-            const stablePtyId = sess.ptyId
-            // Enqueue so a concurrent agent:open (Restart button) cannot race
-            // this relaunch and leak a second bridge/tempdir.
-            void enqueueLaunch(opts.sessionId, async () => {
-              // Fully retire the old bridge/listeners/temp directory before
-              // replacing the process. Reuse the PTY id so the renderer's
-              // existing per-id data/exit subscriptions remain valid.
-              await closeOne(opts.sessionId)
-              return launchAgent(restartOpts, stablePtyId)
-            }).catch((err) => {
+            const sess = sessions.get(opts.sessionId)
+            if (!sess) return
+            // Track SSH state so tool calls can return a clear reconnect message
+            // instead of "unknown session" (which the agent used to read as a
+            // hard failure and crash on).
+            if (status.type === 'closed') {
+              sess.sshDown = true
               sendBridgeStatus(opts.sessionId, {
-                state: 'error',
-                mcpUrl: undefined,
-                message: `Auto-restart after reconnect failed: ${(err as Error).message}`,
-                lastActivityAt: Date.now(),
-                lastHeartbeatAt: undefined,
-                activeStreams: 0
+                ...(sess.lastBridgeStatus ?? {
+                  state: 'disconnected',
+                  mcpUrl: undefined,
+                  message: 'SSH disconnected',
+                  lastActivityAt: undefined,
+                  lastHeartbeatAt: undefined,
+                  activeStreams: 0
+                }),
+                state: 'disconnected',
+                message: 'SSH disconnected; reconnecting…'
               })
-            })
-          }
-        } else if (status.type === 'reconnect-failed') {
-          sendBridgeStatus(opts.sessionId, {
-            ...(sess.lastBridgeStatus ?? {
-              state: 'error',
-              mcpUrl: undefined,
-              message: 'SSH reconnect failed',
-              lastActivityAt: undefined,
-              lastHeartbeatAt: undefined,
-              activeStreams: 0
-            }),
-            state: 'error',
-            message: `SSH reconnect failed: ${status.reason}`
+            } else if (status.type === 'reconnecting') {
+              sess.sshDown = true
+              sendBridgeStatus(opts.sessionId, {
+                ...(sess.lastBridgeStatus ?? {
+                  state: 'disconnected',
+                  mcpUrl: undefined,
+                  message: 'SSH reconnecting',
+                  lastActivityAt: undefined,
+                  lastHeartbeatAt: undefined,
+                  activeStreams: 0
+                }),
+                state: 'disconnected',
+                message: `SSH reconnecting (attempt ${status.attempt}/${status.maxAttempts})…`
+              })
+            } else if (status.type === 'reconnected') {
+              sess.sshDown = false
+              // Refresh the cached host context now that a fresh detectRemoteContext
+              // has run on the new ssh2 client; tool handlers read this through
+              // `getContext()`.
+              const fresh = ssh.getContext(opts.sessionId)
+              if (fresh) sess.lastContext = fresh
+              sendBridgeStatus(opts.sessionId, {
+                ...(sess.lastBridgeStatus ?? {
+                  state: 'connected',
+                  mcpUrl: undefined,
+                  message: 'SSH reconnected',
+                  lastActivityAt: Date.now(),
+                  lastHeartbeatAt: undefined,
+                  activeStreams: 0
+                }),
+                state: 'connected',
+                message: `SSH reconnected (attempt ${status.attempt})`
+              })
+              // If the agent process died while SSH was down (most agents exit
+              // when their MCP tool loop can't make progress), relaunch it now
+              // that the connection is back. The renderer's pane stays mounted;
+              // the new PTY binds to the same pane id.
+              if (sess.agentExited && sess.lastOpts) {
+                sess.agentExited = false
+                const restartOpts = {
+                  ...sess.lastOpts,
+                  cwd: cwds.get(opts.sessionId) ?? sess.lastOpts.cwd
+                }
+                const stablePtyId = sess.ptyId
+                // Enqueue so a concurrent agent:open (Restart button) cannot race
+                // this relaunch and leak a second bridge/tempdir.
+                void enqueueLaunch(opts.sessionId, async () => {
+                  // Fully retire the old bridge/listeners/temp directory before
+                  // replacing the process. Reuse the PTY id so the renderer's
+                  // existing per-id data/exit subscriptions remain valid.
+                  await closeOne(opts.sessionId)
+                  return launchAgent(restartOpts, stablePtyId)
+                }).catch((err) => {
+                  sendBridgeStatus(opts.sessionId, {
+                    state: 'error',
+                    mcpUrl: undefined,
+                    message: `Auto-restart after reconnect failed: ${(err as Error).message}`,
+                    lastActivityAt: Date.now(),
+                    lastHeartbeatAt: undefined,
+                    activeStreams: 0
+                  })
+                })
+              }
+            } else if (status.type === 'reconnect-failed') {
+              sendBridgeStatus(opts.sessionId, {
+                ...(sess.lastBridgeStatus ?? {
+                  state: 'error',
+                  mcpUrl: undefined,
+                  message: 'SSH reconnect failed',
+                  lastActivityAt: undefined,
+                  lastHeartbeatAt: undefined,
+                  activeStreams: 0
+                }),
+                state: 'error',
+                message: `SSH reconnect failed: ${status.reason}`
+              })
+            }
           })
-        }
-      })
 
       const ptyDispose = pty.addExitListener(ptyId, () => {
         const sess = sessions.get(opts.sessionId)

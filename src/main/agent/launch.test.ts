@@ -6,11 +6,15 @@ import { join } from 'node:path'
 import { describe, it } from 'node:test'
 import {
   deriveAgentSessionId,
+  deriveLocalAgentSessionId,
   getBuiltinAgentCapabilities,
   prepareBuiltinAgentLaunch,
   resolveBundledAgentCli,
-  resolveBundledNodeBin
+  resolveBundledNodeBin,
+  resolveLocalSpawnCwd
 } from './launch'
+import { PI_EXTENSION_SOURCE } from './extension'
+import { homedir } from 'node:os'
 
 describe('bundled DevTerm Agent launch', () => {
   it('resolves the packaged provider-agnostic CLI', () => {
@@ -138,5 +142,65 @@ describe('bundled DevTerm Agent launch', () => {
 
     // Fallback when profile is undefined
     assert.equal(deriveAgentSessionId('session-12345-abc', undefined), 'session-12345-abc')
+  })
+
+  it('native local launch keeps builtin tools and runs in the operator folder', async () => {
+    const project = mkdtempSync(join(tmpdir(), 'devterm-local-project-'))
+    const spec = await prepareBuiltinAgentLaunch(
+      'remote briefing must not be planted',
+      { url: 'http://127.0.0.1:12345/mcp', token: 'test-token', port: 12345 },
+      {
+        nativeLocal: true,
+        spawnCwd: project,
+        approveProject: true,
+        appendSystemPrompt: 'You are a native local agent.'
+      }
+    )
+    try {
+      assert.equal(spec.cwd, project)
+      assert.equal(spec.args.includes('--no-builtin-tools'), false)
+      assert.equal(spec.args.includes('--approve'), true)
+      assert.equal(spec.args.includes('--append-system-prompt'), true)
+      const promptPath = spec.args[spec.args.indexOf('--append-system-prompt') + 1]
+      assert.equal(existsSync(promptPath), true)
+      assert.equal(existsSync(join(project, 'AGENTS.md')), false)
+      assert.equal(spec.args.includes('-e'), true)
+      assert.equal(spec.env.DEVTERM_BRIDGE_TOKEN, 'test-token')
+      assert.ok(spec.env.DEVTERM_MCP_DIR)
+      assert.notEqual(spec.env.DEVTERM_MCP_DIR, project)
+    } finally {
+      spec.cleanup()
+      rmSync(project, { recursive: true, force: true })
+    }
+  })
+
+  it('derives per-directory local session ids', () => {
+    assert.equal(deriveLocalAgentSessionId(undefined), 'local')
+    assert.equal(deriveLocalAgentSessionId(''), 'local')
+    const a = deriveLocalAgentSessionId('D:\\projects\\foo')
+    const b = deriveLocalAgentSessionId('D:/projects/foo/')
+    assert.equal(a, b)
+    assert.match(a, /^local-[0-9a-f]{16}$/)
+    assert.notEqual(
+      deriveLocalAgentSessionId('D:\\projects\\foo'),
+      deriveLocalAgentSessionId('D:\\projects\\bar')
+    )
+  })
+
+  it('lists in-app browser tools in Pi Available tools via promptSnippet', () => {
+    assert.match(PI_EXTENSION_SOURCE, /promptSnippet/)
+    assert.match(PI_EXTENSION_SOURCE, /FIRST-CLASS DevTerm in-app browser/)
+    assert.match(PI_EXTENSION_SOURCE, /Never the OS browser/)
+  })
+
+  it('resolveLocalSpawnCwd uses a real directory or home', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'devterm-cwd-'))
+    try {
+      assert.equal(resolveLocalSpawnCwd(dir), dir)
+      assert.equal(resolveLocalSpawnCwd(join(dir, 'missing-subdir')), homedir())
+      assert.equal(resolveLocalSpawnCwd(undefined), homedir())
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })

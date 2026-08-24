@@ -22,6 +22,16 @@ import type {
 import { buildAgentsMd } from './context'
 import { PI_EXTENSION_SOURCE } from './extension'
 
+/** Extra spawn behavior. Remote launches omit this (temp cwd, MCP host tools). */
+export interface AgentLaunchExtras {
+  /** Enable the CLI's own fs/shell tools and run in `spawnCwd`. */
+  nativeLocal?: boolean
+  /** Operator directory for the agent process. Overlay temp still holds MCP config. */
+  spawnCwd?: string
+  /** Appended to the system prompt without planting AGENTS.md in the project. */
+  appendSystemPrompt?: string
+}
+
 const execFileAsync = promisify(execFile)
 const binCache = new Map<string, string>()
 
@@ -157,30 +167,49 @@ export interface AgentLaunchSpec {
   cleanup: () => void
 }
 
-interface BuiltinLaunchOptions {
+interface BuiltinLaunchOptions extends AgentLaunchExtras {
   preferences?: AgentPreferences
   sessionDir?: string
   sessionId?: string
   /** Passed as the trailing CLI message so interactive `pi "…"` starts working. */
   initialPrompt?: string
+  /**
+   * Write AGENTS.md into the overlay temp dir (remote default). Local native
+   * launches skip this so the project's own AGENTS.md is what Pi loads.
+   */
+  writeContextFile?: boolean
+  /** Skip Pi's project-trust prompt (`--approve`). Used for native local. */
+  approveProject?: boolean
+  /** Absolute path passed to `--append-system-prompt` (file, not inline text). */
+  appendSystemPromptPath?: string
 }
 
-function isolatedAgentArgs(extensionPath: string, options?: BuiltinLaunchOptions): string[] {
-  const args = [
-    // Disable local read/write/bash tools while preserving the explicitly
-    // loaded DevTerm MCP extension. The bundled runtime pins a release that
-    // supports this distinction; external Pi is a fallback and must be current.
-    '--no-builtin-tools',
-    // Do not auto-load user code or project resources into the privileged
-    // local agent process. The one explicit DevTerm extension remains loaded.
+function isolatedAgentArgs(
+  extensionPath: string | undefined,
+  options?: BuiltinLaunchOptions
+): string[] {
+  const args: string[] = []
+  if (!options?.nativeLocal) {
+    // Remote: disable local read/write/bash so host work goes through MCP.
+    // Native local keeps the CLI's own tools.
+    args.push('--no-builtin-tools')
+  }
+  args.push(
+    // Do not auto-load user executable extensions. The one explicit DevTerm
+    // MCP extension remains loaded via `-e` when present.
     '--no-extensions',
     '--no-skills',
     '--no-prompt-templates',
-    '--no-themes',
-    '-e',
-    extensionPath,
-    '--offline'
-  ]
+    '--no-themes'
+  )
+  if (extensionPath) {
+    args.push('-e', extensionPath)
+  }
+  args.push('--offline')
+  if (options?.approveProject) args.push('--approve')
+  if (options?.appendSystemPromptPath) {
+    args.push('--append-system-prompt', options.appendSystemPromptPath)
+  }
   const preferences = options?.preferences
   if (preferences?.resumeSessions && options?.sessionDir && options.sessionId) {
     args.push('--session-dir', options.sessionDir, '--session-id', options.sessionId)
@@ -210,21 +239,29 @@ function isolatedAgentArgs(extensionPath: string, options?: BuiltinLaunchOptions
   return args
 }
 
-function prepareAgentFiles(hostContextMd: string): {
-  cwd: string
-  extensionPath: string
+function prepareAgentFiles(
+  hostContextMd: string | undefined,
+  withExtension: boolean
+): {
+  overlayDir: string
+  extensionPath: string | undefined
   cleanup: () => void
 } {
-  const cwd = mkdtempSync(join(tmpdir(), 'devterm-agent-'))
-  writeFileSync(join(cwd, 'AGENTS.md'), hostContextMd, { mode: 0o600 })
-  const extensionPath = join(cwd, 'devterm-mcp.mjs')
-  writeFileSync(extensionPath, PI_EXTENSION_SOURCE, { mode: 0o600 })
+  const overlayDir = mkdtempSync(join(tmpdir(), 'devterm-agent-'))
+  if (hostContextMd !== undefined) {
+    writeFileSync(join(overlayDir, 'AGENTS.md'), hostContextMd, { mode: 0o600 })
+  }
+  let extensionPath: string | undefined
+  if (withExtension) {
+    extensionPath = join(overlayDir, 'devterm-mcp.mjs')
+    writeFileSync(extensionPath, PI_EXTENSION_SOURCE, { mode: 0o600 })
+  }
   return {
-    cwd,
+    overlayDir,
     extensionPath,
     cleanup: () => {
       try {
-        rmSync(cwd, { recursive: true, force: true })
+        rmSync(overlayDir, { recursive: true, force: true })
       } catch {
         /* ignore */
       }
@@ -243,18 +280,7 @@ export async function prepareBuiltinAgentLaunch(
   bridge: BridgeInfo,
   options?: BuiltinLaunchOptions
 ): Promise<AgentLaunchSpec> {
-  const files = prepareAgentFiles(hostContextMd)
-  return {
-    bin: resolveBundledNodeBin(),
-    args: [resolveBundledAgentCli(), ...isolatedAgentArgs(files.extensionPath, options)],
-    cwd: files.cwd,
-    env: {
-      DEVTERM_BRIDGE_URL: bridge.url,
-      DEVTERM_BRIDGE_TOKEN: bridge.token,
-      DEVTERM_MODEL_FALLBACKS: JSON.stringify(options?.preferences?.fallbackModels ?? [])
-    },
-    cleanup: files.cleanup
-  }
+  return finishPiLaunch(resolveBundledNodeBin(), true, hostContextMd, bridge, options)
 }
 
 let capabilitiesCache: AgentCapabilities | undefined
@@ -365,15 +391,38 @@ export async function prepareAgentLaunch(
   bridge: BridgeInfo,
   options?: BuiltinLaunchOptions
 ): Promise<AgentLaunchSpec> {
-  const files = prepareAgentFiles(hostContextMd)
+  return finishPiLaunch(await resolvePiBin(), false, hostContextMd, bridge, options)
+}
 
+async function finishPiLaunch(
+  bin: string,
+  bundledCli: boolean,
+  hostContextMd: string,
+  bridge: BridgeInfo,
+  options?: BuiltinLaunchOptions
+): Promise<AgentLaunchSpec> {
+  const writeContext = options?.writeContextFile !== false && !options?.nativeLocal
+  const files = prepareAgentFiles(writeContext ? hostContextMd : undefined, true)
+  let appendPath = options?.appendSystemPromptPath
+  if (!appendPath && options?.appendSystemPrompt) {
+    appendPath = join(files.overlayDir, 'devterm-append-prompt.md')
+    writeFileSync(appendPath, options.appendSystemPrompt, { mode: 0o600 })
+  }
+  const args = isolatedAgentArgs(files.extensionPath, {
+    ...options,
+    appendSystemPromptPath: appendPath
+  })
   return {
-    bin: await resolvePiBin(),
-    args: isolatedAgentArgs(files.extensionPath, options),
-    cwd: files.cwd,
+    bin,
+    args: bundledCli ? [resolveBundledAgentCli(), ...args] : args,
+    cwd: options?.spawnCwd || files.overlayDir,
     env: {
       DEVTERM_BRIDGE_URL: bridge.url,
-      DEVTERM_BRIDGE_TOKEN: bridge.token
+      DEVTERM_BRIDGE_TOKEN: bridge.token,
+      DEVTERM_MCP_DIR: files.overlayDir,
+      ...(bundledCli
+        ? { DEVTERM_MODEL_FALLBACKS: JSON.stringify(options?.preferences?.fallbackModels ?? []) }
+        : {})
     },
     cleanup: files.cleanup
   }
@@ -421,4 +470,29 @@ export function deriveAgentSessionId(sessionId: string, profile?: SSHProfile): s
     return `remote-${key.replace(/[^a-zA-Z0-9_-]/g, '-')}`
   }
   return sessionId.replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 128)
+}
+
+/** Directory the native local agent process should run in (operator cwd, else home). */
+export function resolveLocalSpawnCwd(cwd?: string): string {
+  const candidate = cwd?.trim()
+  if (candidate) {
+    try {
+      if (statSync(candidate).isDirectory()) return candidate
+    } catch {
+      /* fall through */
+    }
+  }
+  return homedir()
+}
+
+/**
+ * Stable per-directory resume key for local agents so two folders do not share
+ * one transcript (the old hard-coded `'local'` id did).
+ */
+export function deriveLocalAgentSessionId(cwd?: string): string {
+  const raw = (cwd ?? '').trim()
+  if (!raw) return 'local'
+  const normalized = raw.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+  const digest = createHash('sha256').update(normalized).digest('hex').slice(0, 16)
+  return `local-${digest}`
 }

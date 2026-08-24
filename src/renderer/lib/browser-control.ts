@@ -1,4 +1,5 @@
 import { useSessions } from '../store/sessions'
+import { DEFAULT_GROUP, useLayout } from '../store/layout'
 import type { BrowserOpenRequest } from '@shared/types'
 
 /**
@@ -50,13 +51,21 @@ function handleOpenRequest(req: BrowserOpenRequest): void {
   // session's group when we can find one, else the request's group hint,
   // else the active group.
   const caller = sessions.find((x) => x.id === req.ownerAgentSessionId)
-  const groupId = caller?.groupId ?? req.groupId
-  useSessions.getState().addBrowser({
+  const groupId = caller?.groupId ?? req.groupId ?? DEFAULT_GROUP
+  const paneId = useSessions.getState().addBrowser({
     url: req.url,
     groupId,
     agentOwnedBy: req.ownerAgentSessionId,
     firstTabKey: req.tabKey
   })
+  // Layout.sync normally waits for a React effect. Do it now so the new pane
+  // is in the tree before we split — otherwise the webview mounts off-screen
+  // (`.term-hidden`) and Chromium may never fire `dom-ready`, which makes
+  // browser_open time out.
+  const live = useSessions.getState().sessions
+  const layout = useLayout.getState()
+  layout.sync(live.map((s) => ({ id: s.id, groupId: s.groupId })))
+  if (caller) layout.splitBeside(caller.id, paneId, 'right')
 }
 
 let wired = false
