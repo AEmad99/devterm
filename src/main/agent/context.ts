@@ -43,6 +43,30 @@ which asks them once). Rules:
 }
 
 /**
+ * The host's OS name as prose. Shared by every briefing builder.
+ */
+function osLabel(context: HostContext): string {
+  return context.os === 'windows'
+    ? 'Windows'
+    : context.os === 'mac'
+      ? 'macOS'
+      : context.os === 'linux'
+        ? 'Linux'
+        : 'unknown OS'
+}
+
+/**
+ * Intro noun phrase distinguishing a local agent (this workstation) from a
+ * remote agent (an SSH host). Every briefing starts with this so a local agent
+ * doesn't describe itself as operating "on a remote host over SSH".
+ */
+function hostIntro(context: HostContext): string {
+  return context.kind === 'local'
+    ? `this **local ${osLabel(context)}** workstation`
+    : `a **remote ${osLabel(context)}** host`
+}
+
+/**
  * Per-session AGENTS.md describing the host so the agent steers itself —
  * crucially, the air-gapped/local-mirror rules so it never proposes internet
  * installs on disconnected fleet hosts (§2.3).
@@ -50,7 +74,8 @@ which asks them once). Rules:
  * pi auto-loads AGENTS.md from the cwd at startup, so the launch step writes
  * this file into the per-session temp directory.
  */
-export function buildAgentsMd(context: HostContext, airGapped: boolean, cwd?: string): string {  const osName =
+export function buildAgentsMd(context: HostContext, airGapped: boolean, cwd?: string): string {
+  const osName =
     context.os === 'windows'
       ? 'Windows'
       : context.os === 'mac'
@@ -61,7 +86,7 @@ export function buildAgentsMd(context: HostContext, airGapped: boolean, cwd?: st
 
   return `# Connected host: ${context.hostname}
 
-You are operating on a **remote ${osName}** host through DevTerm's MCP bridge.
+You are operating on ${hostIntro(context)} through DevTerm's MCP bridge.
 
 - Host: \`${context.hostname}\`
 - OS: ${osName}
@@ -127,7 +152,7 @@ export function buildClaudeMd(context: HostContext, airGapped: boolean, cwd?: st
 
   return `# Connected host: ${context.hostname}
 
-You are operating on a **remote ${osName}** host through DevTerm's MCP bridge.
+You are operating on ${hostIntro(context)} through DevTerm's MCP bridge.
 
 - Host: \`${context.hostname}\`
 - OS: ${osName}
@@ -189,7 +214,7 @@ export function buildOpencodeMd(context: HostContext, airGapped: boolean, cwd?: 
 
   return `# Connected host: ${context.hostname}
 
-You are operating on a **remote ${osName}** host through DevTerm's MCP bridge.
+You are operating on ${hostIntro(context)} through DevTerm's MCP bridge.
 
 - Host: \`${context.hostname}\`
 - OS: ${osName}
@@ -257,7 +282,7 @@ export function buildKimiMd(context: HostContext, airGapped: boolean, cwd?: stri
 
   return `# Connected host: ${context.hostname}
 
-You are operating on a **remote ${osName}** host through DevTerm's MCP bridge.
+You are operating on ${hostIntro(context)} through DevTerm's MCP bridge.
 
 - Host: \`${context.hostname}\`
 - OS: ${osName}
@@ -325,7 +350,7 @@ export function buildGrokMd(context: HostContext, airGapped: boolean, cwd?: stri
 
   return `# Connected host: ${context.hostname}
 
-You are operating on a **remote ${osName}** host through DevTerm's MCP bridge.
+You are operating on ${hostIntro(context)} through DevTerm's MCP bridge.
 
 - Host: \`${context.hostname}\`
 - OS: ${osName}
@@ -393,7 +418,7 @@ export function buildCodexMd(context: HostContext, airGapped: boolean, cwd?: str
 
   return `# Connected host: ${context.hostname}
 
-You are operating on a **remote ${osName}** host through DevTerm's MCP bridge.
+You are operating on ${hostIntro(context)} through DevTerm's MCP bridge.
 
 - Host: \`${context.hostname}\`
 - OS: ${osName}
@@ -459,7 +484,7 @@ export function buildAntigravityMd(context: HostContext, airGapped: boolean, cwd
 
   return `# Connected host: ${context.hostname}
 
-You are operating on a **remote ${osName}** host through DevTerm's MCP bridge.
+You are operating on ${hostIntro(context)} through DevTerm's MCP bridge.
 
 - Host: \`${context.hostname}\`
 - OS: ${osName}

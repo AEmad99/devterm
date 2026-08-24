@@ -15,7 +15,7 @@
     "release:win": "electron-vite build && electron-builder --win --config electron-builder.yml --publish always",
     "release:linux": "electron-vite build && electron-builder --linux --config electron-builder.yml --publish always",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
-    "test": "tsx --test \"src/**/*.test.ts\"",
+    "test": "tsx --tsconfig tsconfig.node.json --test \"src/**/*.test.ts\"",
     "test:grid": "node scripts/assert-grid.mjs",
     "lint": "eslint src",
     "format": "prettier --write \"src/**/*.{ts,tsx}\"",

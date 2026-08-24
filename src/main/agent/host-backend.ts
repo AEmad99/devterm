@@ -42,7 +42,12 @@ export interface HostReadResult {
 
 export interface HostBackend {
   readonly kind: 'local' | 'remote'
-  exec(command: string, timeoutMs: number): Promise<HostExecResult>
+  /**
+   * Run `command`. `cwd` is only meaningful for the local backend (it sets
+   * child_process's working directory); remote SSH exec channels always start
+   * in the login default and are `cd`-prefixed by the caller instead.
+   */
+  exec(command: string, timeoutMs: number, cwd?: string): Promise<HostExecResult>
   listDir(path: string): Promise<HostListing>
   readFile(path: string, maxBytes: number): Promise<HostReadResult>
   writeFile(path: string, content: string): Promise<void>
@@ -74,7 +79,7 @@ export class SshHostBackend implements HostBackend {
     private isDown: () => boolean = () => false
   ) {}
 
-  async exec(command: string, timeoutMs: number): Promise<HostExecResult> {
+  async exec(command: string, timeoutMs: number, _cwd?: string): Promise<HostExecResult> {
     return this.ssh.exec(this.sessionId, command, timeoutMs)
   }
 
@@ -120,16 +125,18 @@ export class SshHostBackend implements HostBackend {
 export class LocalHostBackend implements HostBackend {
   readonly kind = 'local' as const
 
-  async exec(command: string, timeoutMs: number): Promise<HostExecResult> {
+  async exec(command: string, timeoutMs: number, cwd?: string): Promise<HostExecResult> {
     // Shell-string execution matches run_command semantics on remote hosts
     // (the command line is whatever the operator would have typed). On
     // timeout we kill the child but report it as TIMED OUT — like the SSH
-    // path, the process may keep running locally afterwards.
+    // path, the process may keep running locally afterwards. `cwd` makes the
+    // command run in the operator's current terminal directory, mirroring how
+    // a command typed at the shell prompt would behave.
     let timedOut = false
     return new Promise((resolve) => {
       const child: ChildProcess = exec(
         command,
-        { maxBuffer: 8 * 1024 * 1024, windowsHide: true },
+        { maxBuffer: 8 * 1024 * 1024, windowsHide: true, cwd },
         (err, stdout, stderr) => {
           clearTimeout(killTimer)
           const code = err ? (typeof err.code === 'number' ? err.code : 1) : 0

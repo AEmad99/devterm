@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { resolve as resolveNodePath } from 'path'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { HostContext } from '@shared/types'
 import { looksBinary } from '../fs/content'
@@ -64,17 +65,21 @@ const hostDownMessage = () =>
   'Do NOT interpret this as a permanent failure or exit.'
 
 /**
- * The operator's live cwd, but only when it is a POSIX path (`/...`). SSH exec
- * channels always start in the login default ($HOME) and `cd` does not persist
- * between calls, so to run "where the operator is" we prefix each command with
- * a `cd` and resolve relative paths against this value. We deliberately apply
- * it only on POSIX remotes: a Windows remote cwd (`C:\...`) would build a broken
- * command for cmd.exe/PowerShell, so those hosts keep today's $HOME behaviour
- * and the agent uses absolute paths (it is still told the cwd in its briefing).
+ * The operator's live cwd, applied per backend kind. Local agents run on the
+ * workstation itself and get the cwd as-is (Windows `C:\...` or POSIX `/...`);
+ * remote agents only get it when it is a POSIX path (`/...`). SSH exec channels
+ * always start in the login default ($HOME) and `cd` does not persist between
+ * calls, so for those we prefix a `cd` and resolve relative paths against this
+ * value. We deliberately keep Windows-remote cwds out: a `C:\...` cwd would
+ * build a broken command for cmd.exe/PowerShell on the remote, so those hosts
+ * keep today's $HOME behaviour and the agent uses absolute paths (it is still
+ * told the cwd in its briefing).
  */
-function posixCwd(getCwd?: () => string | undefined): string | undefined {
+function activeCwd(host: HostBackend, getCwd?: () => string | undefined): string | undefined {
   const cwd = getCwd?.()
-  return cwd && cwd.startsWith('/') ? cwd : undefined
+  if (!cwd) return undefined
+  if (host.kind === 'local') return cwd
+  return cwd.startsWith('/') ? cwd : undefined
 }
 
 /** Single-quote a path for a POSIX shell: close, escaped literal quote, reopen. */
@@ -86,6 +91,18 @@ function shQuote(p: string): string {
 function resolvePosix(cwd: string | undefined, p: string): string {
   if (!cwd || p.startsWith('/')) return p
   return `${cwd.replace(/\/+$/, '')}/${p.replace(/^\.\//, '')}`
+}
+
+/** Resolve a tool target path against the operator's live cwd, per backend. */
+function resolveHostPath(
+  host: HostBackend,
+  getCwd: (() => string | undefined) | undefined,
+  p: string
+): string {
+  const cwd = activeCwd(host, getCwd)
+  if (!cwd) return p
+  if (host.kind === 'local') return resolveNodePath(cwd, p)
+  return resolvePosix(cwd, p)
 }
 
 /**
@@ -224,14 +241,17 @@ export function registerTools(mcp: McpServer, deps: ToolDeps): void {
       }
       try {
         const ms = timeout_ms ?? DEFAULT_RUN_TIMEOUT_MS
-        // Run in the operator's live cwd. exec channels reset to $HOME on every
-        // call and `cd` doesn't persist between them, so prefix one. With `&&`,
-        // a missing cwd surfaces as a clear error instead of silently running in
-        // the wrong directory. Policy still evaluates the agent's original
-        // `command`, never our prefix.
-        const cwd = posixCwd(getCwd)
-        const toRun = cwd ? `cd ${shQuote(cwd)} && ${command}` : command
-        const { stdout, stderr, code, timedOut } = await host.exec(toRun, ms)
+        // Run in the operator's live cwd. Local agents set child_process's
+        // `cwd` so the command executes exactly where the shell prompt is;
+        // remote exec channels reset to $HOME on every call, so prefix a `cd`
+        // there instead. With `&&`, a missing cwd surfaces as a clear error
+        // instead of silently running in the wrong directory. Policy still
+        // evaluates the agent's original `command`, never our prefix.
+        const cwd = activeCwd(host, getCwd)
+        const local = host.kind === 'local'
+        const toRun = local ? command : cwd ? `cd ${shQuote(cwd)} && ${command}` : command
+        const execCwd = local ? cwd : undefined
+        const { stdout, stderr, code, timedOut } = await host.exec(toRun, ms, execCwd)
         // A timeout is reported as a normal (non-error) result with explicit wording:
         // marking it isError historically led the agent to misreport it as a dropped connection.
         if (timedOut)
@@ -265,7 +285,7 @@ export function registerTools(mcp: McpServer, deps: ToolDeps): void {
     async ({ path }) => {
       if (hostDown()) return errorText(hostDownMessage())
       try {
-        const target = resolvePosix(posixCwd(getCwd), path)
+        const target = resolveHostPath(host, getCwd, path)
         const listing = await host.listDir(target)
         const lines = listing.entries.map(
           (e) => `${e.mode} ${String(e.size).padStart(10)} ${e.name}${e.isDir ? '/' : ''}`
@@ -284,9 +304,7 @@ export function registerTools(mcp: McpServer, deps: ToolDeps): void {
       inputSchema: {
         path: z
           .string()
-          .describe(
-            "Host file path — absolute, or relative to the operator's current directory."
-          ),
+          .describe("Host file path — absolute, or relative to the operator's current directory."),
         max_bytes: z
           .number()
           .int()
@@ -298,7 +316,7 @@ export function registerTools(mcp: McpServer, deps: ToolDeps): void {
     async ({ path, max_bytes }) => {
       if (hostDown()) return errorText(hostDownMessage())
       try {
-        const target = resolvePosix(posixCwd(getCwd), path)
+        const target = resolveHostPath(host, getCwd, path)
         const cap = max_bytes ?? 200000
         // The backend reads at most `cap + 1` bytes (SFTP handle locally /
         // bounded read on disk) so a 2 GB log never crosses the wire whole;
@@ -331,15 +349,13 @@ export function registerTools(mcp: McpServer, deps: ToolDeps): void {
       inputSchema: {
         path: z
           .string()
-          .describe(
-            "Host file path — absolute, or relative to the operator's current directory."
-          ),
+          .describe("Host file path — absolute, or relative to the operator's current directory."),
         content: z.string().describe('Full file contents to write.')
       }
     },
     async ({ path, content }) => {
       if (hostDown()) return errorText(hostDownMessage())
-      const target = resolvePosix(posixCwd(getCwd), path)
+      const target = resolveHostPath(host, getCwd, path)
       const v = policy.evaluateWrite()
       if (!v.allow)
         return errorText(
