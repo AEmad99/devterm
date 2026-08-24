@@ -279,6 +279,47 @@ export const IconTmux = (p: IconProps) => (
   </Svg>
 )
 
+/** Agent / AI sparkle — used as the Open Agent glyph in the pane tab strip. */
+export const IconAgent = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="m12 2.8 1.55 4.35L18 8.7l-4.45 1.55L12 14.6l-1.55-4.35L6 8.7l4.45-1.55L12 2.8Z" />
+    <path d="m18.2 14.2.75 2.1 2.1.75-2.1.75-.75 2.1-.75-2.1-2.1-.75 2.1-.75.75-2.1Z" />
+  </Svg>
+)
+
+/** Hide the agent pane; keep the process running. */
+export const IconAgentHide = (p: IconProps) => (
+  <Svg {...p}>
+    <rect x="3.5" y="4.5" width="17" height="15" rx="2.2" />
+    <path d="M3.5 9h17" />
+    <path d="M12 12.5v5M9.6 15.2 12 17.5l2.4-2.3" />
+  </Svg>
+)
+
+/** Show / dock the agent back into the pane. */
+export const IconAgentShow = (p: IconProps) => (
+  <Svg {...p}>
+    <rect x="3.5" y="4.5" width="17" height="15" rx="2.2" />
+    <path d="M3.5 9h17" />
+    <path d="M12 17.5v-5M9.6 14.8 12 12.5l2.4 2.3" />
+  </Svg>
+)
+
+/** Pop the agent out into a floating OS window. */
+export const IconAgentFloat = (p: IconProps) => (
+  <Svg {...p}>
+    <rect x="3.5" y="8" width="12.5" height="12" rx="2" />
+    <path d="M9.5 8V6.5A2 2 0 0 1 11.5 4.5H18.5A2 2 0 0 1 20.5 6.5V13.5A2 2 0 0 1 18.5 15.5H16" />
+  </Svg>
+)
+
+/** Stop the agent process. */
+export const IconAgentStop = (p: IconProps) => (
+  <Svg {...p}>
+    <rect x="6.5" y="6.5" width="11" height="11" rx="2.2" fill="currentColor" stroke="none" />
+  </Svg>
+)
+
 /** Empty-state illustration for "no terminals / empty group". */
 export function EmptyTerminalArt({ size = 76 }: { size?: number }) {
   return (

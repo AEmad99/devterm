@@ -14,6 +14,7 @@ import {
   type Rect
 } from '../../store/layout'
 import { IconMerge, IconPlus, IconFocus, IconClose, IconTmux } from '../common/Icons'
+import PaneAgentControls from './PaneAgentControls'
 import { openTmuxPicker } from '../../lib/terms'
 import { deriveTabLabel } from '../../lib/tab-label'
 import TabStatusDot from './TabStatusDot'
@@ -450,6 +451,9 @@ function PaneChrome({
   const scrollTabs = (dir: number) =>
     tabsRef.current?.scrollBy({ left: dir * 160, behavior: 'smooth' })
 
+  const activeSession = leaf.active ? (sessions.get(leaf.active) ?? null) : null
+  const showAgentControls = activeSession?.kind === 'local' || activeSession?.kind === 'remote'
+
   return (
     <div className={`pane-group ${isActive ? 'active' : ''}`} style={groupStyle}>
       <div
@@ -589,7 +593,8 @@ function PaneChrome({
             ›
           </button>
         )}
-        {leaf.active && sessions.get(leaf.active)?.kind === 'remote' && (
+        {showAgentControls && activeSession && <PaneAgentControls session={activeSession} />}
+        {activeSession?.kind === 'remote' && (
           <button
             className="pane-tmux"
             title="tmux sessions — Ctrl/Cmd+Alt+T"

@@ -161,6 +161,7 @@ export default function AgentPane({
 
     ;(async () => {
       try {
+        const live = useSessions.getState().sessions.find((x) => x.id === sessionId)
         const {
           ptyId,
           mcpUrl: url,
@@ -170,10 +171,12 @@ export default function AgentPane({
           kind,
           mode,
           preferences: kind === 'devterm' ? useSettings.getState().agentPreferences : undefined,
-          cwd: useSessions.getState().sessions.find((x) => x.id === sessionId)?.cwd,
+          cwd: live?.cwd,
           cols: term.cols,
           rows: term.rows,
-          forceRestart
+          forceRestart,
+          sessionKind: live?.kind === 'local' ? 'local' : 'remote',
+          browserTools: useSettings.getState().agentPreferences.browserTools !== false
         })
         if (disposed) {
           // Only kill if we were asked to own the lifecycle.

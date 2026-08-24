@@ -1,15 +1,14 @@
-import { memo, useCallback, useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import type { AgentKind } from '@shared/types'
 import { useSessions, type Session } from '../../store/sessions'
 import { useSettings } from '../../store/settings'
 import TerminalView from './TerminalView'
 import SftpBrowser from '../files/SftpBrowser'
 import AgentPane from '../agent/AgentPane'
-import AgentAskBar from '../agent/AgentAskBar'
 import AgentActivityPanel from '../agent/AgentActivityPanel'
 import Splitter from '../common/Splitter'
 import PortForwardPanel from './PortForwardPanel'
-import { AGENT_BRIDGE_POLICY, agentKindLabel, setAgentUiMode, stopAgent } from '../../lib/agent-ui'
+import { AGENT_BRIDGE_POLICY } from '../../lib/agent-ui'
 import { useBridgeActivity } from '../../lib/bridge-activity'
 
 const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n))
@@ -62,8 +61,8 @@ function formatAgentTabTask(tool: string | undefined, detail: string | undefined
 /**
  * A remote session: shell or SFTP browser, with an optional agent session in
  * one of three UI modes — docked side column, floating OS window, or hidden
- * (process keeps running). The Ask bar under the shell is the launch surface;
- * the top bar only places an already-running agent (hide / float / stop).
+ * (process keeps running). The terminal header is the launch surface
+ * (Open Agent); hide / float / stop place an already-running agent.
  */
 function RemoteSessionView({ session }: { session: Session }) {
   const [view, setView] = useState<'terminal' | 'files' | 'ports'>('terminal')
@@ -74,7 +73,6 @@ function RemoteSessionView({ session }: { session: Session }) {
   const [agentKind, setAgentKind] = useState<AgentKind>(
     () => session.agentKind ?? useSettings.getState().agentKind
   )
-  const persistAgentKind = useSettings((s) => s.setAgentKind)
   const agentUiMode = session.agentUiMode
   const agentAlive = !!agentUiMode
   const agentDocked = agentUiMode === 'docked'
@@ -95,7 +93,7 @@ function RemoteSessionView({ session }: { session: Session }) {
     status === 'reconnect cancelled' ||
     status?.startsWith('reconnect failed')
 
-  // Sync the kind picker from store when another surface (ask bar / float) sets it.
+  // Sync the kind picker from store when another surface (float window) sets it.
   useEffect(() => {
     if (session.agentKind) setAgentKind(session.agentKind)
   }, [session.agentKind])
@@ -136,30 +134,6 @@ function RemoteSessionView({ session }: { session: Session }) {
     ro.observe(el)
     return () => ro.disconnect()
   }, [filesSideOpen])
-
-  const hostTitle = session.context?.hostname ?? session.title
-
-  const onStop = useCallback(() => {
-    stopAgent(session.id)
-  }, [session.id])
-
-  const onHide = useCallback(() => {
-    void setAgentUiMode(session.id, 'hidden', { kind: agentKind })
-  }, [session.id, agentKind])
-
-  const onDock = useCallback(() => {
-    void setAgentUiMode(session.id, 'docked', {
-      kind: agentKind,
-      title: hostTitle
-    })
-  }, [session.id, agentKind, hostTitle])
-
-  const onFloat = useCallback(async () => {
-    await setAgentUiMode(session.id, 'floating', {
-      kind: agentKind,
-      title: hostTitle
-    })
-  }, [session.id, agentKind, hostTitle])
 
   return (
     <div className="remote-view">
@@ -228,70 +202,6 @@ function RemoteSessionView({ session }: { session: Session }) {
         >
           Ports
         </button>
-
-        <span className="vt-spacer" />
-
-        {agentAlive && (
-          <div className="agent-mode-btns">
-            {agentUiMode === 'hidden' && (
-              <button
-                className="agent-btn agent-btn-secondary"
-                title="Show the agent docked beside the terminal"
-                onClick={onDock}
-              >
-                Show
-              </button>
-            )}
-            {agentUiMode === 'floating' && (
-              <button
-                className="agent-btn agent-btn-secondary"
-                title="Dock the agent beside the terminal"
-                onClick={onDock}
-              >
-                Dock
-              </button>
-            )}
-            {agentUiMode === 'docked' && (
-              <button
-                className="agent-btn agent-btn-secondary"
-                title="Hide the agent panel; keep the process running"
-                onClick={onHide}
-              >
-                Hide
-              </button>
-            )}
-            {agentUiMode !== 'floating' && (
-              <button
-                className="agent-btn agent-btn-secondary"
-                title="Pop the agent out into a floating OS window"
-                onClick={() => void onFloat()}
-              >
-                Float
-              </button>
-            )}
-            <button
-              className={`agent-btn active ${session.agentPendingApproval ? 'has-pending' : ''}`}
-              title={`Stop the ${agentKindLabel(agentKind)} agent`}
-              onClick={onStop}
-            >
-              ✕ Stop
-              {session.agentPendingApproval && <span className="agent-pending-dot" />}
-            </button>
-            {agentUiMode !== 'docked' && (
-              <span
-                className={`agent-ui-chip agent-ui-chip--${agentUiMode}`}
-                title={
-                  agentUiMode === 'floating'
-                    ? 'Agent is in a floating window'
-                    : 'Agent is running hidden — use Show or the ask bar'
-                }
-              >
-                {agentUiMode}
-                {session.agentTask ? ` · ${session.agentTask}` : ''}
-              </span>
-            )}
-          </div>
-        )}
       </div>
 
       <div className="view-body">
@@ -304,19 +214,8 @@ function RemoteSessionView({ session }: { session: Session }) {
           <div className="term-files-split" ref={filesSplitRef}>
             <div className="term-agent-column" ref={splitRef}>
               <div className="term-agent-split">
-                <div className="tc-term tc-term-with-ask">
-                  <div className="tc-term-shell">
-                    <TerminalView session={session} />
-                  </div>
-                  <AgentAskBar
-                    session={session}
-                    kind={agentKind}
-                    onKindChange={(k) => {
-                      setAgentKind(k)
-                      persistAgentKind(k)
-                    }}
-                    disabled={!session.context || !!session.closed}
-                  />
+                <div className="tc-term">
+                  <TerminalView session={session} />
                 </div>
                 {/* Keep AgentPane mounted while the process is alive so scrollback
                     survives hide/float. Only the docked mode sizes it into the layout;

@@ -29,7 +29,7 @@ Every renderer→main capability must be added in **all three places** together:
 | MCP server / tools / policy | `src/main/mcp/server.ts`, `tools.ts`, `tools-browser.ts`, `policy.ts` |
 | Agent browser control | `src/main/browser/*` (control registry, snapshot refs, URL guard), `ipc/browser-control.ts` |
 | Agent launch (bundled + fallbacks) | `src/main/agent/launch.ts`, `*-launch.ts`, `context.ts`, `extension.ts` |
-| Agent UI modes / ask strip | `lib/agent-ui.ts`, `AgentAskBar.tsx`, `AgentPane.tsx`, `agent-window.tsx`, main `ipc/agent.ts` + `ipc/broadcast.ts` |
+| Agent UI modes | `lib/agent-ui.ts`, `AgentPane.tsx`, `agent-window.tsx`, main `ipc/agent.ts` + `ipc/broadcast.ts` |
 | Approval rules & activity | `src/main/agent/approval-rules.ts`, `bridge-activity.ts` |
 | Search index | `src/main/search/*` (ANSI strip at ingest) |
 | Git | `src/main/git/*`, UI `src/renderer/components/git/*` |
@@ -93,7 +93,7 @@ Launch layers:
 Bridge & tools:
 
 - MCP bridge (`src/main/mcp/server.ts`) on `127.0.0.1:<random-port>` gated by a random bearer token.
-- Host tools (`src/main/mcp/tools.ts`): `ping`, `get_host_context`, `run_command`, `list_dir`, `read_file`, `write_file` — written against a **HostBackend** (`agent/host-backend.ts`): `SshHostBackend` over the session's ssh2 client, `LocalHostBackend` over child_process/fs. Local terminals can therefore launch the same agents (ask bar on local panes via `LocalSessionView`; resume identity `'local'`). Relative paths and `run_command` honor the operator's live POSIX cwd from OSC 7 on remotes; Windows remotes keep login-default semantics for cwd prefixing.
+- Host tools (`src/main/mcp/tools.ts`): `ping`, `get_host_context`, `run_command`, `list_dir`, `read_file`, `write_file` — written against a **HostBackend** (`agent/host-backend.ts`): `SshHostBackend` over the session's ssh2 client, `LocalHostBackend` over child_process/fs. Local terminals launch the same agents from the pane header (Open Agent); host tools run locally and `browser_*` tools drive in-app panes. Relative paths and `run_command` honor the operator's live POSIX cwd from OSC 7 on remotes; Windows remotes keep login-default semantics for cwd prefixing.
 - Browser tools (`src/main/mcp/tools-browser.ts`, toggle in Settings → DevTerm Agent, default on): `browser_list/open/navigate/snapshot/click/type/press_key/screenshot/attach/detach/close`. The agent freely drives tabs it opened (badged `AGT`); operator-opened tabs are readable/drivable only after a one-time per-tab confirm (`browser_attach`), grants live in-memory and clear on Stop/close. Snapshots inject ref tags (`data-dt-ref`) resolved by later click/type calls; results carry an UNTRUSTED banner (prompt-injection defense). Navigation reuses the guest URL guard (`browser/url-guard.ts`) — http(s)/about:blank only, same allowlist as interactive panes. Password fields follow the policy ladder; approval-rule prefixes match URLs/origins.
 - MCP launch uses policy mode `full` (no DevTerm confirm modal). Permission prompts belong to the agent CLI (Claude `/permissions`, Codex approval, etc.). Approval rules (`approval-rules.ts`, `userData/approval-rules.json`) remain a **PRE-CHECK** allow/deny/ask at the MCP boundary. UI for rules lives under Settings → Agent guardrails. The old per-session Policy picker is gone — it did not map onto Claude/Grok (always bypassed) or Codex the way the UI implied.
 - Built-in local fs/shell tools are disabled for every agent so host work crosses the bridge (over the session's shared ssh2 client, or locally for local agents) (Claude keeps Read/Write/Edit for **local** scratch only).
@@ -112,9 +112,9 @@ Bridge & tools:
 - Store fields: `session.agentUiMode` / `agentPtyId` / `agentPolicyMode` (`store/sessions.setAgentUi`). Main tracks mode via `agent:set-ui-mode` and broadcasts `agent:ui-mode-changed` so the main window store stays in sync when the float window docks/hides.
 - `agent:open` is **idempotent** unless `forceRestart` (Restart button). Mode switches reattach; they must not kill the agent.
 - Main window keeps a **stashed** `AgentPane` (`.agent-ui-stash` + `.term-hidden`) while the agent is alive so scrollback survives hide/float; only the **active** surface sends input/resize and attention chimes.
-- **Ask bar** under every remote shell (`AgentAskBar`): the launch surface. Kind picker (when stopped) + compose; Enter/Ask starts the agent. A first DevTerm Agent / Pi prompt is passed as the CLI message (`pi "…"`) so the process starts working instead of opening an empty editor. Follow-up prompts (and other CLIs) inject into the live PTY after the TUI is idle, with Enter as a separate keystroke. **Open pane** starts the TUI without a prompt (login / agent UI). The remote top bar no longer duplicates Open agent / Agent / Policy — while the process is alive it only shows Hide / Float / Stop (and a chip when hidden or floating).
+- **Open Agent** is an icon cluster on the pane tab strip (`PaneAgentControls`, next to + / focus): sparkle launches, letter mark picks the backend, hide / float / stop once running. No ask-bar compose strip and no text header. **Remote** (`RemoteSessionView`): Open Agent docks a side column beside the SSH shell. **Local** (`LocalSessionView`): Open Agent occupies this terminal pane (shell stays mounted, hidden) so the MCP bridge — including in-app `browser_*` tools — is wired; it is not a right-hand split.
 - Floating window controls: Dock / Hide / Stop; OS close (X) demotes to `hidden` without killing the process. Closing the remote tab calls `agent.close` + `agent.closeWindow`.
-- Helpers: `lib/agent-ui.ts` (`ensureAgent`, `stopAgent`, `injectAgentPrompt`, `setAgentUiMode`). Renderer entry: `agent-window.html` + `agent-window.tsx` (electron-vite multi-page input).
+- Helpers: `lib/agent-ui.ts` (`ensureAgent`, `stopAgent`, `setAgentUiMode`). Renderer entry: `agent-window.html` + `agent-window.tsx` (electron-vite multi-page input).
 
 **DevTerm Agent settings (since 1.3.3+):**
 
@@ -266,9 +266,9 @@ Snapshot of the **implemented** surface area as of this audit. Use this when pri
 | Bundled DevTerm Agent | **Shipped (default)** | Multi-provider Pi runtime + packaged Node; resume + model failover |
 | External agent CLIs | **Shipped** | pi, claude, opencode, kimi, grok, codex, antigravity — all via MCP bridge |
 | Agent UI modes | **Shipped** | `docked` / `floating` / `hidden`; process keeps running when hidden/floated |
-| Ask-agent strip | **Shipped** | Bottom compose bar on remote + local shells; inject into live agent PTY |
+| Ask-agent strip | **Removed** | Header Open Agent is the launch surface; no bottom compose bar |
 | Floating agent window | **Shipped** | Separate OS window (`agent-window.html`); dock/hide/stop |
-| Local DevTerm Agent | **Shipped** | Same launch path as remote via `HostBackend` (`LocalHostBackend`); ask bar on `LocalSessionView`; resume key `'local'` |
+| Local DevTerm Agent | **Shipped** | Header Open Agent on `LocalSessionView` occupies the pane (not a side split); `LocalHostBackend` + `browser_*`; resume key `'local'` |
 | Agent browser tools | **Shipped** | 11 `browser_*` MCP tools; agent-owned tabs + confirm-gated attach to operator tabs; ref-based snapshots; screenshots to `userData/agent-artifacts` |
 | MCP host tools | **Shipped** | `ping`, `get_host_context`, `run_command`, `list_dir`, `read_file`, `write_file` over HostBackend (SSH or local) |
 | Agent guardrails | **Shipped** | Prefix approval rules + activity log; permission prompts belong to the agent CLI |
@@ -319,8 +319,7 @@ Ordered roughly by user impact × confidence. These were found by code inspectio
    - Restart/cancel → canceled; user must retry whole file. Fine for small configs; painful for multi-GB artifacts.  
    - **Fix:** SFTP resume via offset write / `fstat` size check, or document clearly in UI.
 
-5. **Ask-bar prompt inject is best-effort for TUI agents**  
-   - Injects text + Enter into the agent PTY after bridge ready; interactive CLIs that are not at an input prompt may ignore or mis-handle it. Structured chat for DevTerm Agent only remains a follow-up.
+5. ~~**Ask-bar prompt inject is best-effort for TUI agents**~~ **Removed** with the ask bar. Agents are launched from the remote header Open Agent button into the docked pane.
 
 ### Medium confidence / design traps
 
@@ -366,7 +365,7 @@ Suggestions are **mapped to DevTerm's existing architecture** (always-mounted ti
 | --- | --- | --- | --- |
 | **Command blocks** (group input+output, copy output only, collapse) | Best single UX leap past raw xterm scrollback | Already inject OSC 133 A/B; add C/D (exit) markers in PS/bash hooks, parse in `TerminalView`, render block chrome **outside** the xterm canvas (overlay), never reparent xterm | **P1** |
 | **Workflows** (named multi-step, parameterized, shareable) | Snippets are single-shot; ops runbooks are multi-step | Extend snippets → workflow docs (JSON in userData) + palette runner; optional "send each line / wait for prompt" using OSC 133 | **P1** |
-| **Natural-language → shell** (inline, not only full agent pane) | Low-friction vs opening Agent | **Ask bar shipped (1.3.15)**; next: "Explain selection" / "Fix last error" with selection + last block context | **P1 (partial)** |
+| **Natural-language → shell** (inline, not only full agent pane) | Low-friction vs opening Agent | Ask bar removed; next: "Explain selection" / "Fix last error" with selection + last block context | **P1** |
 | **Vertical tabs with git branch / task metadata** | Multitasking at a glance | Extend `tab-label.ts` + StatusBar: branch from git poll, agent task already exists; optional vertical tab strip setting | **P1** |
 | **Agent diff review surface** | Warp reviews code changes in-app | Hook git panel + editor: "show agent write_file diff before apply" in `confirm` policy | **P1** |
 | **Input editor** (multiline, IDE keys before submit) | Better than fighting readline for long commands | Optional compose box above active pane; submit sends to PTY | **P2** |

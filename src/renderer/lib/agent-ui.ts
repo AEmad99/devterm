@@ -28,14 +28,13 @@ export async function ensureAgent(opts: {
   initialPrompt?: string
   /**
    * Which surface the agent is bound to. Derived from the session store when
-   * omitted, so callers (ask bar / pane) never need to care.
+   * omitted, so callers never need to care.
    */
   sessionKind?: 'local' | 'remote'
 }): Promise<AgentOpenResult> {
   const preferences = opts.kind === 'devterm' ? useSettings.getState().agentPreferences : undefined
   const mode = opts.mode ?? AGENT_BRIDGE_POLICY
-  const session =
-    useSessions.getState().sessions.find((x) => x.id === opts.sessionId) ?? undefined
+  const session = useSessions.getState().sessions.find((x) => x.id === opts.sessionId) ?? undefined
   const sessionKind = opts.sessionKind ?? (session?.kind === 'local' ? 'local' : 'remote')
   const result = await window.devterm.agent.open({
     sessionId: opts.sessionId,
@@ -201,3 +200,33 @@ export function agentKindLabel(kind: AgentKind): string {
       return 'Pi'
   }
 }
+
+/** Compact 1–2 letter mark for the tab-strip kind picker. */
+export function agentKindGlyph(kind: AgentKind): string {
+  switch (kind) {
+    case 'devterm':
+      return 'DT'
+    case 'claude':
+      return 'CL'
+    case 'opencode':
+      return 'OC'
+    case 'kimi':
+      return 'KI'
+    case 'grok':
+      return 'G'
+    case 'codex':
+      return 'CX'
+    case 'antigravity':
+      return 'AG'
+    default:
+      return 'π'
+  }
+}
+
+export const AGENT_KIND_MENU: { group: string; kinds: AgentKind[] }[] = [
+  { group: 'Built in', kinds: ['devterm'] },
+  {
+    group: 'External CLI',
+    kinds: ['claude', 'pi', 'opencode', 'kimi', 'grok', 'codex', 'antigravity']
+  }
+]

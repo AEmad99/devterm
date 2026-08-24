@@ -244,6 +244,7 @@ select option {
 :root[data-glass='on'] .palette,
 :root[data-glass='on'] .term-search,
 :root[data-glass='on'] .autosuggest,
+:root[data-glass='on'] .pane-agent-menu,
 :root[data-glass='on'] .browser-dl-drawer {
   background: color-mix(in srgb, var(--panel) 80%, transparent);
   backdrop-filter: blur(34px) saturate(1.8);

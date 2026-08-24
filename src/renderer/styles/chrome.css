@@ -751,6 +751,179 @@
   color: var(--fg);
 }
 
+/* Compact agent cluster on the pane tab strip (icon-only; kind menu is portaled). */
+.pane-agent {
+  flex: 0 0 auto;
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  margin-right: 2px;
+}
+.pane-agent-launch {
+  display: inline-flex;
+  align-items: stretch;
+  height: 22px;
+  border-radius: 7px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--agent) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--agent) 40%, var(--border));
+}
+.pane-agent-launch button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  margin: 0;
+  border: none;
+  background: transparent;
+  color: var(--agent);
+  cursor: pointer;
+  padding: 0 6px;
+}
+.pane-agent-launch button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--agent) 22%, transparent);
+}
+.pane-agent-launch button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.pane-agent-kind {
+  padding-right: 5px !important;
+  border-left: 1px solid color-mix(in srgb, var(--agent) 32%, var(--border)) !important;
+}
+.pane-agent-kind svg {
+  transition: transform 0.12s ease;
+}
+.pane-agent-kind[aria-expanded='true'] svg {
+  transform: rotate(180deg);
+}
+.pane-agent-glyph {
+  display: inline-grid;
+  place-items: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 2px;
+  border-radius: 5px;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  line-height: 1;
+  font-family: var(--font-ui, inherit);
+  background: color-mix(in srgb, var(--agent) 22%, transparent);
+  color: var(--agent);
+  overflow: hidden;
+}
+.pane-agent-glyph-img {
+  display: block;
+  width: 14px;
+  height: 14px;
+  object-fit: contain;
+  border-radius: 3px;
+}
+.pane-agent-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  height: 22px;
+  padding: 0 2px 0 4px;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--agent) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--agent) 38%, var(--border));
+}
+.pane-agent-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--agent);
+  padding: 0 4px 0 2px;
+}
+.pane-agent-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  position: relative;
+}
+.pane-agent-btn:hover {
+  background: var(--panel-2);
+  color: var(--fg);
+}
+.pane-agent-stop {
+  color: var(--danger);
+}
+.pane-agent-stop:hover {
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  color: var(--danger);
+}
+.pane-agent-pending {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--tab-status-warn);
+  box-shadow: 0 0 0 1px var(--panel);
+}
+.pane-agent-menu {
+  position: fixed;
+  z-index: 80;
+  width: 196px;
+  padding: 6px;
+  border-radius: 10px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-2, 0 12px 32px color-mix(in srgb, #000 28%, transparent));
+}
+.pane-agent-menu-group + .pane-agent-menu-group {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+}
+.pane-agent-menu-label {
+  padding: 3px 8px 5px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.pane-agent-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 8px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--fg);
+  cursor: pointer;
+  text-align: left;
+  font-size: 12px;
+  font-weight: 600;
+}
+.pane-agent-menu-item:hover {
+  background: color-mix(in srgb, var(--agent) 14%, transparent);
+}
+.pane-agent-menu-item.is-selected {
+  background: color-mix(in srgb, var(--agent) 18%, transparent);
+  color: var(--fg);
+}
+.pane-agent-menu-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* horizontally scrollable tab list (no visible scrollbar) + overflow chevrons */
 .pane-tabs {
   display: flex;
