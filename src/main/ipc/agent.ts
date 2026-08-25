@@ -30,7 +30,7 @@ import {
   sweepStaleAgentTempDirs,
   type AgentLaunchExtras
 } from '../agent/launch'
-import { buildLocalNativeMd } from '../agent/context'
+import { buildLocalNativeMd, localBrowserToolPrefix } from '../agent/context'
 import { buildClaudeMd, prepareClaudeLaunch } from '../agent/claude-launch'
 import { buildKimiMd, prepareKimiLaunch } from '../agent/kimi-launch'
 import { buildOpencodeMd, prepareOpencodeLaunch } from '../agent/opencode-launch'
@@ -301,7 +301,8 @@ export function registerAgentIpc(
           spawnCwd,
           appendSystemPrompt: buildLocalNativeMd(context, {
             cwd: spawnCwd,
-            browserTools: browserOn
+            browserTools: browserOn,
+            toolPrefix: localBrowserToolPrefix(opts.kind)
           })
         }
       : undefined

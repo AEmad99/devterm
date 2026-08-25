@@ -1,5 +1,5 @@
 import { execSync } from 'child_process'
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { homedir, tmpdir } from 'os'
 import { join } from 'path'
 import type { BridgeInfo } from '../mcp/server'
@@ -49,6 +49,27 @@ export function resolveGrokBin(): string {
   return 'grok'
 }
 
+function grokMcpToml(bridge: BridgeInfo): string {
+  return `[mcp_servers.devterm]
+url = "${bridge.url}"
+enabled = true
+
+[mcp_servers.devterm.headers]
+Authorization = "Bearer ${bridge.token}"
+`
+}
+
+function copyUserGrokAuth(destHome: string): void {
+  const userHome = process.env.GROK_HOME?.trim() || join(homedir(), '.grok')
+  const auth = join(userHome, 'auth.json')
+  if (!existsSync(auth)) return
+  try {
+    copyFileSync(auth, join(destHome, 'auth.json'))
+  } catch {
+    /* operator can still /login inside the pane */
+  }
+}
+
 /**
  * Prepare a per-session working directory containing an `AGENTS.md` briefing,
  * a project-scoped `.grok/config.toml` that wires the in-process MCP bridge as
@@ -56,9 +77,12 @@ export function resolveGrokBin(): string {
  * session to `devterm__*` MCP tools only. Returns the spawn spec for
  * interactive `grok` — NEVER `-p` / headless mode.
  *
- * Grok discovers project MCP servers from `.grok/config.toml` in cwd. The
- * bearer token never leaves the temp dir's config file (mode 0o600). Grok
- * owns its own permission prompts; DevTerm does not auto-approve MCP calls.
+ * Remote: cwd is the overlay, so Grok loads `.grok/config.toml` as project MCP.
+ * Native local: cwd is the operator folder (builtins must see the project), so
+ * that walk never finds the overlay. Isolate `GROK_HOME` to the overlay home
+ * (auth copied from the real install) so `[mcp_servers.devterm]` still loads
+ * without writing a bearer token into the project tree. Grok owns its own
+ * permission prompts; DevTerm does not auto-approve MCP calls.
  */
 export function prepareGrokLaunch(
   hostContextMd: string,
@@ -66,30 +90,45 @@ export function prepareGrokLaunch(
   extras?: AgentLaunchExtras
 ): AgentLaunchSpec {
   const overlay = mkdtempSync(join(tmpdir(), 'devterm-grok-'))
+  const native = extras?.nativeLocal === true
   const grokDir = join(overlay, '.grok')
   const claudeDir = join(overlay, '.claude')
   mkdirSync(grokDir, { recursive: true })
   mkdirSync(claudeDir, { recursive: true })
 
-  if (!extras?.nativeLocal) {
+  if (!native) {
     writeFileSync(join(overlay, 'AGENTS.md'), hostContextMd, { mode: 0o600 })
   }
 
-  const grokConfig = `[mcp_servers.devterm]
-url = "${bridge.url}"
-enabled = true
-
-[mcp_servers.devterm.headers]
-Authorization = "Bearer ${bridge.token}"
-`
+  const grokConfig = grokMcpToml(bridge)
   writeFileSync(join(grokDir, 'config.toml'), grokConfig, { mode: 0o600 })
-  if (extras?.appendSystemPrompt) {
+
+  const env: Record<string, string> = {
+    // The temp dir is throwaway DevTerm state, not an operator project tree.
+    // Skip the folder-trust gate so the per-session MCP config loads immediately.
+    GROK_FOLDER_TRUST: '0'
+  }
+
+  if (native) {
+    // User-level MCP lives in GROK_HOME/config.toml. Relocate home to the
+    // overlay so the bridge entry is visible while cwd stays the project.
+    const grokHome = join(overlay, 'home')
+    mkdirSync(join(grokHome, 'rules'), { recursive: true })
+    writeFileSync(join(grokHome, 'config.toml'), grokConfig, { mode: 0o600 })
+    copyUserGrokAuth(grokHome)
+    if (extras?.appendSystemPrompt) {
+      writeFileSync(join(grokHome, 'rules', 'devterm-local.md'), extras.appendSystemPrompt, {
+        mode: 0o600
+      })
+    }
+    env.GROK_HOME = grokHome
+  } else if (extras?.appendSystemPrompt) {
     writeFileSync(join(overlay, 'DEVTERM.md'), extras.appendSystemPrompt, { mode: 0o600 })
   }
 
   // Remote: deny-by-default, MCP host tools only. Native local: builtins plus
   // MCP (browser). Permission prompts stay in Grok; do not set defaultMode/dontAsk.
-  const claudeSettings = extras?.nativeLocal
+  const claudeSettings = native
     ? {
         permissions: {
           allow: ['Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'MCPTool(devterm__*)']
@@ -113,11 +152,7 @@ Authorization = "Bearer ${bridge.token}"
       '--no-subagents'
     ],
     cwd: extras?.spawnCwd || overlay,
-    env: {
-      // The temp dir is throwaway DevTerm state, not an operator project tree.
-      // Skip the folder-trust gate so the per-session MCP config loads immediately.
-      GROK_FOLDER_TRUST: '0'
-    },
+    env,
     cleanup: () => {
       try {
         rmSync(overlay, { recursive: true, force: true })

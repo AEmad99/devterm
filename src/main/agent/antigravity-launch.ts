@@ -53,6 +53,10 @@ export async function resolveAntigravityBin(): Promise<string> {
  * Prepare a per-session working directory containing an `AGENTS.md` briefing
  * and `.antigravity/mcp.json` / `mcp.json` files wiring the in-process MCP bridge.
  * Returns the spawn spec for interactive `agy` / `antigravity`.
+ *
+ * Remote: cwd is the overlay, so those files are discovered. Native local: cwd
+ * is the operator folder and the overlay MCP files are not on the walk — same
+ * class of bug Grok had before GROK_HOME isolation. Tokens stay in the overlay.
  */
 export async function prepareAntigravityLaunch(
   hostContextMd: string,

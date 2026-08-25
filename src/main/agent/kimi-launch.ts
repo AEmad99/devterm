@@ -29,10 +29,12 @@ export async function resolveKimiBin(): Promise<string> {
  *
  * Kimi Code CLI auto-discovers project-level MCP servers from
  * `.kimi-code/mcp.json` in the working directory, and auto-loads `AGENTS.md`
- * from the project hierarchy. We launch `kimi` with the temp dir as cwd so it
- * picks up the isolated config we wrote instead of the user's global Kimi
- * config or any other project files. Kimi does not support a
- * `--mcp-config-file` flag, so we rely on this discovery behaviour.
+ * from the project hierarchy. Remote launches use the temp dir as cwd so Kimi
+ * picks up that isolated file. Native local still writes the file in the
+ * overlay (never the operator tree — it holds a bearer token) and runs with
+ * cwd = the project; without a Kimi equivalent of GROK_HOME, browser MCP may
+ * not load until Kimi grows a config-dir flag. Kimi does not support a
+ * `--mcp-config-file` flag.
  */
 export async function prepareKimiLaunch(
   hostContextMd: string,

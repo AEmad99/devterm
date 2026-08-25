@@ -1,4 +1,4 @@
-import type { HostContext } from '@shared/types'
+import type { AgentKind, HostContext } from '@shared/types'
 
 /**
  * The "## Working directory" briefing section, shared by all three agent
@@ -72,10 +72,22 @@ function hostIntro(context: HostContext): string {
  * project tree — passed via `--append-system-prompt` so the project's own
  * AGENTS.md still loads.
  */
+/** MCP tool-name prefix the CLI will actually expose for a native local session. */
+export function localBrowserToolPrefix(kind?: AgentKind): string {
+  if (kind === 'grok') return 'devterm__'
+  if (kind === 'opencode') return 'devterm_'
+  return 'mcp__devterm__'
+}
+
 export function buildLocalNativeMd(
   context: HostContext,
-  opts?: { cwd?: string; browserTools?: boolean }
+  opts?: {
+    cwd?: string
+    browserTools?: boolean
+    toolPrefix?: string
+  }
 ): string {
+  const prefix = opts?.toolPrefix ?? 'mcp__devterm__'
   const where = opts?.cwd
     ? `Your working directory is \`${opts.cwd}\`.`
     : `Your working directory is this workstation's current folder.`
@@ -83,17 +95,18 @@ export function buildLocalNativeMd(
     opts?.browserTools === false
       ? `## Browser tabs
 In-app browser tools are disabled in Settings. Stay on local files and the shell. Do not open the OS browser.`
-      : browserToolsSection('mcp__devterm__')
+      : browserToolsSection(prefix)
   return `# DevTerm local agent
 
-You are a native coding agent on this **local ${osLabel(context)}** workstation (\`${context.hostname}\`) — not a remote host and not an MCP-connected environment.
+You are a native coding agent on this **local ${osLabel(context)}** workstation (\`${context.hostname}\`) — not a remote SSH host.
 ${where}
+File and shell work uses your **built-in** tools. The in-app browser is MCP (${prefix}browser_*). Call those tools directly; do not search for an OS browser or a different MCP server.
 
 ${browser}
 
 ## How to work
 Use your **built-in** tools for files and commands on this machine: read, write, edit, bash/shell, grep, glob, and ls.
-MCP host tools (\`run_command\`, \`read_file\`, \`write_file\`, \`list_dir\`, \`get_host_context\`) are **not available** in this session. Do not try to call them.
+MCP host tools (\`run_command\`, \`read_file\`, \`write_file\`, \`list_dir\`, \`get_host_context\`) are **not registered** in this session — do not call those names. In-app \`browser_*\` tools **are** registered on the DevTerm MCP bridge.
 
 ## Safety
 Permission prompts for file and shell tools come from this agent. Explain what a command does before running anything that changes state.

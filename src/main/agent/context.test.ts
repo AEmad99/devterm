@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { buildAgentsMd, buildLocalNativeMd } from './context'
+import { buildAgentsMd, buildLocalNativeMd, localBrowserToolPrefix } from './context'
 import type { HostContext } from '@shared/types'
 
 const local: HostContext = {
@@ -29,12 +29,26 @@ describe('agent briefings', () => {
     const md = buildLocalNativeMd(local, { cwd: 'D:\\projects\\app', browserTools: true })
     assert.match(md, /native coding agent/)
     assert.match(md, /built-in/i)
-    assert.match(md, /not available/)
+    assert.match(md, /not registered/)
     assert.ok(md.includes('D:\\projects\\app'))
     assert.match(md, /mcp__devterm__browser_open/)
     assert.match(md, /first-class/i)
+    assert.match(md, /tools \*\*are\*\* registered/)
+    assert.doesNotMatch(md, /not an MCP-connected environment/)
     assert.ok(md.indexOf('In-app browser') < md.indexOf('How to work'))
     assert.doesNotMatch(md, /Built-in tools are disabled/)
+  })
+
+  it('local native briefing uses the CLI tool prefix', () => {
+    assert.equal(localBrowserToolPrefix('grok'), 'devterm__')
+    assert.equal(localBrowserToolPrefix('opencode'), 'devterm_')
+    assert.equal(localBrowserToolPrefix('devterm'), 'mcp__devterm__')
+    const md = buildLocalNativeMd(local, {
+      browserTools: true,
+      toolPrefix: localBrowserToolPrefix('grok')
+    })
+    assert.match(md, /devterm__browser_open/)
+    assert.doesNotMatch(md, /mcp__devterm__browser_open/)
   })
 
   it('local native briefing omits browser tools when disabled', () => {
