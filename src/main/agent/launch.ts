@@ -11,7 +11,7 @@ import {
   writeFileSync
 } from 'fs'
 import { homedir, tmpdir } from 'os'
-import { join, sep } from 'path'
+import { dirname, join, sep } from 'path'
 import type { BridgeInfo } from '../mcp/server'
 import type {
   AgentCapabilities,
@@ -133,7 +133,16 @@ export function resolveBundledAgentCli(): string {
   throw new Error('Bundled DevTerm Agent runtime is missing from the application package.')
 }
 
-/** Resolve the platform-specific Node executable packaged with DevTerm. */
+/**
+ * Resolve the platform-specific Node executable packaged with DevTerm.
+ *
+ * Throws when the bundled runtime is missing instead of silently falling back
+ * to `process.execPath` (electron.exe / DevTerm.exe): running the pi CLI under
+ * Electron produces no output and never exits, so the agent looks "stuck on
+ * starting" forever. `npm run setup` installs the binary (the `node` npm
+ * package's own preinstall script is skipped by `--ignore-scripts` installs);
+ * packaged builds ship it via electron-builder's asarUnpack.
+ */
 export function resolveBundledNodeBin(): string {
   if (!process.versions.electron && process.execPath && existsSync(process.execPath)) {
     return process.execPath
@@ -145,10 +154,9 @@ export function resolveBundledNodeBin(): string {
       if (existsSync(bin)) return externalNodePath(bin)
     }
   }
-  if (process.execPath && existsSync(process.execPath)) {
-    return process.execPath
-  }
-  throw new Error('Bundled Node runtime for DevTerm Agent is missing from the application package.')
+  throw new Error(
+    'Bundled Node runtime for the DevTerm Agent is missing. Run `npm run setup` (or reinstall the app) to install it.'
+  )
 }
 
 /** External Node cannot read Electron's virtual app.asar filesystem. */
@@ -335,29 +343,10 @@ export async function getBuiltinAgentCapabilities(
   }
   const bin = resolveBundledNodeBin()
   const cli = resolveBundledAgentCli()
-  const [versionResult, modelsResult] = await Promise.all([
+  const [versionResult, models] = await Promise.all([
     execFileAsync(bin, [cli, '--version'], { encoding: 'utf8', timeout: 30_000 }),
-    execFileAsync(bin, [cli, '--offline', '--list-models'], {
-      encoding: 'utf8',
-      timeout: 30_000,
-      maxBuffer: 32 * 1024 * 1024
-    })
+    discoverOfflineCatalog(bin)
   ])
-  const lines = modelsResult.stdout.split(/\r?\n/).slice(1)
-  const models = lines.flatMap((line) => {
-    const fields = line.trim().split(/\s{2,}/)
-    if (fields.length < 6) return []
-    return [
-      {
-        provider: fields[0],
-        model: fields[1],
-        context: fields[2],
-        maxOutput: fields[3],
-        thinking: fields[4] === 'yes',
-        images: fields[5] === 'yes'
-      }
-    ]
-  })
   const auth = readProviderAuth()
   const providerIds = new Set(models.map((model) => model.provider))
   for (const provider of auth.keys()) providerIds.add(provider)
@@ -375,6 +364,117 @@ export async function getBuiltinAgentCapabilities(
     loadedAt: Date.now()
   }
   return capabilitiesCache
+}
+
+/** One row of the offline model catalog (shape mirrors `AgentModelInfo`). */
+interface OfflineModelRow {
+  provider: string
+  model: string
+  context: string
+  maxOutput: string
+  thinking: boolean
+  images: boolean
+}
+
+/**
+ * Where pi's *static* built-in catalog lives. pi's `--list-models` only lists
+ * models of providers with configured credentials ("No models available" on a
+ * fresh machine), but the generated catalog shipped inside
+ * `@earendil-works/pi-ai` (nested under the pi package) is credential-blind —
+ * exactly the offline catalog the Settings page needs.
+ */
+function resolvePiAiCatalogDir(): string | undefined {
+  try {
+    const piRoot = dirname(dirname(resolveBundledAgentCli()))
+    const candidate = join(
+      piRoot,
+      'node_modules',
+      '@earendil-works',
+      'pi-ai',
+      'dist',
+      'models.generated.js'
+    )
+    return existsSync(candidate) ? dirname(candidate) : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Dump the full offline catalog by running a tiny ESM probe with the bundled
+ * Node runtime (pi-ai is ESM-only, so it cannot be require()d from the CJS
+ * main bundle). Falls back to parsing the CLI's `--list-models` table (which
+ * only lists authenticated providers) when the catalog module is unavailable.
+ */
+async function discoverOfflineCatalog(bin: string): Promise<OfflineModelRow[]> {
+  const catalogDir = resolvePiAiCatalogDir()
+  if (catalogDir) {
+    const probeDir = mkdtempSync(join(tmpdir(), 'devterm-catalog-'))
+    const probePath = join(probeDir, 'catalog-probe.mjs')
+    writeFileSync(
+      probePath,
+      [
+        "import { pathToFileURL } from 'node:url'",
+        "const dist = process.env.DEVTERM_PI_AI_DIST",
+        "if (!dist) { console.log('[]'); process.exit(0) }",
+        "const mod = await import(pathToFileURL(dist + '/models.generated.js').href)",
+        'const rows = []',
+        'for (const [provider, models] of Object.entries(mod.MODELS || {})) {',
+        '  if (!models || typeof models !== \'object\') continue',
+        "  for (const [model, def] of Object.entries(models)) {",
+        "    if (!def || typeof def !== 'object') continue",
+        '    rows.push({',
+        '      provider,',
+        '      model,',
+        "      context: String(def.contextWindow ?? ''),",
+        "      maxOutput: String(def.maxTokens ?? ''),",
+        '      thinking: def.reasoning === true,',
+        "      images: Array.isArray(def.input) && def.input.includes('image')",
+        '    })',
+        '  }',
+        '}',
+        'console.log(JSON.stringify(rows))'
+      ].join('\n')
+    )
+    try {
+      const { stdout } = await execFileAsync(bin, [probePath], {
+        encoding: 'utf8',
+        timeout: 30_000,
+        maxBuffer: 64 * 1024 * 1024,
+        env: { ...process.env, DEVTERM_PI_AI_DIST: catalogDir }
+      })
+      const rows = JSON.parse(stdout.trim())
+      if (Array.isArray(rows) && rows.length > 0) return rows as OfflineModelRow[]
+    } catch {
+      /* probe failed — fall through to the CLI table below */
+    } finally {
+      rmSync(probeDir, { recursive: true, force: true })
+    }
+  }
+
+  // Legacy path: parse the CLI's `--list-models` table (auth-filtered).
+  const cli = resolveBundledAgentCli()
+  const modelsResult = await execFileAsync(bin, [cli, '--offline', '--list-models'], {
+    encoding: 'utf8',
+    timeout: 30_000,
+    maxBuffer: 32 * 1024 * 1024
+  })
+  const lines = modelsResult.stdout.split(/\r?\n/).slice(1)
+  const models = lines.flatMap((line) => {
+    const fields = line.trim().split(/\s{2,}/)
+    if (fields.length < 6) return []
+    return [
+      {
+        provider: fields[0],
+        model: fields[1],
+        context: fields[2],
+        maxOutput: fields[3],
+        thinking: fields[4] === 'yes',
+        images: fields[5] === 'yes'
+      }
+    ]
+  })
+  return models
 }
 
 /**

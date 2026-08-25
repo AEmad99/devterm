@@ -4,10 +4,12 @@ import os from 'os'
 import { join } from 'path'
 import { Server } from 'ssh2'
 import type { AddressInfo } from 'net'
+import { dialog } from 'electron'
 import { PtyManager, defaultShell } from '../pty/manager'
 import { resolveBundledAgentCli, resolveBundledNodeBin } from '../agent/launch'
 import { SSHManager, DEFAULT_RECONNECT_POLICY, type ReconnectPolicy } from '../ssh/manager'
 import { listRemote, mkdirRemote, renameRemote, deleteRemote } from '../ssh/sftp'
+import { remove as removeKnownHost } from '../ssh/knownHosts'
 import { TransferManager } from '../transfers/transfer'
 import { startSftpServer } from './selftest-sftp'
 import { McpBridge } from '../mcp/server'
@@ -48,26 +50,47 @@ function testLocalShell(): Promise<void> {
     const { id, shell } = mgr.create({ cols: 120, rows: 30 })
     const isPwsh = /powershell|pwsh/i.test(shell)
     check('local shell is PowerShell (not cmd.exe)', isPwsh || process.platform !== 'win32', shell)
-    // Exercise cd, ls and echo; marker proves the line was processed.
-    const cmd =
-      process.platform === 'win32'
-        ? 'cd $HOME; ls | Out-Null; pwd | Out-Null; Write-Output DEVTERM_CMD_OK\r'
-        : 'cd $HOME && ls >/dev/null && pwd >/dev/null && echo DEVTERM_CMD_OK\n'
-    setTimeout(() => mgr.input(id, cmd), 1200)
-
-    setTimeout(() => {
-      const notRecognized = /not recognized|CommandNotFoundException|command not found/i.test(buf)
-      check('cd/ls/pwd/echo run in local shell', buf.includes('DEVTERM_CMD_OK') && !notRecognized)
-      // OSC 7 working-directory reporting (powers the file explorer sidebar).
-      const osc7 = /\x1b\]7;file:\/\/[^\x07\x1b]*/.exec(buf)
-      check(
-        'shell emits OSC 7 cwd (explorer can follow cd)',
-        process.platform !== 'win32' || (!!osc7 && /file:\/\/\/[A-Za-z]:/.test(osc7[0])),
-        osc7 ? osc7[0].replace('\x1b]7;', '') : 'none'
-      )
-      mgr.killAll()
-      resolve()
-    }, 4500)
+    // Strip ANSI/control bytes so the ConPTY pre-shell handshake (pure escape
+    // sequences) never counts as "the prompt rendered".
+    const printable = () =>
+      buf.replace(/\x1b\][^\x1b]*(?:\x07|\x1b\\)|\x1b\[[0-9;?<=>]*[!-/]*[@-~]|[\x00-\x1f\x7f]/g, '').trim()
+    const start = Date.now()
+    // Windows PowerShell 5.1 can take ~2-4s to render its first prompt on a
+    // loaded machine; typing before PSReadLine is ready races the shell's own
+    // init and the input lands after our check window. Wait for real output
+    // (or a generous timeout) before typing instead of a fixed 1.2s.
+    const waitForPrompt = () => {
+      if (printable().length > 0 || Date.now() - start > 15_000) {
+        // Exercise cd, ls and echo; marker proves the line was processed.
+        const cmd =
+          process.platform === 'win32'
+            ? 'cd $HOME; ls | Out-Null; pwd | Out-Null; Write-Output DEVTERM_CMD_OK\r'
+            : 'cd $HOME && ls >/dev/null && pwd >/dev/null && echo DEVTERM_CMD_OK\n'
+        mgr.input(id, cmd)
+        const checkAt = Date.now() + 6000
+        const waitForResult = () => {
+          const notRecognized = /not recognized|CommandNotFoundException|command not found/i.test(buf)
+          if ((buf.includes('DEVTERM_CMD_OK') && !notRecognized) || Date.now() > checkAt) {
+            check('cd/ls/pwd/echo run in local shell', buf.includes('DEVTERM_CMD_OK') && !notRecognized)
+            // OSC 7 working-directory reporting (powers the file explorer sidebar).
+            const osc7 = /\x1b\]7;file:\/\/[^\x07\x1b]*/.exec(buf)
+            check(
+              'shell emits OSC 7 cwd (explorer can follow cd)',
+              process.platform !== 'win32' || (!!osc7 && /file:\/\/\/[A-Za-z]:/.test(osc7[0])),
+              osc7 ? osc7[0].replace('\x1b]7;', '') : 'none'
+            )
+            mgr.killAll()
+            resolve()
+          } else {
+            setTimeout(waitForResult, 100)
+          }
+        }
+        waitForResult()
+      } else {
+        setTimeout(waitForPrompt, 100)
+      }
+    }
+    waitForPrompt()
   })
 }
 
@@ -111,11 +134,13 @@ function testStartupFailureDiagnostic(): Promise<void> {
       shell,
       args: isWin ? ['-NoLogo', '-Command', 'exit 1'] : ['-c', 'exit 1']
     })
+    // Cold Windows PowerShell 5.1 startup can exceed 3.5s on a loaded machine
+    // (managed-DLL load + AV scanning); give the exit event a generous window.
     setTimeout(() => {
       check('startup-failure fires when shell exits before real output', fired)
       mgr.killAll()
       resolve()
-    }, 3500)
+    }, 10_000)
   })
 }
 
@@ -125,6 +150,17 @@ function testStartupFailureDiagnostic(): Promise<void> {
 // agnostic agent package is present/resolvable.
 function testBundledAgentRuntime(): Promise<void> {
   return new Promise((resolve) => {
+    let bin: string
+    try {
+      bin = resolveBundledNodeBin()
+    } catch (e) {
+      // resolveBundledNodeBin throws when the runtime is missing (it no longer
+      // silently falls back to electron.exe). Report a clean FAIL instead of an
+      // unhandled rejection that would abort the whole self-test.
+      check('bundled DevTerm Agent runtime starts in ConPTY', false, (e as Error).message)
+      resolve()
+      return
+    }
     let buf = ''
     let finished = false
     const mgr = new PtyManager({
@@ -154,7 +190,7 @@ function testBundledAgentRuntime(): Promise<void> {
     mgr.create({
       cols: 80,
       rows: 24,
-      shell: resolveBundledNodeBin(),
+      shell: bin,
       args: [
         resolveBundledAgentCli(),
         '--no-builtin-tools',
@@ -256,6 +292,7 @@ async function testSshScenario(scenario: Scenario): Promise<void> {
     check(`ssh scenario ${scenario}`, false, String((e as Error).message || e))
   } finally {
     srv.close()
+    await removeKnownHost(`127.0.0.1:${srv.port}`).catch(() => {})
   }
 }
 
@@ -364,6 +401,7 @@ async function testSftp(): Promise<void> {
     check('sftp scenario', false, String((e as Error).message || e))
   } finally {
     srv.close()
+    await removeKnownHost(`127.0.0.1:${srv.port}`).catch(() => {})
     await fsp.rm(root, { recursive: true, force: true })
     await fsp.rm(dlDir, { recursive: true, force: true })
   }
@@ -486,6 +524,7 @@ async function testReconnect(): Promise<void> {
     mgr.cancelReconnect(sessionId)
     mgr.disconnectAll()
     srv.close()
+    await removeKnownHost(`127.0.0.1:${srv.port}`).catch(() => {})
   } catch (e) {
     check('reconnect scenario (success path)', false, String((e as Error).message || e))
   }
@@ -684,11 +723,23 @@ async function testBridge(): Promise<void> {
     await withTimeout(client?.close() ?? Promise.resolve(), 3000)
     await withTimeout(bridge?.stop() ?? Promise.resolve(), 3000)
     srv.close()
+    await removeKnownHost(`127.0.0.1:${srv.port}`).catch(() => {})
     await fsp.rm(root, { recursive: true, force: true }).catch(() => {})
   }
 }
 
 export async function runSelfTest(): Promise<boolean> {
+  // The mock-SSH scenarios generate a fresh host key per run, so every connect
+  // is "first use" — which normally pops the real `dialog.showMessageBox`
+  // "Trust new SSH host key?" prompt. Headless CI machines can't answer it,
+  // so the handshake stalls until ssh2's readyTimeout and the scenario fails
+  // with "Timed out while waiting for handshake". Auto-trust in self-test mode
+  // (equivalent to clicking "Trust and save"): the TOFU status flow still runs,
+  // and each scenario removes its mock entry from known_hosts afterwards.
+  const realShowMessageBox = dialog.showMessageBox
+  dialog.showMessageBox = (async () => ({ response: 0, checkboxChecked: false })) as typeof dialog.showMessageBox
+  void realShowMessageBox
+
   console.log('=== DevTerm self-test ===  defaultShell=' + defaultShell())
   await testLocalShell()
   await testStartupFailureDiagnostic()

@@ -14,6 +14,7 @@ import { createHash } from 'node:crypto'
 import {
   existsSync,
   mkdirSync,
+  mkdtempSync,
   writeFileSync,
   readFileSync,
   rmSync,
@@ -28,6 +29,26 @@ const require = createRequire(import.meta.url)
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const nm = join(root, 'node_modules')
+
+/**
+ * Extract a downloaded archive with the system tar. Git Bash's GNU tar needs
+ * `--force-local` for Windows drive-colon paths, while the stock Windows
+ * bsdtar rejects that exact flag — so try the flag first and fall back to the
+ * plain form. bsdtar and GNU tar both auto-detect zip/gzip/xz.
+ */
+function extractArchive(archivePath, dest) {
+  const posix = (p) => p.replace(/\\/g, '/')
+  const run = (args) =>
+    execSync(
+      `tar ${args.join(' ')} ${JSON.stringify(posix(archivePath))} -C ${JSON.stringify(posix(dest))}`,
+      { stdio: 'inherit' }
+    )
+  try {
+    run(['--force-local', '-xf'])
+  } catch {
+    run(['-xf'])
+  }
+}
 
 // node-pty-prebuilt-multiarch version (see the `node-pty` alias in package.json).
 const NODE_PTY_VER = '0.13.1'
@@ -115,12 +136,7 @@ if (existsSync(ptyBin) && installedAbi === ELECTRON_ABI) {
   }
   writeFileSync(tgz, tarball)
   mkdirSync(join(nm, 'node-pty', 'build'), { recursive: true })
-  // Git Bash tar chokes on Windows paths (drive colon = remote host, backslash
-  // separators); --force-local + forward slashes keep it happy on every shell.
-  const posix = (p) => p.replace(/\\/g, '/')
-  execSync(`tar --force-local -xzf ${JSON.stringify(posix(tgz))} -C ${JSON.stringify(posix(join(nm, 'node-pty')))}`, {
-    stdio: 'inherit'
-  })
+  extractArchive(tgz, join(nm, 'node-pty'))
   rmSync(tgz)
   writeFileSync(ptyAbiMarker, ELECTRON_ABI + '\n')
   console.log(`✓ node-pty native binary installed (Electron ABI ${ELECTRON_ABI})`)
@@ -198,6 +214,86 @@ if (process.platform === 'win32') {
       }
     }
     console.log(`✓ ONNX Runtime wasm copied for STT (${copied}/${ortFiles.length} files)`)
+  }
+}
+
+// 5) Bundled Node runtime for the built-in DevTerm Agent. The `node` npm
+//    package downloads its platform binary via a `preinstall` script
+//    (installArchSpecificPackage.js -> node-bin-setup), which never runs under
+//    `npm install --ignore-scripts` — and the npm >= 11 replacement path
+//    (`--allow-scripts`) is rejected in project-scoped installs (EALLOWSCRIPTS),
+//    so no npm path is reliable here. Instead we fetch the official
+//    nodejs.org binary archive for the pinned version and verify it against
+//    the published SHASUMS256.txt before copying node.exe beside the `node`
+//    wrapper, exactly where resolveBundledNodeBin() looks. Without the
+//    binary, the DevTerm Agent would silently launch electron.exe as its
+//    runtime and hang.
+const nodeName = process.platform === 'win32' ? 'node.exe' : 'node'
+const bundledNode = join(nm, 'node', 'bin', nodeName)
+if (existsSync(bundledNode)) {
+  console.log(`✓ Bundled Node runtime present (${nodeName})`)
+} else {
+  const nodePkg = JSON.parse(readFileSync(join(nm, 'node', 'package.json'), 'utf8'))
+  const nodeVer = nodePkg.version
+  // nodejs.org archive names use `win-<arch>` (not `win32-<arch>`).
+  const platKey = `${process.platform === 'win32' ? 'win' : process.platform}-${process.arch}`
+  const artifacts = {
+    'win-x64': { ext: 'zip', bin: 'node.exe' },
+    'win-arm64': { ext: 'zip', bin: 'node.exe' },
+    'darwin-x64': { ext: 'tar.gz', bin: 'node' },
+    'darwin-arm64': { ext: 'tar.gz', bin: 'node' },
+    'linux-x64': { ext: 'tar.xz', bin: 'node' },
+    'linux-arm64': { ext: 'tar.xz', bin: 'node' }
+  }
+  const spec = artifacts[platKey]
+  if (!spec) {
+    console.error(
+      `✗ No bundled Node runtime mapping for ${platKey}.\n` +
+        '  Install node-bin-setup manually for this platform and re-run `npm run setup`.'
+    )
+    process.exit(1)
+  }
+  const artifactName = `node-v${nodeVer}-${platKey}.${spec.ext}`
+  const base = `https://nodejs.org/dist/v${nodeVer}`
+  console.log(`• Downloading bundled Node runtime (${artifactName})…`)
+  const [res, sumsRes] = await Promise.all([
+    fetch(`${base}/${artifactName}`),
+    fetch(`${base}/SHASUMS256.txt`)
+  ])
+  if (!res.ok || !sumsRes.ok) {
+    console.error(`✗ Download failed (HTTP ${res.status}/${sumsRes.status}). Check the network and retry.`)
+    process.exit(1)
+  }
+  const archive = Buffer.from(await res.arrayBuffer())
+  const shasums = await sumsRes.text()
+  const expected = shasums
+    .split(/\r?\n/)
+    .map((l) => l.trim().split(/\s+/))
+    .find(([sha, name]) => name === artifactName)?.[0]
+  if (!expected) {
+    console.error(`✗ SHASUMS256.txt has no entry for ${artifactName}; refusing to install.`)
+    process.exit(1)
+  }
+  const actual = createHash('sha256').update(archive).digest('hex')
+  if (actual !== expected) {
+    console.error(`✗ SHA-256 mismatch for ${artifactName}:\n  expected ${expected}\n  actual   ${actual}`)
+    process.exit(1)
+  }
+  const tmp = mkdtempSync(join(root, '.node-runtime-'))
+  try {
+    const archivePath = join(tmp, artifactName)
+    writeFileSync(archivePath, archive)
+    extractArchive(archivePath, tmp)
+    const srcBin = join(tmp, `node-v${nodeVer}-${platKey}`, spec.bin)
+    if (!existsSync(srcBin)) {
+      console.error(`✗ Extracted archive has no ${spec.bin} (${srcBin}).`)
+      process.exit(1)
+    }
+    mkdirSync(join(nm, 'node', 'bin'), { recursive: true })
+    copyFileSync(srcBin, bundledNode)
+    console.log(`✓ Bundled Node runtime installed (${nodeName} v${nodeVer}, sha256 verified)`)
+  } finally {
+    rmSync(tmp, { recursive: true, force: true })
   }
 }
 
