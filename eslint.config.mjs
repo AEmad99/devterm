@@ -8,7 +8,16 @@ export default tseslint.config(
     // Build output, deps, and packaging artifacts are not linted. The public/
     // ort folder holds onnxruntime-web's prebuilt (minified) wasm loader glue,
     // copied from node_modules by scripts/setup-native.mjs — never our source.
-    ignores: ['out/**', 'dist/**', 'node_modules/**', 'resources/**', 'src/renderer/public/**'],
+    ignores: [
+      'out/**',
+      'dist/**',
+      'node_modules/**',
+      'resources/**',
+      'src/renderer/public/**',
+      // electron-vite dev writes renderer build output into the source tree
+      // (src/renderer/out/...); never lint generated artifacts.
+      'src/renderer/out/**',
+    ],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,

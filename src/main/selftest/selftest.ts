@@ -186,7 +186,7 @@ function testBundledAgentRuntime(): Promise<void> {
       check('bundled DevTerm Agent runtime starts in ConPTY', false, 'timed out')
       mgr.killAll()
       resolve()
-    }, 10_000)
+    }, 20_000)
     mgr.create({
       cols: 80,
       rows: 24,

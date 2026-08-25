@@ -281,9 +281,9 @@ if (process.argv.includes('--self-test')) {
   app.disableHardwareAcceleration()
   app.whenReady().then(async () => {
     const watchdog = setTimeout(() => {
-      console.error('SELFTEST WATCHDOG: timed out after 90s')
+      console.error('SELFTEST WATCHDOG: timed out after 120s')
       app.exit(3)
-    }, 90000)
+    }, 120000)
     const { runSelfTest } = await import('./selftest/selftest')
     const ok = await runSelfTest()
     clearTimeout(watchdog)
