@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type {
   AgentBridgeState,
+  AgentLaunchRequest,
   AgentKind,
   AgentUiMode,
   HostContext,
@@ -43,6 +44,8 @@ export interface Session {
   agentTask?: string
   /** Which agent kind is running in this session's agent pane, if any. */
   agentKind?: AgentKind
+  /** One-time handoff launch payload consumed by the first AgentPane mount. */
+  agentLaunch?: AgentLaunchRequest
   /**
    * Where the agent terminal UI is placed. Absent means no agent session is
    * desired (process stopped). Process can still run while `hidden`.
@@ -113,7 +116,7 @@ interface SessionState {
    * Open a local shell; returns the new session id. `cwd` sets its starting
    * directory, `groupId` its terminal group (defaults to the active group).
    */
-  addLocal: (opts?: { cwd?: string; groupId?: string }) => string
+  addLocal: (opts?: { id?: string; cwd?: string; groupId?: string; title?: string }) => string
   /** Connect a remote session; resolves to the real session id (or null on failure). */
   connectSsh: (
     profile: SSHProfile,
@@ -141,6 +144,10 @@ interface SessionState {
   setCurrentCommand: (id: string, command: string | undefined) => void
   /** Set the current agent task surfaced from bridge activity. */
   setAgentTask: (id: string, task: string | undefined, kind?: AgentKind) => void
+  /** Store a one-time initial prompt/model/effort for the next AgentPane mount. */
+  setAgentLaunch: (id: string, launch: AgentLaunchRequest) => void
+  /** Consume the one-time launch payload without reusing it on remounts. */
+  consumeAgentLaunch: (id: string) => AgentLaunchRequest | undefined
   /**
    * Update agent UI placement + optional live metadata. Pass `mode: null` to
    * clear placement after the agent is stopped.
@@ -200,12 +207,15 @@ export const useSessions = create<SessionState>((set, get) => ({
     )
     let n = 1
     while (used.has(n)) n++
-    const id = `local-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
+    const id = opts?.id ?? `local-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
+    if (get().sessions.some((x) => x.id === id))
+      throw new Error(`Session id is already active: ${id}`)
     const session: Session = {
       id,
       kind: 'local',
-      title: `Local ${n}`,
+      title: opts?.title || `Local ${n}`,
       localNum: n,
+      customTitle: !!opts?.title,
       startCwd: opts?.cwd,
       // Seed live cwd so the file explorer opens on the launch directory
       // before the first OSC 7 prompt reports; OSC 7 overwrites this later.
@@ -408,6 +418,22 @@ export const useSessions = create<SessionState>((set, get) => ({
         )
       }
     }),
+  setAgentLaunch: (id, launch) =>
+    set((s) => ({
+      sessions: s.sessions.map((x) => (x.id === id ? { ...x, agentLaunch: launch } : x))
+    })),
+  consumeAgentLaunch: (id) => {
+    let launch: AgentLaunchRequest | undefined
+    set((s) => {
+      const cur = s.sessions.find((x) => x.id === id)
+      if (!cur?.agentLaunch) return s
+      launch = cur.agentLaunch
+      return {
+        sessions: s.sessions.map((x) => (x.id === id ? { ...x, agentLaunch: undefined } : x))
+      }
+    })
+    return launch
+  },
   setAgentUi: (id, patch, opts) => {
     // Always sync UI mode to main (confirm routing + float window lifecycle),
     // even when this renderer has no session record (floating agent window).
@@ -541,13 +567,15 @@ export const useSessions = create<SessionState>((set, get) => ({
 
   close: (id) => {
     const s = get().sessions.find((x) => x.id === id)
-    if (s?.kind === 'remote' && !id.startsWith('pending-')) {
+    if (s?.kind === 'local' || (s?.kind === 'remote' && !id.startsWith('pending-'))) {
       statusDisposers.get(id)?.()
       statusDisposers.delete(id)
-      // Stop agent + floating window before dropping the SSH client so we don't
-      // leave a bridge bound to a dead session id.
+      // Stop an agent + floating window before dropping the session so a
+      // delegated local tab cannot leave its bridge running after close.
       window.devterm.agent.close(id)
       window.devterm.agent.closeWindow(id)
+    }
+    if (s?.kind === 'remote' && !id.startsWith('pending-')) {
       window.devterm.ssh.disconnect(id)
     }
     set((st) => {

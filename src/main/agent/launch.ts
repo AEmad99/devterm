@@ -15,6 +15,7 @@ import { dirname, join, sep } from 'path'
 import type { BridgeInfo } from '../mcp/server'
 import type {
   AgentCapabilities,
+  AgentEffort,
   AgentPreferences,
   AgentProviderStatus,
   SSHProfile
@@ -30,6 +31,12 @@ export interface AgentLaunchExtras {
   spawnCwd?: string
   /** Appended to the system prompt without planting AGENTS.md in the project. */
   appendSystemPrompt?: string
+  /** Explicit model override for a one-shot delegated launch. */
+  model?: string
+  /** Explicit reasoning effort for a one-shot delegated launch. */
+  effort?: AgentEffort
+  /** First user message for launchers that accept a trailing prompt. */
+  initialPrompt?: string
 }
 
 const execFileAsync = promisify(execFile)
@@ -179,8 +186,6 @@ interface BuiltinLaunchOptions extends AgentLaunchExtras {
   preferences?: AgentPreferences
   sessionDir?: string
   sessionId?: string
-  /** Passed as the trailing CLI message so interactive `pi "…"` starts working. */
-  initialPrompt?: string
   /**
    * Write AGENTS.md into the overlay temp dir (remote default). Local native
    * launches skip this so the project's own AGENTS.md is what Pi loads.
@@ -225,8 +230,9 @@ function isolatedAgentArgs(
     args.unshift('--no-session')
   }
   if (preferences?.provider.trim()) args.push('--provider', preferences.provider.trim())
-  if (preferences?.model.trim()) args.push('--model', preferences.model.trim())
-  const modelCycle = [preferences?.model, ...(preferences?.fallbackModels ?? [])]
+  const selectedModel = options?.model?.trim() || preferences?.model.trim()
+  if (selectedModel) args.push('--model', selectedModel)
+  const modelCycle = [selectedModel, ...(preferences?.fallbackModels ?? [])]
     .map((value) => value?.trim() ?? '')
     .filter(Boolean)
   if (modelCycle.length > 1) args.push('--models', [...new Set(modelCycle)].join(','))
@@ -415,13 +421,13 @@ async function discoverOfflineCatalog(bin: string): Promise<OfflineModelRow[]> {
       probePath,
       [
         "import { pathToFileURL } from 'node:url'",
-        "const dist = process.env.DEVTERM_PI_AI_DIST",
+        'const dist = process.env.DEVTERM_PI_AI_DIST',
         "if (!dist) { console.log('[]'); process.exit(0) }",
         "const mod = await import(pathToFileURL(dist + '/models.generated.js').href)",
         'const rows = []',
         'for (const [provider, models] of Object.entries(mod.MODELS || {})) {',
-        '  if (!models || typeof models !== \'object\') continue',
-        "  for (const [model, def] of Object.entries(models)) {",
+        "  if (!models || typeof models !== 'object') continue",
+        '  for (const [model, def] of Object.entries(models)) {',
         "    if (!def || typeof def !== 'object') continue",
         '    rows.push({',
         '      provider,',

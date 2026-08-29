@@ -210,6 +210,7 @@ const DEFAULTS: AppSettings = {
     fallbackModels: [],
     resumeSessions: true,
     browserTools: true,
+    agentHandoff: true,
     trustedSkills: []
   },
   remoteDetachedSessions: true,
@@ -400,6 +401,10 @@ function normalizeAgentPreferences(raw: unknown): AgentPreferences {
       typeof value.browserTools === 'boolean'
         ? value.browserTools
         : DEFAULTS.agentPreferences.browserTools,
+    agentHandoff:
+      typeof value.agentHandoff === 'boolean'
+        ? value.agentHandoff
+        : DEFAULTS.agentPreferences.agentHandoff,
     trustedSkills: Array.isArray(value.trustedSkills)
       ? value.trustedSkills
           .filter(

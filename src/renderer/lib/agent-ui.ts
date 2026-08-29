@@ -1,4 +1,10 @@
-import type { AgentKind, AgentOpenResult, AgentUiMode, PolicyMode } from '@shared/types'
+import type {
+  AgentEffort,
+  AgentKind,
+  AgentOpenResult,
+  AgentUiMode,
+  PolicyMode
+} from '@shared/types'
 import { useSessions } from '../store/sessions'
 import { useSettings } from '../store/settings'
 
@@ -26,13 +32,16 @@ export async function ensureAgent(opts: {
   forceRestart?: boolean
   uiMode?: AgentUiMode
   initialPrompt?: string
+  model?: string
+  effort?: AgentEffort
+  title?: string
   /**
    * Which surface the agent is bound to. Derived from the session store when
    * omitted, so callers never need to care.
    */
   sessionKind?: 'local' | 'remote'
 }): Promise<AgentOpenResult> {
-  const preferences = opts.kind === 'devterm' ? useSettings.getState().agentPreferences : undefined
+  const preferences = useSettings.getState().agentPreferences
   const mode = opts.mode ?? AGENT_BRIDGE_POLICY
   const session = useSessions.getState().sessions.find((x) => x.id === opts.sessionId) ?? undefined
   const sessionKind = opts.sessionKind ?? (session?.kind === 'local' ? 'local' : 'remote')
@@ -46,6 +55,9 @@ export async function ensureAgent(opts: {
     rows: opts.rows ?? 30,
     forceRestart: opts.forceRestart,
     initialPrompt: opts.initialPrompt,
+    model: opts.model,
+    effort: opts.effort,
+    title: opts.title,
     sessionKind,
     browserTools: useSettings.getState().agentPreferences.browserTools !== false
   })

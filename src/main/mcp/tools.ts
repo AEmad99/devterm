@@ -7,6 +7,7 @@ import { Policy } from './policy'
 import { recordBridgeActivity } from '../ipc/foundation'
 import { sanitizeDetail } from './server'
 import { registerBrowserTools, type BrowserToolsDeps } from './tools-browser'
+import { registerAgentHandoffTools, type AgentHandoffDeps } from './tools-agent'
 import type { HostBackend } from '../agent/host-backend'
 
 /** Why a guarded action did/didn't proceed — distinct so the agent can report the real cause. */
@@ -45,6 +46,8 @@ export interface ToolDeps {
    * (remote SSH host tools).
    */
   hostTools?: boolean
+  /** Local-only visible-agent handoff callbacks. Never registered remotely. */
+  agentHandoff?: AgentHandoffDeps
 }
 
 // Cluster ops (helm install, oc apply + rollout, image pulls) routinely run well
@@ -147,6 +150,7 @@ function wrapConfirm(
 
 export function registerTools(mcp: McpServer, deps: ToolDeps): void {
   if (deps.hostTools === false) {
+    registerAgentHandoffTools(mcp, deps)
     registerBrowserTools(mcp, deps)
     return
   }

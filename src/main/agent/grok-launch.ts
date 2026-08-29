@@ -3,8 +3,18 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync
 import { homedir, tmpdir } from 'os'
 import { join } from 'path'
 import type { BridgeInfo } from '../mcp/server'
+import type { AgentEffort } from '@shared/types'
 import type { AgentLaunchExtras, AgentLaunchSpec } from './launch'
 import { buildGrokMd } from './context'
+
+const GROK_EFFORTS: readonly AgentEffort[] = ['low', 'medium', 'high', 'max']
+
+/** Keep invalid/untrusted effort values away from the Grok CLI. */
+export function normalizeGrokEffort(value: unknown): AgentEffort | undefined {
+  return typeof value === 'string' && GROK_EFFORTS.includes(value as AgentEffort)
+    ? (value as AgentEffort)
+    : undefined
+}
 
 /**
  * Resolve the interactive `grok` binary. Never invoked with `-p` / headless mode.
@@ -143,14 +153,22 @@ export function prepareGrokLaunch(
     mode: 0o600
   })
 
+  const args = [
+    // Remote-bridge sessions don't need web tools; keeps air-gapped hosts quiet.
+    '--disable-web-search',
+    // Embedded pane: one agent, no subagent fan-out.
+    '--no-subagents'
+  ]
+  const model = extras?.model?.trim()
+  if (model) args.push('--model', model)
+  const effort = normalizeGrokEffort(extras?.effort)
+  if (effort) args.push('--effort', effort)
+  const prompt = extras?.initialPrompt?.replace(/\s+$/u, '')
+  if (prompt) args.push(prompt)
+
   return {
     bin: resolveGrokBin(),
-    args: [
-      // Remote-bridge sessions don't need web tools; keeps air-gapped hosts quiet.
-      '--disable-web-search',
-      // Embedded pane: one agent, no subagent fan-out.
-      '--no-subagents'
-    ],
+    args,
     cwd: extras?.spawnCwd || overlay,
     env,
     cleanup: () => {

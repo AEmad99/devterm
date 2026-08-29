@@ -34,6 +34,8 @@ describe('agent briefings', () => {
     assert.match(md, /mcp__devterm__browser_open/)
     assert.match(md, /first-class/i)
     assert.match(md, /tools \*\*are\*\* registered/)
+    assert.match(md, /agent_delegate/)
+    assert.match(md, /agent_message/)
     assert.doesNotMatch(md, /not an MCP-connected environment/)
     assert.ok(md.indexOf('In-app browser') < md.indexOf('How to work'))
     assert.doesNotMatch(md, /Built-in tools are disabled/)
@@ -55,5 +57,11 @@ describe('agent briefings', () => {
     const md = buildLocalNativeMd(local, { browserTools: false })
     assert.match(md, /browser tools are disabled/i)
     assert.doesNotMatch(md, /browser_open/)
+  })
+
+  it('local native briefing reflects disabled handoff tools', () => {
+    const md = buildLocalNativeMd(local, { agentHandoff: false })
+    assert.match(md, /handoff tools are disabled/i)
+    assert.doesNotMatch(md, /agent_delegate/)
   })
 })

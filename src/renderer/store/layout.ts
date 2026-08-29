@@ -312,6 +312,8 @@ interface LayoutState {
    * leave the webview off-screen).
    */
   splitBeside: (anchorSid: string, newSid: string, zone?: DropZone) => void
+  /** Add a new session to the exact leaf containing the anchor session. */
+  addTabToSessionLeaf: (anchorSid: string, newSid: string) => boolean
   /** Collapse a split pane: move all its tabs into another leaf and prune. */
   mergeLeaf: (leafId: string) => void
   /** Adjust a split divider; delta is a fraction of the container. */
@@ -567,6 +569,60 @@ export const useLayout = create<LayoutState>((set) => ({
         focusedId: null
       }
     }),
+
+  addTabToSessionLeaf: (anchorSid, newSid) => {
+    let added = false
+    set((s) => {
+      if (anchorSid === newSid) return s
+      const group = s.groups.find((g) => g.root && leafOf(g.root, anchorSid))
+      if (!group?.root) return s
+      const target = leafOf(group.root, anchorSid)
+      if (!target) return s
+
+      // App's normal reconciliation may have already placed the prescribed
+      // id on the group's active leaf. Move it to the caller's leaf before
+      // appending so a hidden/inactive source agent still gets the right tab.
+      const existingGroup = s.groups.find((g) => g.root && leafOf(g.root, newSid))
+      if (existingGroup && existingGroup.id !== group.id) return s
+      const existing = leafOf(group.root, newSid)
+      if (existing?.id === target.id) {
+        added = true
+        return {
+          ...s,
+          activeGroupId: group.id,
+          groups: s.groups.map((g) =>
+            g.id === group.id
+              ? {
+                  ...g,
+                  root: updateLeaf(g.root!, target.id, (l) => ({ ...l, active: newSid })),
+                  activeLeaf: target.id
+                }
+              : g
+          ),
+          focusedId: null
+        }
+      }
+
+      let root = removeTab(group.root, newSid)
+      const nextTarget = leafOf(root, anchorSid)
+      if (!nextTarget) return s
+      root = updateLeaf(root!, nextTarget.id, (l) => ({
+        ...l,
+        tabs: [...l.tabs, newSid],
+        active: newSid
+      }))
+      added = true
+      return {
+        ...s,
+        activeGroupId: group.id,
+        groups: s.groups.map((g) =>
+          g.id === group.id ? { ...g, root, activeLeaf: nextTarget.id } : g
+        ),
+        focusedId: null
+      }
+    })
+    return added
+  },
 
   mergeLeaf: (leafId) =>
     set((s) =>

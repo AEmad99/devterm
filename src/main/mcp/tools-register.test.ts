@@ -5,7 +5,11 @@ import { registerTools } from './tools'
 import { Policy } from './policy'
 import { LocalHostBackend } from '../agent/host-backend'
 
-function collectTools(hostTools: boolean, browserEnabled: boolean): string[] {
+function collectTools(
+  hostTools: boolean,
+  browserEnabled: boolean,
+  handoffEnabled = false
+): string[] {
   const names: string[] = []
   const mcp = {
     registerTool: (name: string) => {
@@ -21,7 +25,20 @@ function collectTools(hostTools: boolean, browserEnabled: boolean): string[] {
     policy: new Policy('full'),
     confirm: async () => 'approved',
     hostTools,
-    browser: { enabled: browserEnabled, service: {} as never }
+    browser: { enabled: browserEnabled, service: {} as never },
+    agentHandoff: handoffEnabled
+      ? {
+          enabled: true,
+          list: () => [],
+          delegate: async (input) => ({
+            sessionId: 'target',
+            kind: input.kind,
+            cwd: 'C:\\projects',
+            title: 'target'
+          }),
+          message: async () => undefined
+        }
+      : undefined
   })
   return names
 }
@@ -60,6 +77,21 @@ describe('MCP tool registration', () => {
     assert.equal(
       names.some((n) => n.startsWith('browser_')),
       true
+    )
+  })
+
+  it('registers local handoff tools only when enabled', () => {
+    const names = collectTools(false, false, true)
+    for (const tool of ['agent_list', 'agent_delegate', 'agent_message']) {
+      assert.equal(names.includes(tool), true, `missing ${tool}`)
+    }
+    assert.deepEqual(
+      collectTools(false, false, false).filter((name) => name.startsWith('agent_')),
+      []
+    )
+    assert.deepEqual(
+      collectTools(true, false, true).filter((name) => name.startsWith('agent_')),
+      []
     )
   })
 })

@@ -102,6 +102,7 @@ Bridge & tools:
 - Bridge status over `agent:bridge-status:<id>`; MCP `notifications/message` heartbeat every 25s; renderer pushes live cwd via `agent:set-cwd`; confirmations (`agent:confirm`) time out after 120s as `'timeout'`. Confirms and PTY data are **broadcast** to every `BrowserWindow` so a floating agent window can approve and stream.
 - Agent PTY is **not** killed on its own exit — bridge + temp dir stay up for auto-restart after SSH reconnect; cleaned up only on explicit **Stop** / session close / quit. Activity log: `bridge-activity.ts` → `AgentActivityPanel.tsx` (filterable, exportable JSONL).
 - Resume keys: remote uses `deriveAgentSessionId` (saved connection / `user@host:port`). Local uses `deriveLocalAgentSessionId(cwd)` so two folders do not share one transcript.
+- Local handoff (`src/main/mcp/tools-agent.ts`, default on in Settings → DevTerm Agent) is local-only: `agent_list`, `agent_delegate`, and `agent_message` expose visible sibling tabs, preserve the source cwd/leaf, cap delegates per source, and never register on remote bridges. Delegated launches carry a wrapped first prompt plus optional model/effort; close the target tab to stop only that agent.
 
 **Agent UI modes (1.3.15+):** process lifetime ≠ UI placement.
 
@@ -256,7 +257,7 @@ Snapshot of the **implemented** surface area as of this audit. Use this when pri
 | File explorer (cwd-following) | **Shipped** | Local fs + remote SFTP; `FsApi.watch()` live updates |
 | Dual-pane SFTP + transfers | **Shipped** | Persistent queue (concurrency 2); no mid-file resume |
 | CodeMirror editor | **Shipped** | Multi-language CM6; 5 MiB cap; Markdown edit/side/preview (`MarkdownPreview`) |
-| In-app browser | **Shipped** | Hardened `<webview>`, zoom, downloads; **not** agent-scriptable |
+| In-app browser | **Shipped** | Hardened `<webview>`, zoom, downloads; first-class agent `browser_*` control |
 | Command palette + snippets | **Shipped** | Ctrl/Cmd+K; `{{placeholders}}`; history + frecency |
 | History-driven autosuggest | **Shipped** | OSC 133 ;B anchors + popup (`lib/autosuggest.ts`) |
 | Per-pane find | **Shipped** | SearchAddon + `SearchBar`; App hotkey + pane key handler via `openTerminalFind` |
@@ -272,6 +273,7 @@ Snapshot of the **implemented** surface area as of this audit. Use this when pri
 | Ask-agent strip | **Removed** | Header Open Agent is the launch surface; no bottom compose bar |
 | Floating agent window | **Shipped** | Separate OS window (`agent-window.html`); dock/hide/stop |
 | Local DevTerm Agent | **Shipped** | Header Open Agent on `LocalSessionView` occupies the pane (not a side split); native builtin tools in the operator cwd; MCP is `browser_*` only; resume key is per-directory |
+| Local agent handoff | **Shipped** | Local-only `agent_list` / `agent_delegate` / `agent_message`; visible sibling tab or split, source-leaf placement, cwd validation, and per-source cap |
 | Agent browser tools | **Shipped** | 11 `browser_*` MCP tools; agent-owned tabs + confirm-gated attach to operator tabs; ref-based snapshots; screenshots to `userData/agent-artifacts` |
 | MCP host tools | **Shipped** | `ping`, `get_host_context`, `run_command`, `list_dir`, `read_file`, `write_file` over HostBackend (SSH or local) |
 | Agent guardrails | **Shipped** | Prefix approval rules + activity log; permission prompts belong to the agent CLI |

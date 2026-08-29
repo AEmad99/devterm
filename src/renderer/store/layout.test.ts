@@ -36,4 +36,43 @@ describe('splitBeside', () => {
     assert.deepEqual(right.tabs, ['browser-1'])
     assert.equal(useLayout.getState().focusedId, null)
   })
+
+  it('places a prescribed new id on the source session leaf', () => {
+    useLayout.setState({
+      groups: [
+        {
+          id: DEFAULT_GROUP,
+          name: 'Terminals',
+          root: {
+            type: 'split',
+            id: 'split-1',
+            dir: 'row',
+            sizes: [0.5, 0.5],
+            children: [
+              { type: 'leaf', id: 'leaf-source', tabs: ['source'], active: 'source' },
+              { type: 'leaf', id: 'leaf-other', tabs: ['other'], active: 'other' }
+            ]
+          },
+          activeLeaf: 'leaf-other'
+        }
+      ],
+      activeGroupId: DEFAULT_GROUP,
+      focusedId: null,
+      groupFlags: {}
+    })
+    useLayout.getState().sync([
+      { id: 'source', groupId: DEFAULT_GROUP },
+      { id: 'other', groupId: DEFAULT_GROUP },
+      { id: 'delegated', groupId: DEFAULT_GROUP }
+    ])
+    assert.equal(useLayout.getState().addTabToSessionLeaf('source', 'delegated'), true)
+    const root = useLayout.getState().groups[0].root
+    assert.equal(root?.type, 'split')
+    if (root?.type !== 'split') return
+    assert.deepEqual(root.children[0].type === 'leaf' ? root.children[0].tabs : [], [
+      'source',
+      'delegated'
+    ])
+    assert.deepEqual(root.children[1].type === 'leaf' ? root.children[1].tabs : [], ['other'])
+  })
 })

@@ -109,6 +109,7 @@ export function defaultSettingsSnapshot(): SettingsSnapshot {
       fallbackModels: [],
       resumeSessions: true,
       browserTools: true,
+      agentHandoff: true,
       trustedSkills: []
     },
     remoteDetachedSessions: true,
@@ -165,9 +166,14 @@ export function mergeSnapshotWithDefaults(
         model: '',
         fallbackModels: [],
         resumeSessions: true,
+        agentHandoff: true,
         trustedSkills: []
       }),
       ...raw.agentPreferences,
+      agentHandoff:
+        typeof raw.agentPreferences.agentHandoff === 'boolean'
+          ? raw.agentPreferences.agentHandoff
+          : (defaults.agentPreferences?.agentHandoff ?? true),
       fallbackModels: Array.isArray(raw.agentPreferences.fallbackModels)
         ? raw.agentPreferences.fallbackModels.filter(
             (value): value is string => typeof value === 'string'

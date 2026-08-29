@@ -8,7 +8,7 @@ import { fitNow, fitSoon } from '../../lib/fit'
 import { attachRenderer, attachClipboard } from '../../lib/renderer'
 import { createIdleChime, AGENT_ATTENTION_BODY } from '../../lib/attention'
 import { useBridgeActivity } from '../../lib/bridge-activity'
-import { AGENT_BRIDGE_POLICY, agentKindLabel } from '../../lib/agent-ui'
+import { AGENT_BRIDGE_POLICY, agentKindLabel, injectAgentPrompt } from '../../lib/agent-ui'
 
 /** Live state of the agent's link to this host (what the status pill reflects). */
 type BridgeState = AgentBridgeStatus['state'] | 'connecting' | 'exited'
@@ -167,6 +167,19 @@ export default function AgentPane({
     const cleanups: Array<() => void> = [disposeRenderer, disposeClipboard]
 
     ;(async () => {
+      // Delegated sessions carry a one-time prompt/model/effort on the
+      // renderer session. Consume it before opening so reconnects and UI mode
+      // remounts never submit the handoff twice.
+      const launch = useSessions.getState().consumeAgentLaunch(sessionId)
+      const acknowledge = (ok: boolean, error?: string) => {
+        if (!launch?.requestId) return
+        window.devterm.agent.ackDelegate({
+          requestId: launch.requestId,
+          sessionId,
+          ok,
+          error
+        })
+      }
       try {
         const live = useSessions.getState().sessions.find((x) => x.id === sessionId)
         const {
@@ -177,19 +190,25 @@ export default function AgentPane({
           sessionId,
           kind,
           mode,
-          preferences: kind === 'devterm' ? useSettings.getState().agentPreferences : undefined,
+          preferences: useSettings.getState().agentPreferences,
           cwd: live?.cwd,
           cols: term.cols,
           rows: term.rows,
           forceRestart,
+          initialPrompt: launch?.prompt,
+          model: launch?.model,
+          effort: launch?.effort,
+          title: live?.title,
           sessionKind: live?.kind === 'local' ? 'local' : 'remote',
           browserTools: useSettings.getState().agentPreferences.browserTools !== false
         })
         if (disposed) {
+          acknowledge(false, 'The delegated agent pane was closed before it could start.')
           // Only kill if we were asked to own the lifecycle.
           if (closeOnUnmount) window.devterm.agent.close(sessionId)
           return
         }
+        acknowledge(true)
         if (mirrorToStore) {
           setAgentUi(sessionId, { kind, policyMode: mode, ptyId })
         }
@@ -257,6 +276,21 @@ export default function AgentPane({
             term.write(`\r\n\x1b[90m[${kind} exited with code ${exitCode}]\x1b[0m\r\n`)
           })
         )
+        if (
+          launch?.prompt &&
+          (kind === 'opencode' || kind === 'kimi' || kind === 'antigravity') &&
+          !reused
+        ) {
+          void injectAgentPrompt(sessionId, ptyId, launch.prompt, { fresh: true }).catch(
+            (error) => {
+              term.write(
+                `\r\n\x1b[31m[failed to deliver delegated prompt: ${String(
+                  (error as Error).message || error
+                )}]\x1b[0m\r\n`
+              )
+            }
+          )
+        }
         const inputDisposable = term.onData((d) => {
           // Only the active surface drives the PTY (avoids double input when
           // a stashed main pane coexists with a floating window).
@@ -281,6 +315,7 @@ export default function AgentPane({
         fitSoon(fit, host, push)
       } catch (e) {
         const msg = String((e as Error).message || e)
+        acknowledge(false, msg)
         setBridge('error')
         setBridgeMessage(msg)
         term.write(`\r\n\x1b[31m[failed to start ${kind}: ${msg}]\x1b[0m\r\n`)
@@ -289,6 +324,7 @@ export default function AgentPane({
             ? `\x1b[90mAuthenticate with /login or a provider API-key environment variable, then retry. DevTerm does not store model credentials.\x1b[0m\r\n`
             : `\x1b[90mIs the \`${kind}\` CLI installed and on PATH? Authenticated with an API key or /login? Is the SSH session connected?\x1b[0m\r\n`
         )
+        if (launch?.requestId) useSessions.getState().close(sessionId)
       }
     })()
 

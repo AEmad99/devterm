@@ -42,4 +42,34 @@ describe('grok launch', () => {
       rmSync(project, { recursive: true, force: true })
     }
   })
+
+  it('passes supported model, effort, and prompt flags but omits invalid effort', () => {
+    const valid = prepareGrokLaunch('briefing', bridge, {
+      model: 'luna',
+      effort: 'max',
+      initialPrompt: 'implement the plan   '
+    })
+    try {
+      assert.deepEqual(valid.args.slice(-5), [
+        '--model',
+        'luna',
+        '--effort',
+        'max',
+        'implement the plan'
+      ])
+    } finally {
+      valid.cleanup()
+    }
+
+    const invalid = prepareGrokLaunch('briefing', bridge, {
+      effort: 'unsupported' as never,
+      initialPrompt: 'task'
+    })
+    try {
+      assert.equal(invalid.args.includes('--effort'), false)
+      assert.equal(invalid.args.at(-1), 'task')
+    } finally {
+      invalid.cleanup()
+    }
+  })
 })

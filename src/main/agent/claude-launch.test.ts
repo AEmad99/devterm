@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, it } from 'node:test'
 import { prepareClaudeLaunch } from './claude-launch'
-import { prepareCodexLaunch } from './codex-launch'
+import { codexReasoningEffort, prepareCodexLaunch } from './codex-launch'
 import { prepareOpencodeLaunch } from './opencode-launch'
 
 const bridge = { url: 'http://127.0.0.1:12345/mcp', token: 'tok', port: 12345 }
@@ -15,7 +15,9 @@ describe('fallback native local launches', () => {
     const spec = await prepareClaudeLaunch('remote CLAUDE.md', bridge, {
       nativeLocal: true,
       spawnCwd: project,
-      appendSystemPrompt: 'native local'
+      appendSystemPrompt: 'native local',
+      model: 'claude-sonnet',
+      initialPrompt: 'implement the plan'
     })
     try {
       assert.equal(spec.cwd, project)
@@ -23,6 +25,8 @@ describe('fallback native local launches', () => {
       assert.equal(spec.args.includes('mcp__devterm__*'), true)
       assert.equal(spec.args.includes('--append-system-prompt'), true)
       assert.equal(spec.args.includes('--mcp-config'), true)
+      assert.equal(spec.args[spec.args.indexOf('--model') + 1], 'claude-sonnet')
+      assert.equal(spec.args.at(-1), 'implement the plan')
     } finally {
       spec.cleanup()
       rmSync(project, { recursive: true, force: true })
@@ -46,6 +50,29 @@ describe('fallback native local launches', () => {
       spec.cleanup()
       rmSync(project, { recursive: true, force: true })
     }
+  })
+
+  it('codex maps max effort and keeps invalid values out of CLI args', () => {
+    const project = mkdtempSync(join(tmpdir(), 'devterm-codex-flags-'))
+    const spec = prepareCodexLaunch('briefing', bridge, {
+      nativeLocal: true,
+      spawnCwd: project,
+      model: 'luna',
+      effort: 'max',
+      initialPrompt: 'implement the plan'
+    })
+    try {
+      assert.equal(spec.args[spec.args.indexOf('-m') + 1], 'luna')
+      assert.equal(spec.args[spec.args.indexOf('-c') + 1], 'model_reasoning_effort=xhigh')
+      assert.equal(spec.args.at(-1), 'implement the plan')
+    } finally {
+      spec.cleanup()
+      rmSync(project, { recursive: true, force: true })
+    }
+  })
+
+  it('codex omits an unsupported effort value', () => {
+    assert.equal(codexReasoningEffort('unsupported'), undefined)
   })
 
   it('opencode keeps builtin tools and points OPENCODE_CONFIG at the overlay', async () => {

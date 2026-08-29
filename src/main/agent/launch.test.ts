@@ -88,6 +88,7 @@ describe('bundled DevTerm Agent launch', () => {
           fallbackModels: ['openai/gpt-5', 'google/gemini-2.5-pro'],
           resumeSessions: true,
           browserTools: true,
+          agentHandoff: true,
           trustedSkills: [
             {
               name: 'SKILL.md',

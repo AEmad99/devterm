@@ -3,8 +3,24 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync
 import { homedir, tmpdir } from 'os'
 import { join } from 'path'
 import type { BridgeInfo } from '../mcp/server'
+import type { AgentEffort } from '@shared/types'
 import type { AgentLaunchExtras, AgentLaunchSpec } from './launch'
 import { buildCodexMd } from './context'
+
+/** Map DevTerm's user-facing effort names to Codex's reasoning values. */
+export function codexReasoningEffort(value: unknown): string | undefined {
+  const effort = value as AgentEffort | undefined
+  switch (effort) {
+    case 'low':
+    case 'medium':
+    case 'high':
+      return effort
+    case 'max':
+      return 'xhigh'
+    default:
+      return undefined
+  }
+}
 
 /**
  * Resolve the interactive `codex` binary. Never invoked with `exec` / headless mode.
@@ -107,6 +123,12 @@ Authorization = "Bearer ${bridge.token}"
   // workspace-write + shell in the operator's folder. Do not pass
   // `--ask-for-approval`: Codex owns its permission UI.
   const args = ['--sandbox', sandbox]
+  const model = extras?.model?.trim()
+  if (model) args.push('-m', model)
+  const effort = codexReasoningEffort(extras?.effort)
+  if (effort) args.push('-c', `model_reasoning_effort=${effort}`)
+  const prompt = extras?.initialPrompt?.replace(/\s+$/u, '')
+  if (prompt) args.push(prompt)
 
   return {
     bin: resolveCodexBin(),

@@ -365,8 +365,25 @@ export interface AgentPreferences {
    * panes (its own tabs freely; operator tabs only after a per-tab confirm).
    */
   browserTools: boolean
+  /** Allow a local agent to open visible sibling local-agent tabs. */
+  agentHandoff: boolean
   /** Hash-pinned, instruction-only skills. Executable third-party extensions stay disabled. */
   trustedSkills: AgentTrustedSkill[]
+}
+
+/** Reasoning effort requested for a delegated agent launch. */
+export type AgentEffort = 'low' | 'medium' | 'high' | 'max'
+
+/** Where a delegated agent is placed relative to the source agent. */
+export type AgentHandoffLayout = 'tab' | 'split'
+
+/** One-time launch payload stored on a renderer session until AgentPane consumes it. */
+export interface AgentLaunchRequest {
+  prompt: string
+  model?: string
+  effort?: AgentEffort
+  /** Main-generated request id used to acknowledge a visible handoff launch. */
+  requestId?: string
 }
 
 export interface AgentModelInfo {
@@ -436,10 +453,17 @@ export interface AgentOpenOpts {
    */
   forceRestart?: boolean
   /**
-   * First user message for a brand-new DevTerm Agent / Pi process (`pi "…"`).
-   * Ignored on reuse. Other CLIs still receive the prompt via PTY inject.
+   * First user message for a brand-new agent. DevTerm/Pi, Claude, Grok, and
+   * Codex receive it as a CLI argument; other CLIs receive it via PTY inject.
+   * Ignored on reuse.
    */
   initialPrompt?: string
+  /** Explicit model override, primarily used by local agent handoffs. */
+  model?: string
+  /** Explicit reasoning effort, primarily used by local agent handoffs. */
+  effort?: AgentEffort
+  /** Optional renderer session title, surfaced by `agent_list`. */
+  title?: string
   /**
    * Enable the `browser_*` MCP tools for this agent (agent can drive in-app
    * browser panes). Defaults to true; mirrored from the renderer's
@@ -538,6 +562,52 @@ export interface AgentSessionStatus {
   bridge: AgentBridgeStatus
   /** UI placement last reported by the renderer. */
   uiMode?: AgentUiMode
+}
+
+/** Main -> renderer request to open a sibling local agent tab. */
+export interface AgentDelegateRequest {
+  requestId: string
+  sourceSessionId: string
+  sourceKind: AgentKind
+  /** Pre-agreed renderer session id for the new local terminal. */
+  sessionId: string
+  kind: AgentKind
+  /** Absolute, existing local working directory. */
+  cwd: string
+  /** Wrapped handoff prompt delivered as the new agent's first message. */
+  prompt: string
+  model?: string
+  effort?: AgentEffort
+  /** Final display title for the new tab. */
+  title: string
+  layout: AgentHandoffLayout
+}
+
+/** Renderer -> main acknowledgement for a delegated local-agent launch. */
+export interface AgentDelegateAck {
+  requestId: string
+  sessionId: string
+  ok: boolean
+  error?: string
+}
+
+/** Compact local-agent row returned by the `agent_list` MCP tool. */
+export interface AgentListEntry {
+  sessionId: string
+  kind: AgentKind
+  title: string
+  cwd?: string
+  bridge: AgentBridgeState
+  lastTask?: string
+  isSelf: boolean
+}
+
+/** Successful result returned by the `agent_delegate` MCP tool. */
+export interface AgentDelegateResult {
+  sessionId: string
+  kind: AgentKind
+  cwd: string
+  title: string
 }
 
 /** Open or focus a floating agent BrowserWindow. */
@@ -730,6 +800,10 @@ export const IPC = {
   agentWindowClose: 'agent:window:close',
   /** Main → renderer: floating window was closed by the user (X button). */
   agentWindowClosed: 'agent:window:closed',
+  /** Main -> renderer: open a visible sibling local-agent session. */
+  agentDelegateRequest: 'agent:delegate-request',
+  /** Renderer -> main: acknowledge a delegated session after agent.open starts. */
+  agentDelegateAck: 'agent:delegate-ack',
 
   // Local-only process telemetry (no analytics or network reporting).
   performanceSnapshot: 'performance:snapshot',
@@ -1022,6 +1096,10 @@ export interface DevTermApi {
     onWindowClosed(cb: (sessionId: string) => void): () => void
     /** Cross-window UI mode sync (floating window → main store). */
     onUiModeChanged(cb: (info: { sessionId: string; mode: AgentUiMode | null }) => void): () => void
+    /** Main asks the main renderer to create a sibling local-agent tab. */
+    onDelegateRequest(cb: (request: AgentDelegateRequest) => void): () => void
+    /** A delegated AgentPane reports that its agent.open call started or failed. */
+    ackDelegate(ack: AgentDelegateAck): void
   }
   performance: {
     snapshot(): Promise<PerformanceSnapshot>

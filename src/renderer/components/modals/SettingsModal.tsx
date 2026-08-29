@@ -1153,15 +1153,30 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                       </span>
                     </label>
 
-                    <label className="settings-row-grid" title="Let the agent open and drive in-app browser tabs. Its own tabs are free; your tabs require a one-time confirmation per tab.">
+                    <label
+                      className="settings-row-grid"
+                      title="Let the agent open and drive in-app browser tabs. Its own tabs are free; your tabs require a one-time confirmation per tab."
+                    >
                       <span className="settings-label">Browser tools</span>
                       <span className="settings-control">
                         <input
                           type="checkbox"
                           checked={agentPreferences.browserTools}
-                          onChange={(e) =>
-                            setAgentPreferences({ browserTools: e.target.checked })
-                          }
+                          onChange={(e) => setAgentPreferences({ browserTools: e.target.checked })}
+                        />
+                      </span>
+                    </label>
+
+                    <label
+                      className="settings-row-grid"
+                      title="Allow local agents to open visible sibling agent tabs and send follow-up messages."
+                    >
+                      <span className="settings-label">Local agent handoff</span>
+                      <span className="settings-control">
+                        <input
+                          type="checkbox"
+                          checked={agentPreferences.agentHandoff}
+                          onChange={(e) => setAgentPreferences({ agentHandoff: e.target.checked })}
                         />
                       </span>
                     </label>

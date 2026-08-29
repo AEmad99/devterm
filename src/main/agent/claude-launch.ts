@@ -75,6 +75,10 @@ export async function prepareClaudeLaunch(
       args.push('--append-system-prompt', extras.appendSystemPrompt)
     }
   }
+  const model = extras?.model?.trim()
+  if (model) args.push('--model', model)
+  const prompt = extras?.initialPrompt?.replace(/\s+$/u, '')
+  if (prompt) args.push(prompt)
 
   return {
     bin: await resolveClaudeBin(),

@@ -16,6 +16,8 @@ import {
   type AgentOpenOpts,
   type AgentOpenResult,
   type AgentSessionStatus,
+  type AgentDelegateRequest,
+  type AgentDelegateAck,
   type AgentUiMode,
   type AgentWindowOpenOpts,
   type AgentBridgeStatus,
@@ -160,7 +162,9 @@ const api: DevTermApi = {
     closeWindow: (sessionId: string) => ipcRenderer.send(IPC.agentWindowClose, sessionId),
     onWindowClosed: (cb) => subscribe<string>(IPC.agentWindowClosed, cb),
     onUiModeChanged: (cb) =>
-      subscribe<{ sessionId: string; mode: AgentUiMode | null }>(IPC.agentUiModeChanged, cb)
+      subscribe<{ sessionId: string; mode: AgentUiMode | null }>(IPC.agentUiModeChanged, cb),
+    onDelegateRequest: (cb) => subscribe<AgentDelegateRequest>(IPC.agentDelegateRequest, cb),
+    ackDelegate: (ack: AgentDelegateAck) => ipcRenderer.send(IPC.agentDelegateAck, ack)
   },
   performance: {
     snapshot: () => ipcRenderer.invoke(IPC.performanceSnapshot)

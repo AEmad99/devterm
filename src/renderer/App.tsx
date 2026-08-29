@@ -31,6 +31,7 @@ import { useDictation } from './store/dictation'
 import DictationStatus from './components/dictation/DictationStatus'
 import GitPanel from './components/git/GitPanel'
 import { initBrowserControl } from './lib/browser-control'
+import { initAgentHandoff } from './lib/agent-handoff'
 import type { HostContext } from '@shared/types'
 import type { View, BottomPanelMode } from './components/chrome/types'
 
@@ -58,6 +59,8 @@ export default function App() {
   useTransfersSync()
   // Agent browser control: route main's browser_open requests into panes.
   useEffect(() => initBrowserControl(), [])
+  // Local-agent handoff: turn main's request into a visible sibling tab.
+  useEffect(() => initAgentHandoff(), [])
   const transfersPanelOpen = useSettings((s) => s.transfersPanelOpen)
   const setTransfersPanelOpen = useSettings((s) => s.setTransfersPanelOpen)
   const agentActivityCollapsed = useSettings((s) => s.agentActivityCollapsed)

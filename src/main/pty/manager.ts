@@ -28,6 +28,9 @@ export interface PtyHandlers {
 /** Listener registered via `addExitListener`; called when a specific PTY exits. */
 export type PtyExitListener = (exitCode: number | undefined, signal?: number) => void
 
+/** Listener registered via `addDataListener`; receives output from one PTY. */
+export type PtyDataListener = (data: string) => void
+
 /**
  * Startup args for the chosen shell. For PowerShell we inject a `prompt`
  * function that emits, on every prompt:
@@ -170,6 +173,7 @@ export class PtyManager {
    * leaving them orphaned until the user manually closes the pane.
    */
   private exitListeners = new Map<string, Set<PtyExitListener>>()
+  private dataListeners = new Map<string, Set<PtyDataListener>>()
 
   constructor(private handlers: PtyHandlers) {}
 
@@ -189,6 +193,25 @@ export class PtyManager {
       if (!s) return
       s.delete(cb)
       if (s.size === 0) this.exitListeners.delete(id)
+    }
+  }
+
+  /**
+   * Subscribe to output from one PTY. This is used by the local-agent bridge
+   * to wait for a quiet TUI before injecting a follow-up message.
+   */
+  addDataListener(id: string, cb: PtyDataListener): () => void {
+    let set = this.dataListeners.get(id)
+    if (!set) {
+      set = new Set()
+      this.dataListeners.set(id, set)
+    }
+    set.add(cb)
+    return () => {
+      const s = this.dataListeners.get(id)
+      if (!s) return
+      s.delete(cb)
+      if (s.size === 0) this.dataListeners.delete(id)
     }
   }
 
@@ -275,6 +298,16 @@ export class PtyManager {
     proc.onData((data) => {
       if (!healthHealthy && hasRealOutput(data)) healthHealthy = true
       this.handlers.onData(id, data)
+      const listeners = this.dataListeners.get(id)
+      if (listeners) {
+        for (const cb of [...listeners]) {
+          try {
+            cb(data)
+          } catch (err) {
+            console.error('[pty] data listener threw:', err)
+          }
+        }
+      }
     })
     proc.onExit(({ exitCode, signal }) => {
       // Stale-exit guard: ids can be reused (agent auto-restart re-creates a PTY
@@ -288,6 +321,7 @@ export class PtyManager {
       }
       this.handlers.onExit(id, exitCode, signal)
       this.ptys.delete(id)
+      this.dataListeners.delete(id)
       const set = this.exitListeners.get(id)
       if (set) {
         this.exitListeners.delete(id)
@@ -360,6 +394,7 @@ export class PtyManager {
     // Listeners are not invoked here: kill() is an explicit teardown, and the
     // process's own onExit (guarded against stale ids) owns listener fan-out.
     this.exitListeners.delete(id)
+    this.dataListeners.delete(id)
   }
 
   killAll(): void {

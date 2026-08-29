@@ -1,9 +1,14 @@
 import { ipcMain, BrowserWindow, app, dialog, type OpenDialogOptions } from 'electron'
 import { createHash, randomUUID } from 'crypto'
 import { mkdirSync, readFileSync, statSync } from 'fs'
-import { basename, join } from 'path'
+import { basename, isAbsolute, join } from 'path'
 import {
   IPC,
+  type AgentDelegateAck,
+  type AgentDelegateRequest,
+  type AgentDelegateResult,
+  type AgentEffort,
+  type AgentListEntry,
   type AgentBridgeStatus,
   type AgentOpenOpts,
   type AgentOpenResult,
@@ -17,8 +22,11 @@ import {
 } from '@shared/types'
 import { McpBridge } from '../mcp/server'
 import type { ConfirmOutcome } from '../mcp/tools'
+import type { AgentHandoffInput } from '../mcp/tools-agent'
+import { buildAgentHandoffPrompt } from '../mcp/tools-agent'
 import { Policy } from '../mcp/policy'
 import * as approvalRules from '../agent/approval-rules'
+import * as bridgeActivity from '../agent/bridge-activity'
 import {
   buildAgentsMd,
   deriveAgentSessionId,
@@ -64,6 +72,47 @@ interface AgentSession {
   lastOpts?: AgentOpenOpts
   /** Last bridge status emitted; reused for `sshDown` mirror so the UI sees it. */
   lastBridgeStatus?: AgentBridgeStatus
+}
+
+const MAX_DELEGATED_AGENTS_PER_SOURCE = 4
+const HANDOFF_WAIT_MS = 8000
+const AGENT_READY_WAIT_MS = 20000
+
+const AGENT_EFFORTS: readonly AgentEffort[] = ['low', 'medium', 'high', 'max']
+const AGENT_KINDS: readonly AgentOpenOpts['kind'][] = [
+  'devterm',
+  'pi',
+  'claude',
+  'opencode',
+  'kimi',
+  'grok',
+  'codex',
+  'antigravity'
+]
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function agentKindLabel(kind: AgentOpenOpts['kind']): string {
+  switch (kind) {
+    case 'devterm':
+      return 'DevTerm Agent'
+    case 'claude':
+      return 'Claude'
+    case 'opencode':
+      return 'OpenCode'
+    case 'kimi':
+      return 'Kimi'
+    case 'grok':
+      return 'Grok'
+    case 'codex':
+      return 'Codex'
+    case 'antigravity':
+      return 'Antigravity'
+    default:
+      return 'Pi'
+  }
 }
 
 export interface AgentController {
@@ -117,11 +166,68 @@ export function registerAgentIpc(
   const uiModes = new Map<string, AgentUiMode>()
   /** Floating agent BrowserWindows keyed by remote session id. */
   const agentWindows = new Map<string, BrowserWindow>()
+  /** Renderer acknowledgements for in-flight local handoff requests. */
+  const handoffWaiters = new Map<
+    string,
+    {
+      sessionId: string
+      resolve: (result: AgentDelegateResult) => void
+      reject: (error: Error) => void
+      timer: ReturnType<typeof setTimeout>
+    }
+  >()
+  /** Delegated local agent ids grouped by their source agent. */
+  const delegatedBySource = new Map<string, Set<string>>()
 
   const sendMain = (channel: string, ...args: unknown[]) => {
     const win = getWindow()
     if (win && !win.isDestroyed()) win.webContents.send(channel, ...args)
   }
+
+  const forgetDelegated = (sessionId: string): void => {
+    for (const [sourceId, ids] of delegatedBySource) {
+      ids.delete(sessionId)
+      if (ids.size === 0) delegatedBySource.delete(sourceId)
+    }
+  }
+
+  const rejectHandoffWaiter = (requestId: string, error: Error): void => {
+    const waiter = handoffWaiters.get(requestId)
+    if (!waiter) return
+    handoffWaiters.delete(requestId)
+    clearTimeout(waiter.timer)
+    waiter.reject(error)
+  }
+
+  // The acknowledgement is emitted by the main renderer after the prescribed
+  // session has mounted its AgentPane and the agent.open call has started.
+  ipcMain.on(IPC.agentDelegateAck, (event, ack: AgentDelegateAck) => {
+    const main = getWindow()
+    if (main && event.sender !== main.webContents) return
+    if (
+      !ack ||
+      typeof ack.requestId !== 'string' ||
+      typeof ack.sessionId !== 'string' ||
+      typeof ack.ok !== 'boolean'
+    )
+      return
+    const waiter = handoffWaiters.get(ack.requestId)
+    if (!waiter || waiter.sessionId !== ack.sessionId) return
+    handoffWaiters.delete(ack.requestId)
+    clearTimeout(waiter.timer)
+    if (ack.ok) {
+      const target = sessions.get(ack.sessionId)
+      const opts = target?.lastOpts
+      waiter.resolve({
+        sessionId: ack.sessionId,
+        kind: opts?.kind ?? 'devterm',
+        cwd: cwds.get(ack.sessionId) ?? opts?.cwd ?? '',
+        title: opts?.title ?? `${agentKindLabel(opts?.kind ?? 'devterm')} agent`
+      })
+    } else {
+      waiter.reject(new Error(ack.error || 'the delegated agent failed to start'))
+    }
+  })
 
   const closeAgentWindow = (sessionId: string, notifyMain = false): void => {
     const win = agentWindows.get(sessionId)
@@ -166,6 +272,14 @@ export function registerAgentIpc(
   const closeOne = async (sessionId: string): Promise<void> => {
     const s = sessions.get(sessionId)
     if (!s) return
+    for (const [requestId, waiter] of handoffWaiters) {
+      if (waiter.sessionId === sessionId) {
+        rejectHandoffWaiter(
+          requestId,
+          new Error('The delegated agent was closed before it started.')
+        )
+      }
+    }
     closeAgentWindow(sessionId, false)
     uiModes.delete(sessionId)
     // Fail any in-flight approval prompts for this session immediately —
@@ -204,8 +318,228 @@ export function registerAgentIpc(
     }
     sessions.delete(sessionId)
     cwds.delete(sessionId)
+    delegatedBySource.delete(sessionId)
+    forgetDelegated(sessionId)
     // Drop browser-control grants/default targets owned by this agent.
     browserControl().releaseAgent(sessionId)
+  }
+
+  const getLocalAgent = (sessionId: string): AgentSession | undefined => {
+    const session = sessions.get(sessionId)
+    return session?.lastOpts?.sessionKind === 'local' && !session.agentExited ? session : undefined
+  }
+
+  const listLocalAgents = (sourceSessionId: string): AgentListEntry[] => {
+    const rows: AgentListEntry[] = []
+    for (const [sessionId, session] of sessions) {
+      const opts = session.lastOpts
+      if (!opts || opts.sessionKind !== 'local' || session.agentExited) continue
+      const latest = bridgeActivity
+        .list(sessionId)
+        .slice()
+        .reverse()
+        .find((entry) => entry.kind === 'tool_call' || entry.kind === 'approval_request')
+      rows.push({
+        sessionId,
+        kind: opts.kind,
+        title: opts.title ?? `${agentKindLabel(opts.kind)} agent`,
+        cwd: cwds.get(sessionId) ?? opts.cwd,
+        bridge: session.bridge.getStatus().state,
+        lastTask: latest ? `${latest.tool}${latest.detail ? `: ${latest.detail}` : ''}` : undefined,
+        isSelf: sessionId === sourceSessionId
+      })
+    }
+    return rows.sort((a, b) => a.sessionId.localeCompare(b.sessionId))
+  }
+
+  const validateHandoffCwd = (requested: string | undefined, sourceId: string): string => {
+    const candidate =
+      requested?.trim() || cwds.get(sourceId) || sessions.get(sourceId)?.lastOpts?.cwd
+    if (!candidate) {
+      throw new Error('The source agent working directory is not known yet.')
+    }
+    if (!isAbsolute(candidate)) {
+      throw new Error('The handoff cwd must be an absolute path.')
+    }
+    try {
+      if (!statSync(candidate).isDirectory()) throw new Error('not a directory')
+    } catch {
+      throw new Error(`The handoff cwd does not exist or is not a directory: ${candidate}`)
+    }
+    return candidate
+  }
+
+  const handoffTitle = (kind: AgentOpenOpts['kind'], title: string | undefined, prompt: string) => {
+    const label = agentKindLabel(kind)
+    const clean = title
+      ?.replace(/[\r\n]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 80)
+    if (clean) return `${label} · ${clean}`
+    const preview = prompt
+      .replace(/[\r\n]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 56)
+    return `${label} · ${preview || 'handoff'}`
+  }
+
+  const delegateFrom = async (
+    sourceSessionId: string,
+    input: AgentHandoffInput
+  ): Promise<AgentDelegateResult> => {
+    const source = getLocalAgent(sourceSessionId)
+    if (!source?.lastOpts) throw new Error('Agent handoff is available only from local agents.')
+    const delegated = delegatedBySource.get(sourceSessionId) ?? new Set<string>()
+    for (const delegatedId of delegated) {
+      const target = sessions.get(delegatedId)
+      if (!target || target.agentExited) delegated.delete(delegatedId)
+    }
+    if (delegated.size >= MAX_DELEGATED_AGENTS_PER_SOURCE) {
+      throw new Error(
+        `Delegate cap reached: one local agent may have at most ${MAX_DELEGATED_AGENTS_PER_SOURCE} live delegated agents.`
+      )
+    }
+    if (typeof input.prompt !== 'string' || input.prompt.trim().length === 0) {
+      throw new Error('The handoff prompt must not be empty.')
+    }
+    if (input.prompt.length > 30000) {
+      throw new Error('The handoff prompt is too large (maximum 30,000 characters).')
+    }
+    if (!AGENT_EFFORTS.includes(input.effort as AgentEffort)) {
+      if (input.effort !== undefined)
+        throw new Error(`Unknown reasoning effort: ${String(input.effort)}`)
+    }
+    const model = input.model?.trim()
+    if (model && (model.length > 240 || /[\0\r\n]/u.test(model))) {
+      throw new Error('The handoff model must be a short single-line value.')
+    }
+    const cwd = validateHandoffCwd(input.cwd, sourceSessionId)
+    if (!AGENT_KINDS.includes(input.kind)) {
+      throw new Error(`Unknown local agent kind: ${String(input.kind)}`)
+    }
+    const layout = input.layout ?? 'tab'
+    if (layout !== 'tab' && layout !== 'split') {
+      throw new Error(`Unknown handoff layout: ${String(input.layout)}`)
+    }
+    const kind = input.kind
+    const title = handoffTitle(kind, input.title, input.prompt)
+    const sessionId = `local-agent-${Date.now()}-${randomUUID().slice(0, 8)}`
+    const requestId = randomUUID()
+    const prompt = buildAgentHandoffPrompt({
+      sourceKind: source.lastOpts.kind,
+      sourceSessionId,
+      cwd,
+      kind,
+      model: model || undefined,
+      effort: input.effort,
+      prompt: input.prompt
+    })
+    const request: AgentDelegateRequest = {
+      requestId,
+      sourceSessionId,
+      sourceKind: source.lastOpts.kind,
+      sessionId,
+      kind,
+      cwd,
+      prompt,
+      model: model || undefined,
+      effort: input.effort,
+      title,
+      layout
+    }
+    const win = getWindow()
+    if (!win || win.isDestroyed()) throw new Error('The DevTerm main window is unavailable.')
+
+    delegated.add(sessionId)
+    delegatedBySource.set(sourceSessionId, delegated)
+    let accepted = false
+    const pending = new Promise<AgentDelegateResult>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        handoffWaiters.delete(requestId)
+        reject(new Error('The delegated agent pane did not start in time.'))
+      }, HANDOFF_WAIT_MS)
+      handoffWaiters.set(requestId, { sessionId, resolve, reject, timer })
+    })
+    try {
+      win.webContents.send(IPC.agentDelegateRequest, request)
+      const result = await pending
+      accepted = true
+      return result
+    } finally {
+      const waiter = handoffWaiters.get(requestId)
+      if (waiter) {
+        handoffWaiters.delete(requestId)
+        clearTimeout(waiter.timer)
+      }
+      if (!accepted) forgetDelegated(sessionId)
+    }
+  }
+
+  const waitForAgentReady = async (agent: AgentSession): Promise<void> => {
+    const start = Date.now()
+    while (Date.now() - start < AGENT_READY_WAIT_MS) {
+      const state = agent.bridge.getStatus().state
+      // A listening bridge only means the HTTP server exists. Wait for the
+      // CLI's MCP handshake so a follow-up cannot land in its startup banner.
+      if (state === 'connected') return
+      if (state === 'error' || state === 'stopped') break
+      await sleep(250)
+    }
+    throw new Error('The target local agent is not ready to receive a message.')
+  }
+
+  const waitForPtyQuiet = async (ptyId: string): Promise<void> => {
+    await new Promise<void>((resolve) => {
+      let last = Date.now()
+      let quietTimer: ReturnType<typeof setTimeout> | undefined
+      let dispose: () => void = () => undefined
+      let settled = false
+      const finish = () => {
+        if (settled) return
+        settled = true
+        if (quietTimer) clearTimeout(quietTimer)
+        clearTimeout(limit)
+        dispose()
+        resolve()
+      }
+      const schedule = () => {
+        if (quietTimer) clearTimeout(quietTimer)
+        quietTimer = setTimeout(() => {
+          if (Date.now() - last >= 280) finish()
+          else schedule()
+        }, 280)
+      }
+      dispose = pty.addDataListener(ptyId, () => {
+        last = Date.now()
+        schedule()
+      })
+      const limit = setTimeout(finish, 20000)
+      schedule()
+    })
+  }
+
+  const messageLocalAgent = async (
+    sourceSessionId: string,
+    targetSessionId: string,
+    message: string
+  ): Promise<void> => {
+    const source = getLocalAgent(sourceSessionId)
+    if (!source) throw new Error('Agent messaging is available only from local agents.')
+    if (sourceSessionId === targetSessionId) throw new Error('An agent cannot message itself.')
+    const target = getLocalAgent(targetSessionId)
+    if (!target || target.agentExited) throw new Error('The target local agent is not running.')
+    const trimmed = message.replace(/\s+$/u, '')
+    if (!trimmed) throw new Error('The message must not be empty.')
+    if (trimmed.length > 30000)
+      throw new Error('The message is too large (maximum 30,000 characters).')
+    await waitForAgentReady(target)
+    await waitForPtyQuiet(target.ptyId)
+    await sleep(80)
+    pty.input(target.ptyId, trimmed)
+    await sleep(80)
+    pty.input(target.ptyId, '\r')
   }
 
   // Live cwd updates from the renderer's OSC 7 tracking. Fire-and-forget: a
@@ -292,20 +626,27 @@ export function registerAgentIpc(
     )
     const airGapped = opts.airGapped ?? false
     const browserOn = opts.browserTools !== false
+    const handoffOn = opts.preferences?.agentHandoff !== false
     const spawnCwd = isLocal
       ? resolveLocalSpawnCwd(cwds.get(opts.sessionId) ?? opts.cwd)
       : undefined
-    const extras: AgentLaunchExtras | undefined = isLocal
-      ? {
-          nativeLocal: true,
-          spawnCwd,
-          appendSystemPrompt: buildLocalNativeMd(context, {
-            cwd: spawnCwd,
-            browserTools: browserOn,
-            toolPrefix: localBrowserToolPrefix(opts.kind)
-          })
-        }
-      : undefined
+    const extras: AgentLaunchExtras = {
+      model: opts.model,
+      effort: opts.effort,
+      initialPrompt: opts.initialPrompt,
+      ...(isLocal
+        ? {
+            nativeLocal: true,
+            spawnCwd,
+            appendSystemPrompt: buildLocalNativeMd(context, {
+              cwd: spawnCwd,
+              browserTools: browserOn,
+              agentHandoff: handoffOn,
+              toolPrefix: localBrowserToolPrefix(opts.kind)
+            })
+          }
+        : {})
+    }
     const remoteBriefing = (builder: typeof buildAgentsMd) =>
       builder(context, airGapped, cwds.get(opts.sessionId))
     const bridge = new McpBridge(
@@ -328,6 +669,15 @@ export function registerAgentIpc(
         getCwd: () => cwds.get(opts.sessionId),
         confirm: (tool, detail) => confirm(opts.sessionId, tool, detail),
         browser: { service: browserControl(), enabled: browserOn },
+        agentHandoff: isLocal
+          ? {
+              enabled: handoffOn,
+              list: () => listLocalAgents(opts.sessionId),
+              delegate: (input) => delegateFrom(opts.sessionId, input),
+              message: (targetSessionId, message) =>
+                messageLocalAgent(opts.sessionId, targetSessionId, message)
+            }
+          : undefined,
         // Local agents use built-in fs/shell tools. MCP is browser-only.
         hostTools: !isLocal
       },
@@ -351,7 +701,6 @@ export function registerAgentIpc(
         preferences: opts.preferences,
         sessionDir: join(app.getPath('userData'), 'agent-sessions'),
         sessionId: persistentSessionId,
-        initialPrompt: opts.initialPrompt,
         ...extras,
         approveProject: isLocal
       }
@@ -655,6 +1004,10 @@ export function registerAgentIpc(
 
   return {
     closeAll: async () => {
+      for (const requestId of [...handoffWaiters.keys()]) {
+        rejectHandoffWaiter(requestId, new Error('DevTerm is closing local agent handoffs.'))
+      }
+      delegatedBySource.clear()
       for (const id of [...agentWindows.keys()]) closeAgentWindow(id, false)
       for (const id of [...sessions.keys()]) await closeOne(id)
     }

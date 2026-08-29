@@ -42,6 +42,16 @@ ${t('browser_attach')} (operator tabs, asks once), ${t('browser_detach')}, ${t('
 - Never type credentials unless the operator asked you to exactly that.`
 }
 
+function agentHandoffSection(toolPrefix = ''): string {
+  const t = (name: string) => `\`${toolPrefix}${name}\``
+  return `## Local agent handoff
+You can coordinate with other visible local agents in this DevTerm window.
+- ${t('agent_list')} lists running local agents and their bridge state.
+- ${t('agent_delegate')} opens a sibling tab; include a complete, self-contained task with the relevant plan, files, constraints, model, and effort.
+- ${t('agent_message')} sends a follow-up into another running local agent's terminal.
+Delegation is local-only, capped, and fire-and-forget. Do not delegate unless the operator asks, and do not pass bridge tokens or temporary overlay paths in a task.`
+}
+
 /**
  * The host's OS name as prose. Shared by every briefing builder.
  */
@@ -84,6 +94,7 @@ export function buildLocalNativeMd(
   opts?: {
     cwd?: string
     browserTools?: boolean
+    agentHandoff?: boolean
     toolPrefix?: string
   }
 ): string {
@@ -96,17 +107,27 @@ export function buildLocalNativeMd(
       ? `## Browser tabs
 In-app browser tools are disabled in Settings. Stay on local files and the shell. Do not open the OS browser.`
       : browserToolsSection(prefix)
+  const browserNote =
+    opts?.browserTools === false
+      ? 'In-app browser MCP tools are disabled by the operator.'
+      : `In-app \`browser_*\` tools **are** registered on the DevTerm MCP bridge.`
+  const handoff =
+    opts?.agentHandoff === false
+      ? `## Local agent handoff\nVisible local-agent handoff tools are disabled in Settings.`
+      : agentHandoffSection(prefix)
   return `# DevTerm local agent
 
 You are a native coding agent on this **local ${osLabel(context)}** workstation (\`${context.hostname}\`) — not a remote SSH host.
 ${where}
-File and shell work uses your **built-in** tools. The in-app browser is MCP (${prefix}browser_*). Call those tools directly; do not search for an OS browser or a different MCP server.
+File and shell work uses your **built-in** tools. ${browserNote} Do not search for an OS browser or a different MCP server.
 
 ${browser}
 
+${handoff}
+
 ## How to work
 Use your **built-in** tools for files and commands on this machine: read, write, edit, bash/shell, grep, glob, and ls.
-MCP host tools (\`run_command\`, \`read_file\`, \`write_file\`, \`list_dir\`, \`get_host_context\`) are **not registered** in this session — do not call those names. In-app \`browser_*\` tools **are** registered on the DevTerm MCP bridge.
+MCP host tools (\`run_command\`, \`read_file\`, \`write_file\`, \`list_dir\`, \`get_host_context\`) are **not registered** in this session — do not call those names. ${browserNote}
 
 ## Safety
 Permission prompts for file and shell tools come from this agent. Explain what a command does before running anything that changes state.
