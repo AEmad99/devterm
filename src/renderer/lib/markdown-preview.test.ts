@@ -3,6 +3,9 @@ import assert from 'node:assert'
 import { JSDOM } from 'jsdom'
 
 let renderMarkdownToSafeHtml: (source: string) => string
+let nextMarkdownPreviewMode: (
+  cur: 'edit' | 'side' | 'preview' | undefined
+) => 'edit' | 'side' | 'preview'
 
 before(async () => {
   const { window } = new JSDOM('')
@@ -10,6 +13,7 @@ before(async () => {
   ;(globalThis as unknown as Record<string, unknown>).document = window.document
   const mod = await import('./markdown-preview')
   renderMarkdownToSafeHtml = mod.renderMarkdownToSafeHtml
+  nextMarkdownPreviewMode = mod.nextMarkdownPreviewMode
 })
 
 describe('renderMarkdownToSafeHtml', () => {
@@ -86,5 +90,14 @@ describe('renderMarkdownToSafeHtml', () => {
   it('removes unexpected tags', () => {
     const html = renderMarkdownToSafeHtml('<iframe src="evil"></iframe>')
     assert(!html.includes('<iframe'))
+  })
+})
+
+describe('nextMarkdownPreviewMode', () => {
+  it('cycles edit → side → preview → edit', () => {
+    assert.equal(nextMarkdownPreviewMode(undefined), 'side')
+    assert.equal(nextMarkdownPreviewMode('edit'), 'side')
+    assert.equal(nextMarkdownPreviewMode('side'), 'preview')
+    assert.equal(nextMarkdownPreviewMode('preview'), 'edit')
   })
 })

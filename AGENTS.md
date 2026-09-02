@@ -217,7 +217,7 @@ Bridge & tools:
 
 ## Recent release notes (for context)
 
-- **1.3.19** — Native local agent (builtin tools in the operator folder; MCP is browser-only); first-class in-app `browser_*` tools with a visible agent cursor; `browser_open` splits beside the agent.
+- **1.3.19** — Native local agent (builtin tools in the operator folder; MCP is browser-only); first-class in-app `browser_*` tools with a visible agent cursor; `browser_open` splits beside the agent; tab-strip Open Agent + kind picker (ask bar gone); local `agent_list` / `agent_delegate` / `agent_message` handoff; Markdown preview hotkey.
 - **1.3.18** — Remote ask bar is the agent launch surface (no duplicated Open agent / Policy picker); first DevTerm Agent prompt is passed on the CLI so the agent starts working; permission prompts belong to the agent CLI; SSH shell-integration reclaim leftover inject rows without `clear`.
 - **1.3.17** — Richer tmux picker (live pane preview, window/command/cwd, kill session); reopen via pane button / Ctrl+Alt+T / palette; attach-while-inside uses `switch-client`; remote shell-integration inject no longer echoes a wall of script then `clear`s the login banner.
 - **1.3.16** — Fix stray `]` around remote bash prompts (detached tmux): the OS-integration prompt markers now reference `${__dtA}`/`${__dtB}` deferred in PS1 instead of baking the tmux DCS envelope bytes in, which let bash's `\]` decoder print a literal bracket. Regression-tested in `detached-session.test.ts`.
@@ -239,7 +239,7 @@ Bridge & tools:
 
 ---
 
-## Product inventory (what ships today — v1.3.15)
+## Product inventory (what ships today — v1.3.19)
 
 Snapshot of the **implemented** surface area as of this audit. Use this when prioritizing features so we do not re-build what already exists. Prefer reading the code for edge cases.
 
@@ -256,7 +256,7 @@ Snapshot of the **implemented** surface area as of this audit. Use this when pri
 | Terminal grids + broadcast | **Shipped** | Up to 4×4 (`CreateGridModal` / `createGrid.ts`); optional initial broadcast command |
 | File explorer (cwd-following) | **Shipped** | Local fs + remote SFTP; `FsApi.watch()` live updates |
 | Dual-pane SFTP + transfers | **Shipped** | Persistent queue (concurrency 2); no mid-file resume |
-| CodeMirror editor | **Shipped** | Multi-language CM6; 5 MiB cap; Markdown edit/side/preview (`MarkdownPreview`) |
+| CodeMirror editor | **Shipped** | Multi-language CM6; 5 MiB cap; Markdown edit/side/preview (`MarkdownPreview`, Ctrl/Cmd+Alt+M) |
 | In-app browser | **Shipped** | Hardened `<webview>`, zoom, downloads; first-class agent `browser_*` control |
 | Command palette + snippets | **Shipped** | Ctrl/Cmd+K; `{{placeholders}}`; history + frecency |
 | History-driven autosuggest | **Shipped** | OSC 133 ;B anchors + popup (`lib/autosuggest.ts`) |
@@ -294,13 +294,12 @@ Snapshot of the **implemented** surface area as of this audit. Use this when pri
 
 - ~180 TypeScript/TSX sources under `src/`, ~15 unit tests, ~1600-line `types.ts`.
 - Typecheck clean at audit time (`npm run typecheck`).
-- Open GitHub issues (AEmad99/devterm): **#1** syntax highlight, **#2** app preview/annotate mode, **#3** markdown preview — **#3 is largely done** in-app (close or re-scope); **#4** settings scroll closed in 1.3.14.
+- Open GitHub issues (AEmad99/devterm): **#1** syntax highlight, **#2** app preview/annotate mode. **#3** markdown preview shipped (editor buttons + Ctrl/Cmd+Alt+M). **#4** settings scroll closed in 1.3.14.
 
 ### Doc debt (out of date vs code)
 
 | Doc | Problem |
 | --- | --- |
-| `OVERVIEW.md` | May still lag multi-provider agent + agent UI modes; prefer this file + code |
 | `FEATURE-PLANS.md` (2026-06-25) | Global search + remote tmux + session restore MVP + SSH config import are **implemented**; local detach still open |
 | `CHANGELOG.md` | Catch up at release time (keep in the release checklist) |
 
@@ -336,13 +335,14 @@ Ordered roughly by user impact × confidence. These were found by code inspectio
    - No OSC 9/99/777 notification parsing (cmux-style); no OSC 133 ;C/;D command-finished markers. Idle-after-burst can false-positive on quiet long jobs or false-negative on agents that print sparingly.  
    - **Fix ladder:** emit/consume OSC 133 C/D → true exit-code badges → optional OSC 9 attention.
 
-8. **Agent MCP tool surface is thin**  
-   - No bridge tools for git, port-forward, browser, or search. Agents must shell out via `run_command`, which is policy-noisy and less structured.  
+8. **Agent MCP tool surface is still thin on git/search/forwards**  
+   - `browser_*` and local `agent_*` handoff are shipped. There are still no bridge tools for git, port-forward, or search — agents must shell those out via `run_command`.  
    - Not a runtime bug, but a capability ceiling vs Warp/cmux agent workflows.
 
 9. **Open issue hygiene**  
-   - #3 Markdown Preview Mode should be closed or narrowed (preview exists; maybe missing only a dedicated hotkey).  
-   - #1 "command syntax highlighting like zsh" is hard in a raw PTY (shell owns the line); set expectations or scope to block UI / input editor.
+   - #3 Markdown Preview Mode shipped (editor buttons + Ctrl/Cmd+Alt+M).  
+   - #1 "command syntax highlighting like zsh" is hard in a raw PTY (shell owns the line); set expectations or scope to block UI / input editor.  
+   - #2 app preview/annotate mode is not shipped.
 
 10. **Electron 29 age**  
     - Chromium security train moves; 29 is behind current Electron majors. Upgrade is a project, not a one-liner (webview, node-pty ABI, asarUnpack). Track as platform risk.
@@ -384,8 +384,8 @@ Suggestions are **mapped to DevTerm's existing architecture** (always-mounted ti
 | **Full session restore** (windows, panes, cwd, scrollback, agents) | "Quit and continue" | **MVP shipped (1.3.15)** for local + saved SSH groups; still missing browsers / ad-hoc SSH / agents / scrollback | **P0 (partial)** |
 | **Tab metadata: ports + cwd + branch** | Situational awareness | Port-forward list + `ss`/`netstat` optional probe is heavy — start with cwd (have it) + git branch (have it) | **P0** |
 | **Programmable CLI / socket API** | Agents and scripts drive the app | Optional local IPC/HTTP under bearer token: open session, send keys, read screen text, open browser URL — mirror MCP security model | **P1** |
-| **Scriptable browser for agents** | Verify web changes without leaving app | New MCP tools (`browser_navigate`, `browser_snapshot`) gated by policy, driving existing BrowserPane / webview — **do not** expose full Node to the page | **P1** |
-| **Subagent → new pane** | Visibility of parallel work | When user/agent requests parallel work, `addLocal`/`connectSsh` sibling tab in same group | **P2** |
+| **Scriptable browser for agents** | Verify web changes without leaving app | **Shipped (1.3.19)** — 11 `browser_*` MCP tools on existing BrowserPane / webview | **P1 done** |
+| **Subagent → new pane** | Visibility of parallel work | **Shipped locally (1.3.19)** — `agent_delegate` sibling tab/split; remote still one agent per session | **P2 partial** |
 | **GPU terminal (Ghostty/libghostty)** | Native perf story | **Do not** chase on Electron Windows path; canvas choice is intentional. Revisit only if leaving Electron (`TAURI-MIGRATION.md`) | **P2 / defer** |
 
 ### From Windows Terminal / iTerm2 / Ghostty / WezTerm / Tabby
@@ -404,9 +404,9 @@ Suggestions are **mapped to DevTerm's existing architecture** (always-mounted ti
 
 ### Highest-leverage roadmap (recommended order)
 
-1. **P0 polish:** ~~fix Find hotkey~~; ~~raise scrollback default~~; ~~session restore MVP~~; ~~SSH config import~~; ~~agent docked/float/hide + ask bar~~; close/refresh stale GitHub #3; exit-code tab badges still open.  
-2. **P1 differentiators:** OSC 133 blocks + exit codes; browser MCP tools; workflows; vertical tab metadata; selection-aware explain/fix; multi-hop jump; richer session restore (browsers/agents).  
-3. **P2 platform:** richer multi-agent panes; structured DevTerm Agent chat; Electron major upgrade; optional native migration research only if Electron ceilings dominate.
+1. **P0 polish:** ~~fix Find hotkey~~; ~~raise scrollback default~~; ~~session restore MVP~~; ~~SSH config import~~; ~~agent docked/float/hide~~; ~~GitHub #3 markdown preview~~; exit-code tab badges still open.  
+2. **P1 differentiators:** OSC 133 blocks + exit codes; ~~browser MCP tools~~; workflows; vertical tab metadata; selection-aware explain/fix; multi-hop jump; richer session restore (browsers/agents).  
+3. **P2 platform:** richer multi-agent panes (local handoff shipped); structured DevTerm Agent chat; Electron major upgrade; optional native migration research only if Electron ceilings dominate.
 
 ### What *not* to copy blindly
 

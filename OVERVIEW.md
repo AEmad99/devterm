@@ -1,10 +1,11 @@
 # DevTerm — Overview
 
 **DevTerm** is a cross-platform desktop application that combines an SSH/SFTP terminal,
-a tiling pane workspace, a file editor, and an in-app browser with a built-in **Claude
-coding agent** that can operate on connected remote hosts. The agent talks to those
-remote machines through an MCP bridge the app hosts locally, so the remote host needs
-nothing installed and no outbound internet connection.
+a tiling pane workspace, a file editor, an in-app browser, and a built-in multi-provider
+**DevTerm Agent** (plus Claude / Codex / Grok / OpenCode / Kimi / pi / Antigravity CLIs)
+that can operate on connected remote hosts *or* in a local folder. Remote work goes
+through an MCP bridge the app hosts locally, so the remote host needs nothing installed
+and no outbound internet connection.
 
 It is built on Electron + React + TypeScript, with `xterm.js` for the terminal,
 `node-pty` for local shells, `ssh2` for SSH/SFTP, CodeMirror 6 for editing, and the
@@ -19,6 +20,8 @@ Model Context Protocol SDK for the agent bridge.
 - **SSH remote shell** — connects with password or private-key authentication.
 - **ProxyJump / bastion host** — single-hop SSH through a bastion.
 - **SSH host-key verification** — trust-on-first-use, with later mismatches rejected.
+- **Detached remote sessions** — tmux picker on connect (live preview, attach, kill).
+- **Session restore** — last local + saved-SSH groups come back on boot (optional).
 - One `ssh2.Client` per host; shell, SFTP, and agent channels are multiplexed over it.
 
 ### ▦ Tiling layout & terminal groups
@@ -36,15 +39,17 @@ Model Context Protocol SDK for the agent bridge.
 - Open files from the sidebar in a built-in **CodeMirror 6** editor.
 - Syntax highlighting for common languages (JS/TS, Python, Rust, HTML/CSS, JSON,
   Markdown, YAML, XML).
+- Markdown **Edit / Side / Preview** (Ctrl/Cmd+Alt+M cycles).
 
 ### 🌐 In-app browser pane
 - A tabbed browser that can live in any pane — handy for dashboards, docs, and web tools.
 - Handles logins, copy/paste, and `target=_blank` pop-outs as new tabs.
+- Agents drive tabs through first-class `browser_*` MCP tools (visible cursor on click/type).
 
 ### ⌨️ Command palette & snippets
 - **Ctrl/Cmd+K** opens a searchable palette of saved command snippets.
 - Snippets support `{{placeholders}}` — parameterised snippets prompt for their values.
-- **Ctrl/Cmd+Shift+F** for in-terminal find; a full keyboard-shortcut list is in-app.
+- **Ctrl/Cmd+Shift+F** for in-terminal find; **Ctrl/Cmd+Alt+F** for global search.
 
 ### 🎨 Themes & preferences
 - Nine built-in themes: **Tokyo Night, Dracula, Catppuccin Mocha, Nord, Gruvbox,
@@ -53,17 +58,16 @@ Model Context Protocol SDK for the agent bridge.
 - Settings cover terminal font, cursor style, scrollback, background image, and
   copy-on-select / right-click-paste toggles. Settings persist across restarts.
 
-### 🤖 Claude coding agent (MCP bridge)
-- Runs the real interactive `claude` CLI locally under your subscription (never the SDK
-  or API-key path — it's human-in-the-loop).
-- Exposes tools (`run_command`, `read_file`, `write_file`, `list_dir`,
-  `get_host_context`) over a per-session MCP server that the app hosts itself.
-- Each tool call is routed over the **same** SSH connection as the human shell.
-- A per-host **guardrail policy** is enforced at the MCP boundary:
-  - `read-only` — destructive commands are blocked.
-  - `confirm` — destructive actions pop an approval dialog.
-  - `full` — no prompt.
-- Optional **air-gapped** mode for fully offline remote operation.
+### 🤖 DevTerm Agent (MCP bridge)
+- Default bundled multi-provider runtime, plus external CLIs: Claude, Codex, Grok,
+  OpenCode, Kimi, pi, Antigravity. Open Agent from the pane tab strip; dock, float,
+  or hide without killing the process.
+- **Remote:** host tools (`run_command`, `read_file`, `write_file`, `list_dir`,
+  `get_host_context`) over a per-session MCP server on the **same** SSH connection.
+- **Local:** CLI builtin fs/shell in the operator folder; MCP is `browser_*` plus
+  local handoff (`agent_list` / `agent_delegate` / `agent_message`).
+- Permission prompts belong to the agent CLI. Settings → Agent guardrails remain
+  an allow/deny/ask pre-check at the MCP boundary.
 
 ### 🔒 Security
 - `contextIsolation` on, `nodeIntegration` off, `sandbox` on; the renderer talks to the
@@ -79,20 +83,19 @@ Model Context Protocol SDK for the agent bridge.
 ## How the agent reaches the remote host
 
 ```
-claude CLI (local, your subscription, internet for the model)
+DevTerm Agent / CLI (local; model credentials stay with the agent runtime)
         │
         ▼
 in-process MCP bridge  (127.0.0.1 + bearer token, inside the app)
         │
-        ▼
-ssh2 connection  (one per host; shell, SFTP, and agent are separate channels)
-        │
-        ▼
-remote host  (nothing installed, no outbound internet required)
+        ├─ remote → ssh2 connection (one per host; shell, SFTP, agent channels)
+        │            → remote host (nothing installed, no outbound internet)
+        └─ local  → CLI builtin tools in the operator folder
+                     MCP: browser_* + agent_delegate / agent_list / agent_message
 ```
 
-The MCP boundary is the single chokepoint where the per-host guardrail policy is
-enforced — nothing reaches the remote host without going through it.
+The MCP boundary is the chokepoint for remote host work and in-app browser control.
+Approval rules pre-check there; the agent CLI owns interactive permission prompts.
 
 ---
 

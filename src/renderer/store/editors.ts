@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { FileContent } from '@shared/types'
+import { isMarkdownName, nextMarkdownPreviewMode } from '../lib/markdown-preview'
 
 export type EditorScope = 'local' | 'remote'
 export type MarkdownPreviewMode = 'edit' | 'side' | 'preview'
@@ -70,6 +71,8 @@ interface EditorState {
   blur: () => void
   setContent: (id: string, content: string) => void
   setPreviewMode: (id: string, mode: MarkdownPreviewMode) => void
+  /** Cycle Edit → Side → Preview for Markdown docs; no-op otherwise. */
+  cyclePreviewMode: (id: string) => void
   save: (id: string) => Promise<void>
   /** Drop any docs belonging to a session that is closing/disconnecting. */
   closeForSession: (sessionId: string) => void
@@ -149,6 +152,12 @@ export const useEditors = create<EditorState>((set, get) => ({
 
   setPreviewMode: (id, mode) =>
     set((s) => ({ docs: s.docs.map((d) => (d.id === id ? { ...d, previewMode: mode } : d)) })),
+
+  cyclePreviewMode: (id) => {
+    const doc = get().docs.find((d) => d.id === id)
+    if (!doc || !isMarkdownName(doc.name)) return
+    get().setPreviewMode(id, nextMarkdownPreviewMode(doc.previewMode))
+  },
 
   save: async (id) => {
     const doc = get().docs.find((d) => d.id === id)

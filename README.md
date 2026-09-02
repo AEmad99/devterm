@@ -7,30 +7,38 @@ connected remote host — through an MCP bridge the app hosts itself, so the rem
 installed and no internet.
 
 - 🖥️ **Local & remote terminals** — local shell (PowerShell on Windows) and SSH with
-  password / private-key auth and single-hop **ProxyJump/bastion** support.
+  password / private-key auth and single-hop **ProxyJump/bastion** support. Remote POSIX
+  hosts with a working tmux get a session picker (live pane preview, attach, kill).
 - ▦ **Tiling layout & terminal groups** — split any pane horizontally/vertically, drag to resize,
   and organise terminals into named **groups** (drag a tab onto a group, or spin off a new one).
+  Optional last-session restore on boot (local shells + saved SSH).
 - 💾 **Saved connections & workspaces** — store SSH profiles (secrets encrypted via the OS
-  keychain), and snapshot a group of local+remote terminals — with their working directories and
-  split arrangement — into a **workspace** you can relaunch into its own group.
+  keychain), import `~/.ssh/config`, and snapshot a group of local+remote terminals — with their
+  working directories and split arrangement — into a **workspace** you can relaunch into its own
+  group.
 - 📁 **File explorer + SFTP** — a sidebar that follows your shell's working directory, plus a
   dual-pane local ↔ remote browser with upload/download (streamed, cancellable), rename, delete,
   and new-folder.
 - ✏️ **File editor** — open and edit files in a built-in CodeMirror 6 editor with syntax
-  highlighting for common languages.
+  highlighting for common languages. Markdown files have Edit / Side / Preview
+  (Ctrl/Cmd+Alt+M cycles).
 - 🌐 **In-app browser pane** — open a tabbed browser inside a pane (handles logins, copy/paste,
-  and `target=_blank` pop-outs as new tabs).
+  and `target=_blank` pop-outs as new tabs). Agents drive it through first-class `browser_*`
+  tools, with a visible cursor on click/type.
 - ⌨️ **Command palette & snippets** — save command scriptlets (with `{{placeholders}}`) and fire
-  them into the active terminal from a **Ctrl/Cmd+K** palette; per-terminal find and a full set of
-  keyboard shortcuts (see the in-app **Shortcuts** list).
+  them into the active terminal from a **Ctrl/Cmd+K** palette; per-terminal find
+  (Ctrl/Cmd+Shift+F) and global search (Ctrl/Cmd+Alt+F).
 - 🎨 **Themes** — nine built-in themes (Tokyo Night, Dracula, Catppuccin Mocha, Nord, Gruvbox,
   One Dark, Solarized Dark, Ayu Mirage, and a translucent **Glass**) that restyle both the terminal
   palette and the whole app chrome; plus font, cursor, scrollback and background-image preferences.
-- 🤖 **DevTerm Agent bridge** — default bundled multi-provider agent (or an external CLI you pick)
-  acts on the remote host via tools (`run_command`, `read_file`, `write_file`, `list_dir`,
-  `get_host_context`) routed over the **same** SSH connection, with a per-host guardrail
-  (`read-only` / `confirm` / `full`) enforced at the boundary. Ask from the strip under a remote
-  shell, or open the full agent docked / floating / hidden without killing the session.
+- 🔀 **Git panel** — Warp-style status, stage/commit/push/pull, branches, stash, tags, remotes,
+  and a commit graph. Remote repos reuse the session's SSH exec channel.
+- 🤖 **DevTerm Agent** — bundled multi-provider agent (or Claude / Codex / Grok / OpenCode /
+  Kimi / pi / Antigravity). **Remote:** host work goes through MCP tools on the **same** SSH
+  connection. **Local:** native Read/Write/Bash in the operator's folder; MCP is browser +
+  local handoff (`agent_list` / `agent_delegate` / `agent_message`). Open Agent from the pane
+  tab strip; dock, float, or hide without killing the process. Permission prompts belong to
+  the agent CLI; Settings → Agent guardrails stay an MCP pre-check.
 - 🔒 Security-first: `contextIsolation` on, `nodeIntegration` off, `sandbox` on; MCP server bound
   to `127.0.0.1` with a random per-session bearer token; SSH host-key verification (trust-on-first-use).
 
@@ -92,14 +100,17 @@ npm run build:win              # → dist/DevTerm-<version>-setup.exe (NSIS)
 - **Browser pane:** open an in-app browser in any pane for docs/dashboards without leaving the app.
 - **Snippets & palette:** save frequently-used commands in the **Snippets** tab, then press
   **Ctrl/Cmd+K** to search and run them into the active terminal (parameterised snippets prompt for
-  their `{{placeholders}}`). Press **Ctrl/Cmd+Shift+F** to find within a terminal.
+  their `{{placeholders}}`). Press **Ctrl/Cmd+Shift+F** to find within a terminal, or
+  **Ctrl/Cmd+Alt+F** to search across all terminals.
 - **Themes & preferences:** open **Settings** to switch theme, set the terminal font/cursor/
   scrollback/background, and toggle copy-on-select / right-click-paste. Settings persist across
   restarts.
-- **Agent:** open a remote tab, pick a guardrail policy, then launch **DevTerm Agent** (bundled,
-  multi-provider) or a fallback CLI from Settings. The agent runs on the **remote** via the MCP
-  bridge over the same SSH connection — ask e.g. *"what's eating disk on this box?"*. Guarded/
-  destructive actions can pop an approval dialog depending on policy.
+- **Agent:** on a local or remote pane, use the tab-strip sparkle to **Open Agent** and the
+  letter-mark to pick the backend (DevTerm Agent, Claude, Codex, Grok, …). Remote agents act
+  on the host via MCP over the same SSH connection. Local agents work in the folder that
+  terminal is in, and can open sibling agent tabs or drive the in-app browser. Hide / Float /
+  Stop once it is running — hide and float do not kill the process. Approval rules live in
+  Settings → Agent guardrails; the CLI itself still owns its permission prompts.
 
 > Provider credentials stay in the agent runtime (e.g. `~/.pi/agent/auth.json` or the CLI's own
 > store) — DevTerm never moves API keys over its IPC.
@@ -111,12 +122,14 @@ npm run build:win              # → dist/DevTerm-<version>-setup.exe (NSIS)
 ```
 DevTerm Agent / CLI (local; model credentials stay with the agent runtime)
   → in-process MCP bridge (127.0.0.1 + bearer token, inside the app)
-     → the SAME ssh2 connection (shell + SFTP + agent are separate channels)
+     → remote: the SAME ssh2 connection (shell + SFTP + agent are separate channels)
         → remote host (nothing installed, no outbound internet required)
+     → local: CLI builtin fs/shell in the operator folder; MCP is browser_* + handoff
 ```
 
-One `ssh2.Client` per host; the human shell, the SFTP browser, and the agent's tools each open
-their own channel on it. The MCP boundary is where per-host policy is enforced.
+One `ssh2.Client` per remote session; the human shell, the SFTP browser, and the agent's host
+tools each open their own channel on it. Approval rules at the MCP boundary are a pre-check;
+the agent CLI owns interactive permission prompts.
 
 ## Security
 

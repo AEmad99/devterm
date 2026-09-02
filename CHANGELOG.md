@@ -3,26 +3,43 @@
 All notable changes to DevTerm are documented here. The most recent section is
 at the top. Dates are ISO `YYYY-MM-DD`.
 
-## 1.3.19 — 2026-08-24
+## 1.3.19 — 2026-09-02
 
 ### Added
 
 - **Native local agent.** Opening Agent on a local pane uses the CLI's own
   Read/Write/Bash tools in the operator's folder. MCP host tools stay remote-only;
-  in-app `browser_*` tools remain on the MCP bridge.
+  in-app `browser_*` tools remain on the MCP bridge. Resume keys are per-directory.
+- **In-app `browser_*` tools** (11): `browser_list` / `open` / `navigate` /
+  `snapshot` / `click` / `type` / `press_key` / `screenshot` / `attach` /
+  `detach` / `close`. Agent-owned tabs are freely drivable; operator tabs need
+  a one-time attach confirm. `browser_open` splits a pane beside the agent.
 - **Visible agent cursor** in the in-app browser: clicks and typing glide a
   branded pointer to the target so you can follow the agent live.
+- **Local agent handoff.** Local-only MCP tools `agent_list`, `agent_delegate`,
+  and `agent_message` open a visible sibling tab (or split) for another agent,
+  preserve the source cwd, and never register on remote bridges.
+- **Markdown preview hotkey.** Ctrl/Cmd+Alt+M cycles Edit / Side / Preview for
+  Markdown files (editor Side / Preview buttons already existed).
 
 ### Changed
 
+- **Open Agent lives on the pane tab strip.** Kind picker (official brand icons)
+  + sparkle launch replace the 1.3.18 ask bar. Hide / Float / Stop while the
+  agent is running. Process lifetime stays independent of docked / floating /
+  hidden. The agent CLI still owns permission prompts (no session Policy picker);
+  Settings → Agent guardrails remain an MCP pre-check. First-launch prompts
+  (handoff / DevTerm Agent / Pi) still go on the CLI so work starts immediately.
 - **In-app browser is first-class.** Pi lists `browser_*` in Available tools
-  (`promptSnippet`), local briefings lead with them, and `browser_open` splits
-  a pane beside the agent instead of hiding as a sibling tab.
+  (`promptSnippet`), local briefings lead with them.
+- **Grok native-local isolation.** MCP config lives under `GROK_HOME`, not the
+  project tree; local briefing tool prefixes match the Grok MCP names.
 
 ### Fixed
 
 - Local `browser_open` no longer times out on an off-screen webview.
 - MCP session file for local agents stays in the overlay, not the project tree.
+- Bundled Node runtime + offline model catalog for the built-in agent.
 
 ## 1.3.18 — 2026-08-23
 

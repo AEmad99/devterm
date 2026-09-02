@@ -253,6 +253,14 @@ export default function App() {
           void ed.save(doc.id)
           return
         }
+        if (id === 'previewMarkdown') {
+          const ed = useEditors.getState()
+          const doc = ed.docs.find((d) => d.id === ed.activeId)
+          if (!ed.focused || !doc) return
+          e.preventDefault()
+          ed.cyclePreviewMode(doc.id)
+          return
+        }
         // Don't hijack shortcuts when the user is typing in an input/editor.
         // Exception: xterm's helper textarea is not user text input — a
         // terminal holds focus ~100% of the time, and TerminalView's custom

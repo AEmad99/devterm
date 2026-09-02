@@ -1,6 +1,11 @@
 # DevTerm — Feature Implementation Plans
 
 **Date:** 2026-06-25  
+**Status (2026-09-02):** Global terminal search is **shipped**. Remote tmux detach/reattach
+(picker + attach without `exec`) is **shipped**. Session-restore MVP (local + saved SSH)
+and `~/.ssh/config` import are **shipped**. Local PTY detach/reattach across app quit
+is **still open**. Prefer `AGENTS.md` + code over this file when they disagree.
+
 **Features:** 
 1. Built-in tmux-like session persistence (even when disconnected)
 2. Global terminal search (across panes + history)

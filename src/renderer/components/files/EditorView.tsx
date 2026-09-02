@@ -132,7 +132,7 @@ export default function EditorView() {
               type="button"
               className={`toggle ${previewMode === 'side' ? 'active' : ''}`}
               aria-pressed={previewMode === 'side'}
-              title="Side-by-side preview"
+              title="Side-by-side preview (Ctrl/Cmd+Alt+M cycles modes)"
               onClick={() => setPreviewMode(active.id, previewMode === 'side' ? 'edit' : 'side')}
             >
               Side
@@ -141,7 +141,7 @@ export default function EditorView() {
               type="button"
               className={`toggle ${previewMode === 'preview' ? 'active' : ''}`}
               aria-pressed={previewMode === 'preview'}
-              title="Preview only"
+              title="Preview only (Ctrl/Cmd+Alt+M cycles modes)"
               onClick={() =>
                 setPreviewMode(active.id, previewMode === 'preview' ? 'edit' : 'preview')
               }

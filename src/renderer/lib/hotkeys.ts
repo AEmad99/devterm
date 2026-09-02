@@ -34,6 +34,7 @@ export type HotkeyId =
   | 'tmuxSessions'
   | 'shortcuts'
   | 'saveEditor'
+  | 'previewMarkdown'
   | 'dictate'
 
 export interface Hotkey {
@@ -79,6 +80,7 @@ export const HOTKEYS: Hotkey[] = [
   { id: 'globalSearch', mod: true, alt: true, key: 'f', label: 'Search across all terminals' },
   { id: 'shortcuts', mod: true, key: '/', label: 'Keyboard shortcuts' },
   { id: 'saveEditor', mod: true, key: 's', label: 'Save file' },
+  { id: 'previewMarkdown', mod: true, alt: true, key: 'm', label: 'Markdown preview' },
   { id: 'dictate', mod: true, shift: true, key: 'm', label: 'Toggle voice dictation' }
 ]
 

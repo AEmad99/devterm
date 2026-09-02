@@ -169,3 +169,12 @@ export function isMarkdownName(name: string): boolean {
   const ext = name.split('.').pop()?.toLowerCase() ?? ''
   return ext === 'md' || ext === 'markdown' || ext === 'mdown' || ext === 'mkd'
 }
+
+/** Cycle Edit → Side → Preview → Edit for Markdown files. */
+export function nextMarkdownPreviewMode(
+  cur: 'edit' | 'side' | 'preview' | undefined
+): 'edit' | 'side' | 'preview' {
+  if (cur === 'side') return 'preview'
+  if (cur === 'preview') return 'edit'
+  return 'side'
+}
