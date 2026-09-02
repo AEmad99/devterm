@@ -1,3 +1,4 @@
+import { IconArrowDown, IconArrowUp, IconClose } from '../common/Icons'
 import { useTransfers, selectVisible } from '../../store/transfers'
 import { useSettings } from '../../store/settings'
 import { useShallow } from 'zustand/react/shallow'
@@ -46,14 +47,7 @@ export default function TransfersPanel() {
           aria-label="Hide panel"
           title="Hide panel"
         >
-          <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-            <path
-              d="M3.5 3.5l9 9M12.5 3.5l-9 9"
-              stroke="currentColor"
-              strokeWidth="1.6"
-              strokeLinecap="round"
-            />
-          </svg>
+          <IconClose size={14} />
         </button>
       </div>
       {items.length === 0 ? (
@@ -111,7 +105,9 @@ function TransferRow({
   const name = basename(item.direction === 'upload' ? item.remotePath : item.localPath)
   return (
     <li className={`transfers-row status-${status}`}>
-      <span className="transfers-dir">{item.direction === 'upload' ? '⬆' : '⬇'}</span>
+      <span className="transfers-dir" title={item.direction}>
+        {item.direction === 'upload' ? <IconArrowUp size={12} /> : <IconArrowDown size={12} />}
+      </span>
       <span
         className="transfers-name"
         title={item.direction === 'upload' ? item.localPath : item.remotePath}

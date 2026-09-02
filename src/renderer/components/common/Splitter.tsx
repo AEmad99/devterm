@@ -35,5 +35,12 @@ export default function Splitter({
     [direction, onDelta]
   )
 
-  return <div className={`splitter splitter-${direction}`} onMouseDown={onMouseDown} />
+  return (
+    <div
+      className={`splitter splitter-${direction}`}
+      role="separator"
+      aria-orientation={direction === 'horizontal' ? 'vertical' : 'horizontal'}
+      onMouseDown={onMouseDown}
+    />
+  )
 }

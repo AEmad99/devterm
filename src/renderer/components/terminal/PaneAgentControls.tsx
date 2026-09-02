@@ -105,6 +105,13 @@ export default function PaneAgentControls({ session }: { session: Session }) {
                   : 'This terminal is closed'
                 : `Open ${label}`
             }
+            aria-label={
+              !canStart
+                ? session.kind === 'remote'
+                  ? 'Connect the SSH session first'
+                  : 'This terminal is closed'
+                : `Open ${label}`
+            }
             onClick={startDocked}
           >
             <IconAgent size={14} />

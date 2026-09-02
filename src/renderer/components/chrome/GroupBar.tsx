@@ -40,53 +40,69 @@ export default function GroupBar({
     sessionsRef.filter((s) => (s.groupId || DEFAULT_GROUP) === gid).length
 
   return (
-    <div className="group-bar">
-      {groups.map((g) => (
-        <div
-          key={g.id}
-          className={`group-tab ${g.id === activeGroupId ? 'active' : ''} ${
-            dragOverGroup === g.id ? 'drop-target' : ''
-          }`}
-          onClick={() => switchGroup(g.id)}
-          title={
-            g.id === DEFAULT_GROUP
-              ? 'Ungrouped terminals — drag a tab here to move it in'
-              : `Group: ${g.name} — drag a tab here to move it in`
-          }
-          onDragOver={(e) => {
-            e.preventDefault()
-            e.dataTransfer.dropEffect = 'move'
-            if (dragOverGroup !== g.id) setDragOverGroup(g.id)
-          }}
-          onDragLeave={() => setDragOverGroup((v) => (v === g.id ? null : v))}
-          onDrop={(e) => {
-            e.preventDefault()
-            moveToGroup(e.dataTransfer.getData('text/plain'), g.id)
-            setDragOverGroup(null)
-          }}
-        >
-          <span className="group-icon">
-            {g.id === DEFAULT_GROUP ? <IconTerminals size={14} /> : <IconGroup size={14} />}
-          </span>
-          <span className="group-name">{g.name}</span>
-          <span className="group-count">{groupCount(g.id)}</span>
-          {g.id !== DEFAULT_GROUP && (
-            <span
-              className="group-close"
-              title="Close group (closes its terminals)"
-              onClick={(e) => {
-                e.stopPropagation()
-                closeGroup(g.id)
-              }}
-            >
-              <IconClose size={12} />
+    <div className="group-bar" role="tablist" aria-label="Terminal groups">
+      {groups.map((g) => {
+        if (groups.length === 1 && g.id === DEFAULT_GROUP) return null
+        return (
+          <div
+            key={g.id}
+            role="tab"
+            tabIndex={g.id === activeGroupId ? 0 : -1}
+            aria-selected={g.id === activeGroupId}
+            className={`group-tab ${g.id === activeGroupId ? 'active' : ''} ${
+              dragOverGroup === g.id ? 'drop-target' : ''
+            }`}
+            onClick={() => switchGroup(g.id)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault()
+                switchGroup(g.id)
+              }
+            }}
+            title={
+              g.id === DEFAULT_GROUP
+                ? 'Ungrouped terminals — drag a tab here to move it in'
+                : `Group: ${g.name} — drag a tab here to move it in`
+            }
+            onDragOver={(e) => {
+              e.preventDefault()
+              e.dataTransfer.dropEffect = 'move'
+              if (dragOverGroup !== g.id) setDragOverGroup(g.id)
+            }}
+            onDragLeave={() => setDragOverGroup((v) => (v === g.id ? null : v))}
+            onDrop={(e) => {
+              e.preventDefault()
+              moveToGroup(e.dataTransfer.getData('text/plain'), g.id)
+              setDragOverGroup(null)
+            }}
+          >
+            <span className="group-icon">
+              {g.id === DEFAULT_GROUP ? <IconTerminals size={14} /> : <IconGroup size={14} />}
             </span>
-          )}
-        </div>
-      ))}
-      <div
+            <span className="group-name">{g.name}</span>
+            <span className="group-count">{groupCount(g.id)}</span>
+            {g.id !== DEFAULT_GROUP && (
+              <button
+                type="button"
+                className="group-close"
+                title="Close group (closes its terminals)"
+                aria-label={`Close group ${g.name}`}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  closeGroup(g.id)
+                }}
+              >
+                <IconClose size={12} />
+              </button>
+            )}
+          </div>
+        )
+      })}
+      <button
+        type="button"
         className={`group-new ${dragOverGroup === '__new__' ? 'drop-target' : ''}`}
         title="New group with a local terminal (or drop a terminal here to group it)"
+        aria-label="New group"
         onClick={createGroupAndLocal}
         onDragOver={(e) => {
           e.preventDefault()
@@ -101,7 +117,7 @@ export default function GroupBar({
         }}
       >
         <IconPlus size={14} />
-      </div>
+      </button>
       <span className="spacer" />
       {launchedFromId ? (
         <button
@@ -111,17 +127,18 @@ export default function GroupBar({
           onClick={() => void onSaveBack()}
         >
           <IconSave size={14} />
-          <span>Save back to workspace</span>
+          <span>Save back</span>
         </button>
       ) : null}
       <button
         className="group-save"
         title="Save this group's terminals as a new workspace"
+        aria-label={launchedFromId ? 'Save as new workspace' : 'Save group as workspace'}
         disabled={capturable.length === 0}
         onClick={onSaveNew}
       >
         <IconSave size={14} />
-        <span>{launchedFromId ? 'Save as new' : 'Save group'}</span>
+        <span>{launchedFromId ? 'Save as new' : 'Save'}</span>
       </button>
     </div>
   )

@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import type { FileEntry } from '@shared/types'
 import FilePane from './FilePane'
 import Splitter from '../common/Splitter'
@@ -7,6 +7,7 @@ import { useEditors } from '../../store/editors'
 import { useSessions } from '../../store/sessions'
 
 const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n))
+const MIN_PANE_FRAC = 0.28
 
 /**
  * Dual-pane local ↔ remote browser bound to one SSH session's SFTP channel.
@@ -27,7 +28,16 @@ export default function SftpBrowser({ sessionId }: { sessionId: string }) {
   const followCwd = useSessions((s) => s.sessions.find((x) => x.id === sessionId)?.cwd)
   const localCwd = useRef('')
   const remoteCwd = useRef('')
-  const [localWidth, setLocalWidth] = useState(420)
+  const rowRef = useRef<HTMLDivElement>(null)
+  // Share the row 50/50 so a narrow dock (side pane ~420px) still shows both
+  // machines. A pixel width on the local column used to eat the whole dock.
+  const [localFrac, setLocalFrac] = useState(0.5)
+
+  const onSplit = useCallback((deltaPx: number) => {
+    const total = rowRef.current?.clientWidth ?? 0
+    if (total <= 0) return
+    setLocalFrac((f) => clamp(f + deltaPx / total, MIN_PANE_FRAC, 1 - MIN_PANE_FRAC))
+  }, [])
 
   /**
    * Join a directory and a child name using the pane's separator. The
@@ -108,8 +118,8 @@ export default function SftpBrowser({ sessionId }: { sessionId: string }) {
 
   return (
     <div className="sftp-browser">
-      <div className="panes-row">
-        <div className="pane-fixed" style={{ width: localWidth }}>
+      <div className="panes-row" ref={rowRef}>
+        <div className="sftp-col" style={{ flex: `${localFrac} 1 0` }}>
           <FilePane
             api={localApi}
             sep={localSep}
@@ -123,11 +133,8 @@ export default function SftpBrowser({ sessionId }: { sessionId: string }) {
             onEdit={(e) => openEditor({ scope: 'local', path: e.path })}
           />
         </div>
-        <Splitter
-          direction="horizontal"
-          onDelta={(d) => setLocalWidth((w) => clamp(w + d, 240, 1000))}
-        />
-        <div className="pane-grow">
+        <Splitter direction="horizontal" onDelta={onSplit} />
+        <div className="sftp-col" style={{ flex: `${1 - localFrac} 1 0` }}>
           <FilePane
             api={remoteApi}
             sep="/"

@@ -111,7 +111,7 @@
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 25%, transparent);
 }
 .agent-status--ok .agent-status-text {
-  color: var(--ok);
+  color: var(--fg);
 }
 .agent-status--busy .agent-dot {
   background: var(--accent);
@@ -330,10 +330,11 @@ body.agent-float-body,
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 7px 10px;
+  padding: 4px 8px;
   background: var(--panel-2);
   border-bottom: 1px solid var(--border);
   font-weight: 600;
+  font-size: var(--fs-200);
 }
 .explorer-head button {
   background: var(--panel-2);
@@ -403,6 +404,24 @@ body.agent-float-body,
 .explorer-empty {
   padding: 10px;
   color: var(--muted);
+}
+.explorer-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+}
+.explorer-search input {
+  flex: 1;
+  min-width: 0;
+  height: var(--control-h);
+  background: var(--input-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0 8px;
+  font-size: var(--fs-200);
 }
 
 /* ---------------------------------------------------------------------------
@@ -674,44 +693,48 @@ body.agent-float-body,
 .view-toggle {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
-  padding: 6px 8px;
+  flex-wrap: nowrap;
+  gap: 2px;
+  padding: 2px 6px;
+  min-height: 22px;
   background: var(--panel);
   border-bottom: 1px solid var(--border);
 }
-.view-toggle > .policy-field,
-.view-toggle > .agent-btn {
-  flex: 0 0 auto;
-}
 .view-toggle button {
-  background: var(--panel-2);
-  color: var(--fg);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 4px 12px;
-  font-size: 12px;
-  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  padding: 2px 8px;
+  font-size: var(--fs-100);
+  font-weight: 500;
   cursor: pointer;
-  transition: filter 0.12s ease;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
 }
 .view-toggle button:hover {
-  filter: brightness(1.15);
+  color: var(--fg);
+  background: var(--hover);
 }
 .view-toggle button.active {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--accent-fg);
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+  border-color: transparent;
+  color: var(--fg);
 }
 .view-toggle button.side-pane-toggle {
-  padding: 4px 8px;
-  font-size: 11px;
+  margin-left: auto;
+  padding: 2px 6px;
+  font-size: var(--fs-100);
   color: var(--muted);
 }
 .view-toggle button.side-pane-toggle.active {
-  background: var(--panel-2);
-  border-color: var(--border);
-  color: var(--accent);
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+  border-color: transparent;
+  color: var(--fg);
 }
 .view-body {
   position: relative;
@@ -1268,7 +1291,7 @@ body.agent-float-body,
 }
 @media (prefers-reduced-motion: no-preference) {
   .reconnect-banner {
-    animation: reconnect-pulse 2.4s ease-in-out infinite;
+    animation: none;
   }
 }
 .reconnect-banner.is-failed {
@@ -1352,14 +1375,17 @@ body.agent-float-body,
 }
 .term-files-split > .term-agent-column {
   flex: 1 1 auto;
+  min-width: 0;
 }
 .remote-side-pane {
   flex: 0 0 auto;
   min-width: 0;
   max-width: 70%;
+  overflow: hidden;
   border-left: 1px solid var(--border);
   background: var(--bg);
 }
 .remote-side-pane .sftp-browser {
   height: 100%;
+  width: 100%;
 }

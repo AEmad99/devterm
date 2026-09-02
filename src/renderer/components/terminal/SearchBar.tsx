@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { IconArrowDown, IconArrowUp, IconClose } from '../common/Icons'
 
 /**
  * Per-terminal find bar (Ctrl/Cmd+Shift+F). Drives xterm's SearchAddon via the
@@ -24,12 +25,13 @@ export default function SearchBar({
   }, [focusToken])
 
   return (
-    <div className="term-search" onMouseDown={(e) => e.stopPropagation()}>
+    <div className="term-search" role="search" onMouseDown={(e) => e.stopPropagation()}>
       <input
         ref={ref}
         className="term-search-input"
         value={q}
         placeholder="Find"
+        aria-label="Find in terminal"
         spellCheck={false}
         onChange={(e) => {
           setQ(e.target.value)
@@ -46,21 +48,31 @@ export default function SearchBar({
         }}
       />
       <button
+        type="button"
         onMouseDown={(e) => e.preventDefault()}
         onClick={() => onSearch(q, -1)}
         title="Previous (Shift+Enter)"
+        aria-label="Previous match"
       >
-        ↑
+        <IconArrowUp size={12} />
       </button>
       <button
+        type="button"
         onMouseDown={(e) => e.preventDefault()}
         onClick={() => onSearch(q, 1)}
         title="Next (Enter)"
+        aria-label="Next match"
       >
-        ↓
+        <IconArrowDown size={12} />
       </button>
-      <button onMouseDown={(e) => e.preventDefault()} onClick={onClose} title="Close (Esc)">
-        ×
+      <button
+        type="button"
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={onClose}
+        title="Close (Esc)"
+        aria-label="Close find"
+      >
+        <IconClose size={12} />
       </button>
     </div>
   )

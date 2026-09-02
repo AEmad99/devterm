@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import ConnectionForm from './components/connections/ConnectionForm'
 import FileExplorer from './components/files/FileExplorer'
 import ConfirmActionModal from './components/modals/ConfirmActionModal'
+import { IconClose } from './components/common/Icons'
 import Splitter from './components/common/Splitter'
 import NewTerminalModal from './components/terminal/NewTerminalModal'
 import CreateGridModal from './components/terminal/CreateGridModal'
@@ -101,6 +102,7 @@ export default function App() {
   const [dragOverGroup, setDragOverGroup] = useState<string | null>(null)
   const [showSidebar, setShowSidebar] = useState(true)
   const [sidebarWidth, setSidebarWidth] = useState(280)
+  const [gitWidth, setGitWidth] = useState(280)
   const [local, setLocal] = useState<HostContext | null>(null)
   const [globalSearchOpen, setGlobalSearchOpen] = useState(false)
   const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n))
@@ -541,6 +543,7 @@ export default function App() {
           view={view}
           setView={setView}
           setShowSidebar={setShowSidebar}
+          sidebarOpen={showSidebar}
           bottomPanelMode={bottomPanelMode}
           setBottomPanelMode={setBottomPanelMode}
           local={local}
@@ -563,12 +566,6 @@ export default function App() {
               onDelta={(d) => setSidebarWidth((w) => clamp(w + d, 180, 600))}
             />
           </>
-        )}
-
-        {gitPanelOpen && !zenMode && (
-          <aside className="git-sidebar">
-            <GitPanel />
-          </aside>
         )}
 
         <div className="main">
@@ -646,7 +643,7 @@ export default function App() {
                   title="Dismiss"
                   onClick={() => setWelcomeHintSeen(true)}
                 >
-                  ×
+                  <IconClose size={12} />
                 </button>
               </div>
             )}
@@ -655,6 +652,18 @@ export default function App() {
           <StatusBar />
           <TransfersPanel />
         </div>
+
+        {gitPanelOpen && !zenMode && (
+          <>
+            <Splitter
+              direction="horizontal"
+              onDelta={(d) => setGitWidth((w) => clamp(w + d, 220, 480))}
+            />
+            <aside className="git-sidebar" style={{ width: gitWidth }}>
+              <GitPanel />
+            </aside>
+          </>
+        )}
       </div>
 
       {showPicker && (
@@ -713,10 +722,12 @@ export default function App() {
       {zenMode && (
         <button
           className="zen-exit"
-          title="Exit zen mode"
+          title="Exit zen mode (Ctrl/Cmd+Alt+Z)"
+          aria-label="Exit zen mode"
           onClick={() => useSettings.getState().setZenMode(false)}
         >
-          Exit zen mode
+          <IconClose size={12} />
+          Exit zen
         </button>
       )}
       <DictationStatus />

@@ -1,35 +1,28 @@
 .titlebar {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 7px 16px;
-  min-height: 42px;
-  background: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--panel) 96%, var(--fg)),
-    color-mix(in srgb, var(--panel) 78%, var(--bg))
-  );
+  gap: 8px;
+  padding: 4px 10px;
+  min-height: var(--titlebar-h);
+  height: var(--titlebar-h);
+  background: var(--panel);
   border-bottom: 1px solid var(--border);
-  box-shadow: inset 0 1px 0 var(--elevate-hi);
-  font-size: 13px;
+  font-size: var(--fs-200);
   user-select: none;
 }
 
 .titlebar .brand {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  font-weight: 700;
-  letter-spacing: 0.2px;
+  gap: 0;
+  color: var(--fg);
 }
 .titlebar .brand-name {
-  background: linear-gradient(180deg, var(--fg), color-mix(in srgb, var(--fg) 72%, var(--muted)));
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
-}
-.titlebar .brand svg {
-  filter: drop-shadow(0 1px 3px color-mix(in srgb, var(--accent) 45%, transparent));
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
 }
 
 .titlebar .badge {
@@ -72,19 +65,41 @@
 /* Draggable splitters */
 .splitter {
   flex: 0 0 auto;
-  background: var(--border);
+  background: transparent;
   z-index: 5;
+  position: relative;
 }
-.splitter:hover {
+.splitter::after {
+  content: '';
+  position: absolute;
+  background: var(--border);
+  transition: background var(--dur-fast) var(--ease-out);
+}
+.splitter:hover::after,
+.splitter:focus-visible::after {
   background: var(--accent);
 }
 .splitter-horizontal {
-  width: 4px;
+  width: 5px;
+  margin: 0 -2px;
   cursor: col-resize;
 }
+.splitter-horizontal::after {
+  top: 0;
+  bottom: 0;
+  left: 2px;
+  width: 1px;
+}
 .splitter-vertical {
-  height: 4px;
+  height: 5px;
+  margin: -2px 0;
   cursor: row-resize;
+}
+.splitter-vertical::after {
+  left: 0;
+  right: 0;
+  top: 2px;
+  height: 1px;
 }
 
 .main {
@@ -95,24 +110,22 @@
 }
 
 .titlebar button {
-  background: var(--accent);
-  color: var(--accent-fg);
+  background: transparent;
+  color: var(--muted);
   border: none;
   border-radius: var(--radius-sm);
-  padding: 5px 12px;
-  font-size: 12px;
-  font-weight: 600;
+  padding: 4px 8px;
+  font-size: var(--fs-200);
+  font-weight: 500;
   cursor: pointer;
   transition:
-    filter 0.12s ease,
-    transform 0.05s ease;
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
 }
 
 .titlebar button:hover {
-  filter: brightness(1.12);
-}
-.titlebar button:active {
-  transform: translateY(1px);
+  background: var(--hover);
+  color: var(--fg);
 }
 
 .tabs {
@@ -121,25 +134,25 @@
   background: var(--panel);
   border-bottom: 1px solid var(--border);
   overflow-x: auto;
-  padding: 4px 4px 0;
-  gap: 3px;
+  padding: 0 4px;
+  gap: 1px;
   z-index: 3;
 }
 
 .tab {
   display: flex;
   align-items: center;
-  gap: 7px;
-  padding: 6px 12px;
-  font-size: 12px;
-  border-radius: 7px 7px 0 0;
+  gap: 6px;
+  padding: 4px 10px;
+  font-size: var(--fs-200);
+  border-radius: 0;
   cursor: pointer;
   white-space: nowrap;
   color: var(--muted);
   border: 1px solid transparent;
   border-bottom: none;
   position: relative;
-  top: 1px;
+  top: 0;
   /* Keep one busy tab from eating the whole strip — long commands/agent
      tasks are summarized in JS; ellipsis is the hard layout backstop. */
   max-width: min(280px, 42vw);
@@ -168,10 +181,9 @@
 }
 
 .tab.active {
-  background: var(--bg-term);
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
   color: var(--fg);
-  border-color: var(--border);
-  box-shadow: inset 0 1px 0 var(--elevate-hi);
+  border-color: transparent;
 }
 .tab.active::after {
   content: '';
@@ -277,24 +289,6 @@
   background: color-mix(in srgb, var(--accent) 78%, transparent);
 }
 
-.pane-merge {
-  margin-left: auto;
-  align-self: center;
-  background: transparent;
-  border: 1px solid var(--border);
-  color: var(--muted);
-  border-radius: 6px;
-  font-size: 13px;
-  line-height: 1;
-  padding: 2px 8px;
-  cursor: pointer;
-  pointer-events: auto;
-}
-.pane-merge:hover {
-  background: var(--panel-2);
-  color: var(--fg);
-}
-
 .panes {
   flex: 1;
   min-height: 0;
@@ -320,7 +314,7 @@
   inset: 0;
   /* Height of a pane tab strip — the dropzone starts below it. Must match
      TAB_H in src/renderer/components/terminal/TerminalLayout.tsx. */
-  --tab-h: 30px;
+  --tab-h: 28px;
 }
 .term-layer {
   position: absolute;
@@ -345,38 +339,10 @@
    xterm or animate the canvas. Hidden slots omit these classes (TerminalLayout)
    so background groups don't keep pulsing. */
 .term-slot.attention-needed {
-  animation: dt-attention-pulse-ok 1.6s var(--ease-out, ease) infinite;
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--tab-status-attention) 80%, transparent);
 }
 .term-slot.attention-pending {
-  animation: dt-attention-pulse-pending 1.2s var(--ease-out, ease) infinite;
-}
-@keyframes dt-attention-pulse-ok {
-  0%,
-  100% {
-    box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--tab-status-attention) 55%, transparent);
-  }
-  50% {
-    box-shadow: inset 0 0 0 3px color-mix(in srgb, var(--tab-status-attention) 90%, transparent);
-  }
-}
-@keyframes dt-attention-pulse-pending {
-  0%,
-  100% {
-    box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--tab-status-warn) 55%, transparent);
-  }
-  50% {
-    box-shadow: inset 0 0 0 3px color-mix(in srgb, var(--tab-status-warn) 90%, transparent);
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .term-slot.attention-needed,
-  .term-slot.attention-pending {
-    animation: none;
-    box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--tab-status-attention) 70%, transparent);
-  }
-  .term-slot.attention-pending {
-    box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--tab-status-warn) 75%, transparent);
-  }
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--tab-status-warn) 80%, transparent);
 }
 /* Dim panes that are visible but not part of the active leaf, so multi-pane
    layouts make focus obvious at a glance. This is a translucent overlay, NOT a
@@ -450,9 +416,9 @@
   left: 0;
   right: 0;
   display: flex;
-  align-items: flex-end;
-  gap: 3px;
-  padding: 4px 4px 0;
+  align-items: center;
+  gap: 2px;
+  padding: 0 4px;
   background: var(--panel);
   border-bottom: 1px solid var(--border);
   overflow: hidden;
@@ -460,7 +426,8 @@
   box-sizing: border-box;
 }
 .pane-tabstrip .tab {
-  top: 1px;
+  top: 0;
+  height: 100%;
 }
 .pane-dropzone {
   position: absolute;
@@ -583,15 +550,27 @@
 .statusbar {
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 6px 16px;
-  min-height: 28px;
-  background: color-mix(in srgb, var(--panel) 80%, var(--bg));
+  gap: 10px;
+  padding: 0 12px;
+  min-height: var(--statusbar-h);
+  height: var(--statusbar-h);
+  background: var(--panel);
   border-top: 1px solid var(--border);
-  font-size: 11px;
+  font-size: var(--fs-100);
   color: var(--muted);
 }
 
+.statusbar-cluster-c {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.status-git {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
 .statusbar-right {
   display: inline-flex;
   align-items: center;
@@ -664,7 +643,7 @@
 
 .ctx {
   padding: 1px 6px;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   background: var(--panel-2);
   color: var(--fg);
 }
@@ -683,7 +662,19 @@
   color: var(--tab-status-pending);
 }
 .status-msg {
+  color: var(--muted);
+}
+.status-msg.warn {
   color: var(--status-warn);
+}
+.status-msg.err {
+  color: var(--danger);
+}
+.status-ssh.err {
+  color: var(--danger);
+}
+.status-agent {
+  text-transform: none;
 }
 .tab-editor .tab-icon {
   font-size: 11px;
@@ -694,31 +685,32 @@
 }
 .top-nav {
   display: flex;
-  gap: 2px;
-  margin-left: 14px;
-  padding: 3px;
-  background: var(--accent-quiet);
+  gap: 1px;
+  margin-left: 8px;
+  padding: 2px;
+  background: transparent;
   border: 1px solid var(--border);
-  border-radius: 9px;
+  border-radius: var(--radius);
 }
 .top-nav button {
   background: transparent;
   border: none;
   color: var(--muted);
-  border-radius: 6px;
-  padding: 5px 14px;
-  font-size: 12.5px;
-  font-weight: 600;
+  border-radius: var(--radius-sm);
+  padding: 3px 10px;
+  font-size: var(--fs-200);
+  font-weight: 500;
   cursor: pointer;
   transition:
-    background 0.12s ease,
-    color 0.12s ease;
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
 }
 .top-nav button:hover {
   color: var(--fg);
+  background: var(--hover);
 }
 .top-nav button.active {
-  background: color-mix(in srgb, var(--fg) 12%, transparent);
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
   color: var(--fg);
 }
 
@@ -726,7 +718,8 @@
 .pane-add,
 .pane-merge,
 .pane-focus,
-.pane-tmux {
+.pane-tmux,
+.pane-more {
   /* Never let these shrink away: .pane-tabs (flex:1, min-width:0) absorbs all
      the squeeze so focus/add/merge stay visible on narrow panes. */
   flex: 0 0 auto;
@@ -736,12 +729,12 @@
   cursor: pointer;
   font-size: 14px;
   line-height: 1;
-  padding: 3px 8px;
-  border-radius: 6px;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
   align-self: center;
   transition:
-    background 0.12s ease,
-    color 0.12s ease;
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
 }
 .pane-add:hover,
 .pane-merge:hover,
@@ -763,10 +756,10 @@
   display: inline-flex;
   align-items: stretch;
   height: 22px;
-  border-radius: 7px;
+  border-radius: var(--radius);
   overflow: hidden;
-  background: color-mix(in srgb, var(--agent) 16%, transparent);
-  border: 1px solid color-mix(in srgb, var(--agent) 40%, var(--border));
+  background: transparent;
+  border: 1px solid var(--border);
 }
 .pane-agent-launch button {
   display: inline-flex;
@@ -776,12 +769,13 @@
   margin: 0;
   border: none;
   background: transparent;
-  color: var(--agent);
+  color: var(--muted);
   cursor: pointer;
   padding: 0 6px;
 }
 .pane-agent-launch button:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--agent) 22%, transparent);
+  background: var(--hover);
+  color: var(--fg);
 }
 .pane-agent-launch button:disabled {
   opacity: 0.4;
@@ -826,9 +820,12 @@
   gap: 1px;
   height: 22px;
   padding: 0 2px 0 4px;
-  border-radius: 7px;
-  background: color-mix(in srgb, var(--agent) 12%, transparent);
-  border: 1px solid color-mix(in srgb, var(--agent) 38%, var(--border));
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 32%, var(--border));
+}
+.pane-agent.is-live .pane-agent-status {
+  color: var(--accent);
 }
 .pane-agent-status {
   display: inline-flex;
@@ -927,8 +924,8 @@
 /* horizontally scrollable tab list (no visible scrollbar) + overflow chevrons */
 .pane-tabs {
   display: flex;
-  align-items: flex-end;
-  gap: 3px;
+  align-items: center;
+  gap: 1px;
   flex: 1;
   min-width: 0;
   height: 100%;
@@ -947,30 +944,31 @@
 .tab-nav {
   align-self: center;
   flex: 0 0 auto;
-  background: var(--panel-2);
+  background: transparent;
   color: var(--muted);
-  border: 1px solid var(--border);
-  border-radius: 6px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   font-size: 14px;
   line-height: 1;
-  padding: 3px 7px;
+  padding: 2px 5px;
   transition:
-    background 0.12s ease,
-    color 0.12s ease;
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
 }
 .tab-nav:hover {
-  background: var(--accent);
-  color: var(--accent-fg);
+  background: var(--hover);
+  color: var(--fg);
 }
 
 /* --- new-terminal picker modal --- */
 .group-bar {
   flex: 0 0 auto;
   display: flex;
-  align-items: stretch;
-  gap: 4px;
-  padding: 5px 6px 0;
+  align-items: center;
+  gap: 2px;
+  padding: 0 6px;
+  min-height: 26px;
   background: var(--bg);
   border-bottom: 1px solid var(--border);
   overflow-x: auto;
@@ -978,15 +976,14 @@
 .group-tab {
   display: flex;
   align-items: center;
-  gap: 7px;
-  padding: 6px 12px;
-  font-size: 12px;
-  font-weight: 600;
+  gap: 6px;
+  padding: 4px 10px;
+  font-size: var(--fs-200);
+  font-weight: 500;
   color: var(--muted);
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-bottom: none;
-  border-radius: 8px 8px 0 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   white-space: nowrap;
 }
@@ -995,8 +992,7 @@
 }
 .group-tab.active {
   color: var(--fg);
-  background: var(--bg-term);
-  box-shadow: inset 0 2px 0 var(--accent);
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
 }
 .group-tab .group-icon {
   font-size: 12px;
@@ -1015,12 +1011,15 @@
   font-size: 14px;
   line-height: 1;
   color: var(--muted);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   padding: 0 3px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
 }
 .group-tab .group-close:hover {
-  color: var(--fg);
-  background: color-mix(in srgb, var(--fg) 12%, transparent);
+  color: var(--danger);
+  background: var(--danger-bg);
 }
 .group-bar .spacer {
   flex: 1 1 auto;
@@ -1029,14 +1028,14 @@
 .group-save {
   flex: 0 0 auto;
   align-self: center;
-  margin-bottom: 5px;
-  padding: 5px 11px;
-  font-size: 12px;
-  font-weight: 600;
+  margin-bottom: 0;
+  padding: 3px 8px;
+  font-size: var(--fs-200);
+  font-weight: 500;
   color: var(--muted);
-  background: var(--panel);
+  background: transparent;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
 }
 .group-save:hover:not(:disabled) {
@@ -1070,14 +1069,13 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 6px 11px;
+  padding: 4px 8px;
   font-size: 14px;
   line-height: 1;
   color: var(--muted);
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-bottom: none;
-  border-radius: 8px 8px 0 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   user-select: none;
 }
@@ -1100,14 +1098,20 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  width: var(--control-h);
+  height: var(--control-h);
   background: transparent;
   color: var(--muted);
-  padding: 6px 8px;
+  padding: 0;
 }
 .titlebar button.settings-btn:hover {
   background: var(--hover);
   color: var(--fg);
   filter: none;
+}
+.titlebar button.settings-btn.active {
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+  color: var(--fg);
 }
 
 /* Voice dictation mic button states. */
@@ -1198,63 +1202,72 @@ textarea:focus {
 .btn--danger,
 .btn--default,
 .btn--icon {
-  border: 1px solid transparent;
-  border-radius: var(--radius);
-  padding: 7px 14px;
-  font-size: 12.5px;
-  background: linear-gradient(180deg, var(--panel-2), color-mix(in srgb, var(--panel-2) 78%, #000));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 5px 12px;
+  font-size: var(--fs-200);
+  font-weight: 500;
+  background: var(--panel-2);
   color: var(--fg);
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--fg) 7%, transparent),
-    var(--shadow-1);
+  box-shadow: none;
 }
-.btn--sm {
-  padding: 5px 10px;
-  font-size: 11.5px;
+.btn--sm,
+.ghost.small {
+  padding: 3px 8px;
+  font-size: var(--fs-100);
 }
 .btn--md {
-  padding: 7px 14px;
-  font-size: 12.5px;
+  padding: 5px 12px;
+  font-size: var(--fs-200);
 }
-.btn--primary {
-  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 92%, #fff), var(--accent));
-  border-color: var(--accent-strong);
-  color: var(--accent-fg);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.25),
-    0 4px 14px var(--accent-soft);
-}
-.btn--primary:hover:not(:disabled) {
-  filter: brightness(1.07);
+.btn--primary,
+.btn.primary,
+button.primary {
+  background: var(--accent);
   border-color: var(--accent);
-  transform: translateY(-1px);
+  color: var(--accent-fg);
 }
-.btn--ghost {
+.btn--primary:hover:not(:disabled),
+.btn.primary:hover:not(:disabled),
+button.primary:hover:not(:disabled) {
+  filter: brightness(1.06);
+}
+.btn--ghost,
+.btn.ghost,
+button.ghost {
   background: transparent;
   border-color: var(--border);
   color: var(--muted);
   box-shadow: none;
 }
-.btn--ghost:hover:not(:disabled) {
+.btn--ghost:hover:not(:disabled),
+.btn.ghost:hover:not(:disabled),
+button.ghost:hover:not(:disabled) {
   color: var(--fg);
-  border-color: var(--accent);
+  background: var(--hover);
 }
-.btn--danger {
+.btn--danger,
+.btn.danger,
+button.danger {
   background: transparent;
   border-color: transparent;
   color: var(--muted);
   box-shadow: none;
 }
-.btn--danger:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--danger) 16%, transparent);
-  border-color: color-mix(in srgb, var(--danger) 55%, transparent);
-  color: color-mix(in srgb, var(--danger) 70%, #fff);
+.btn--danger:hover:not(:disabled),
+.btn.danger:hover:not(:disabled),
+button.danger:hover:not(:disabled) {
+  background: var(--danger-bg);
+  border-color: color-mix(in srgb, var(--danger) 45%, transparent);
+  color: var(--danger);
 }
 .btn--icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 6px;
+  width: var(--control-h);
+  height: var(--control-h);
+  padding: 0;
   background: transparent;
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
@@ -1281,23 +1294,22 @@ textarea:focus {
 
 /* Compact toolbar buttons (file panes). */
 .filepane-toolbar button.btn-row {
-  background: linear-gradient(180deg, var(--panel-2), color-mix(in srgb, var(--panel-2) 80%, #000));
+  background: var(--panel-2);
   color: var(--fg);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  padding: 4px 9px;
-  font-size: 11px;
-  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--fg) 6%, transparent);
+  padding: 3px 8px;
+  font-size: var(--fs-100);
+  box-shadow: none;
 }
 .filepane-toolbar button.btn-row:hover:not(:disabled) {
-  border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
-  transform: translateY(-1px);
+  border-color: var(--border);
+  background: var(--hover);
 }
 .filepane-toolbar button.btn-row.primary {
-  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 92%, #fff), var(--accent));
-  border-color: var(--accent-strong);
+  background: var(--accent);
+  border-color: var(--accent);
   color: var(--accent-fg);
-  box-shadow: 0 3px 10px var(--accent-soft);
 }
 .filepane-toolbar button.btn-row.danger:not(:disabled):hover {
   background: color-mix(in srgb, var(--danger) 16%, transparent);
@@ -1386,16 +1398,26 @@ textarea:focus {
   flex: 0 0 auto;
 }
 .bottom-panel-toggle .seg {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   background: transparent;
   border: 0;
   color: var(--muted);
-  font-size: 11px;
-  padding: 4px 10px;
+  font-size: var(--fs-100);
+  padding: 4px 7px;
   cursor: pointer;
   border-right: 1px solid var(--border);
   transition:
-    background 0.12s ease,
-    color 0.12s ease;
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+.bottom-panel-toggle .seg-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
 }
 .bottom-panel-toggle .seg:last-child {
   border-right: 0;
@@ -1404,8 +1426,8 @@ textarea:focus {
   color: var(--fg);
 }
 .bottom-panel-toggle .seg.active {
-  background: var(--accent);
-  color: var(--accent-fg);
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+  color: var(--fg);
 }
 
 /* Zen mode — hide all chrome except the terminal workspace and pane tabs. */
@@ -1422,20 +1444,19 @@ textarea:focus {
   top: 10px;
   right: 10px;
   z-index: 1000;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   background: var(--panel);
   color: var(--fg);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   padding: 5px 10px;
-  font-size: 12px;
-  font-weight: 600;
+  font-size: var(--fs-200);
+  font-weight: 500;
   cursor: pointer;
-  /* Resting state stays clearly readable: this button is the only visible way
-     out of zen mode if the user forgot the hotkey. */
-  opacity: 0.75;
-  transition:
-    opacity 0.12s ease,
-    background 0.12s ease;
+  opacity: 1;
+  transition: background var(--dur-fast) var(--ease-out);
 }
 .zen-exit:hover {
   opacity: 1;

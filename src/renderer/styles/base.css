@@ -13,36 +13,36 @@
   --accent-2: #bb9af7;
   --accent-fg: #0b0e14;
   --selection: rgba(122, 162, 247, 0.3);
-  --agent: #7c5cff;
-  --danger: #e0564f;
-  --ok: #3fb950;
+  /* Agent chrome follows the theme accent — applyTheme() keeps these in sync. */
+  --agent: var(--accent);
+  --danger: #f7768e;
+  --ok: #9ece6a;
 
-  /* Tab-dot status colors — used by TabStatusDot (Cluster E). Themes can
-     retint by overriding these; never hardcode a hex in the dot's own rules. */
-  --tab-status-warn: #e0af68;      /* yellow — agent awaiting approval */
-  --tab-status-error: #f48771;     /* red    — error / failed / mismatch */
-  --tab-status-pending: #ff9e64;   /* orange — reconnecting / bridge starting */
-  --tab-status-attention: #9ece6a; /* green  — agent finished / needs you */
-  --tab-status-running: #7aa2f7;    /* blue   — process running */
-  --tab-status-unread: #bb9af7;     /* violet — unread output */
+  /* Tab-dot status colors — retinted per-theme in applyTheme(). */
+  --tab-status-warn: #e0af68;
+  --tab-status-error: #f7768e;
+  --tab-status-pending: #ff9e64;
+  --tab-status-attention: #9ece6a;
+  --tab-status-running: #7aa2f7;
+  --tab-status-unread: #bb9af7;
 
   /* Derived tokens — resolve against the live core vars, so they re-theme for
      free. color-mix is supported by the bundled Chromium. */
   --accent-quiet: color-mix(in srgb, var(--accent) 16%, var(--panel));
   --accent-soft: color-mix(in srgb, var(--accent) 24%, transparent);
-  --accent-strong: color-mix(in srgb, var(--accent) 88%, #000);
-  --hover: color-mix(in srgb, var(--fg) 9%, transparent);
-  --row-active: color-mix(in srgb, var(--accent) 18%, transparent);
-  --input-bg: color-mix(in srgb, #000 22%, var(--panel));
+  --accent-strong: color-mix(in srgb, var(--accent) 82%, var(--bg));
+  --hover: color-mix(in srgb, var(--fg) 8%, transparent);
+  --row-active: color-mix(in srgb, var(--accent) 14%, transparent);
+  --input-bg: color-mix(in srgb, var(--bg) 55%, var(--panel));
   --path-fg: color-mix(in srgb, var(--accent) 70%, var(--fg));
   --status-info: var(--accent);
   --status-success: var(--ok);
-  --status-warn: #e0af68;
+  --status-warn: var(--tab-status-warn);
   --status-error: var(--danger);
   --danger-bg: color-mix(in srgb, var(--danger) 14%, var(--panel));
   --info-bg: color-mix(in srgb, var(--accent) 14%, var(--panel));
   --surface-raised: var(--panel-2);
-  --surface-sunk: color-mix(in srgb, var(--panel) 84%, #000);
+  --surface-sunk: color-mix(in srgb, var(--panel) 88%, var(--bg));
 
   --git-modified: var(--status-warn);
   --git-added: var(--status-success);
@@ -51,28 +51,35 @@
   --git-untracked: var(--muted);
   --git-ignored: color-mix(in srgb, var(--muted) 60%, transparent);
 
-  /* Shape + depth scale. */
-  --radius-sm: 6px;
-  --radius: 9px;
-  --radius-lg: 14px;
-  /* Type stacks — referenced as var(--font-mono)/var(--font-ui) by panels that
-     need mono data (git SHAs, diff blocks) or explicit UI text. */
+  /* Shape — tight, Windows Terminal / Ghostty. */
+  --radius-sm: 4px;
+  --radius: 6px;
+  --radius-lg: 8px;
+  --space-1: 2px;
+  --space-2: 4px;
+  --space-3: 6px;
+  --space-4: 8px;
+  --space-5: 12px;
+  --space-6: 16px;
+  --fs-100: 11px;
+  --fs-200: 12px;
+  --fs-300: 13px;
+  --control-h: 24px;
+  --titlebar-h: 36px;
+  --tab-h: 28px;
+  --statusbar-h: 22px;
+  --focus-ring: 0 0 0 2px var(--accent-soft);
   --font-mono: ui-monospace, 'Cascadia Code', Menlo, Consolas, monospace;
   --font-ui: 'Segoe UI', system-ui, -apple-system, sans-serif;
-  /* Shadows are tinted with the theme background (not flat black) so elevation
-     reads as part of the palette instead of a grey wash. */
   --shadow-color: color-mix(in srgb, var(--bg) 42%, #000);
   --shadow-1: 0 1px 2px color-mix(in srgb, var(--shadow-color) 72%, transparent);
   --shadow-2: 0 10px 30px color-mix(in srgb, var(--shadow-color) 66%, transparent);
-  --shadow-pop: 0 26px 64px color-mix(in srgb, var(--shadow-color) 78%, transparent);
+  --shadow-pop: 0 18px 48px color-mix(in srgb, var(--shadow-color) 78%, transparent);
 
-  /* Premium surface treatment, all derived from the live palette so every theme
-     gets cohesive depth: a hairline top highlight on raised surfaces, and a
-     slightly sunken tone for gradient bottoms / inset wells. */
-  --elevate-hi: color-mix(in srgb, var(--fg) 7%, transparent);
+  --elevate-hi: color-mix(in srgb, var(--fg) 6%, transparent);
 
-  /* Ambient backdrop intensity — raised to 1 for glass themes by applyTheme. */
-  --ambient-strength: 0.55;
+  /* Solid themes stay flat. Glass themes raise this to 1 in applyTheme(). */
+  --ambient-strength: 0;
 
   /* Glass tuning (used when data-glass='on'). Solid themes keep the highlight /
      edge inert so the shared frosted rules stay harmless. */
@@ -94,12 +101,8 @@ body,
   overflow: hidden;
   background: var(--bg);
   color: var(--fg);
-  font-family:
-    'Segoe UI',
-    system-ui,
-    -apple-system,
-    sans-serif;
-  font-size: 13px;
+  font-family: var(--font-ui);
+  font-size: var(--fs-300);
 }
 
 /* Dark scrollbars everywhere */
@@ -146,7 +149,6 @@ body,
   inset: -12vmax; /* overscan so the drifting blooms never reveal an edge */
   z-index: -1;
   pointer-events: none;
-  will-change: transform;
 }
 .app::before {
   background:
@@ -178,19 +180,28 @@ body,
 /* Any stray control inherits the dark theme instead of the OS default white. */
 input,
 select,
-textarea {
+textarea,
+.text-input {
   font-family: inherit;
   color: var(--fg);
-  background: var(--bg);
+  background: var(--input-bg);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   outline: none;
 }
 input:focus,
 select:focus,
-textarea:focus {
+textarea:focus,
+.text-input:focus {
   border-color: var(--accent);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
+  box-shadow: var(--focus-ring);
+}
+button:focus-visible,
+[role='tab']:focus-visible,
+[role='menuitem']:focus-visible,
+[role='menuitemradio']:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 select option {
   background: var(--panel);
@@ -209,9 +220,9 @@ select option {
    Acrylic/Mica via `window:set-glass`.
    =========================================================================== */
 :root[data-glass='on'] {
-  --glass-blur: 26px;
-  --glass-hi: rgba(255, 255, 255, 0.08); /* top sheen on frosted edges */
-  --glass-edge: rgba(255, 255, 255, 0.14); /* brighter hairline border */
+  --glass-blur: 22px;
+  --glass-hi: color-mix(in srgb, var(--fg) 10%, transparent);
+  --glass-edge: color-mix(in srgb, var(--fg) 16%, transparent);
 }
 
 /* Frosted chrome — every raised surface blurs the ambient backdrop behind it.
@@ -233,9 +244,16 @@ select option {
 :root[data-glass='on'] .filepane-toolbar,
 :root[data-glass='on'] .editor-toolbar,
 :root[data-glass='on'] .agent-status,
-:root[data-glass='on'] .bottom-panel-toggle {
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.7);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.7);
+:root[data-glass='on'] .bottom-panel-toggle,
+:root[data-glass='on'] .git-sidebar,
+:root[data-glass='on'] .git-panel-head,
+:root[data-glass='on'] .git-panel-tabs,
+:root[data-glass='on'] .transfers-panel,
+:root[data-glass='on'] .transfers-head,
+:root[data-glass='on'] .manager,
+:root[data-glass='on'] .agent-activity-panel {
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.35);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.35);
 }
 
 /* Floating overlays melt the content behind them away with a deeper blur and a
@@ -247,8 +265,8 @@ select option {
 :root[data-glass='on'] .pane-agent-menu,
 :root[data-glass='on'] .browser-dl-drawer {
   background: color-mix(in srgb, var(--panel) 80%, transparent);
-  backdrop-filter: blur(34px) saturate(1.8);
-  -webkit-backdrop-filter: blur(34px) saturate(1.8);
+  backdrop-filter: blur(28px) saturate(1.4);
+  -webkit-backdrop-filter: blur(28px) saturate(1.4);
   border-color: var(--glass-edge);
   box-shadow:
     var(--shadow-pop),

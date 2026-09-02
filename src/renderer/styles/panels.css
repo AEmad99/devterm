@@ -20,21 +20,21 @@
 }
 .browser-btn {
   flex: 0 0 auto;
-  background: var(--panel-2);
+  background: transparent;
   color: var(--muted);
-  border: 1px solid var(--border);
-  border-radius: 6px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   font-size: 14px;
   line-height: 1;
-  padding: 4px 9px;
+  padding: 3px 7px;
   transition:
-    background 0.12s ease,
-    color 0.12s ease;
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
 }
 .browser-btn:hover:not(:disabled) {
-  background: var(--accent);
-  color: var(--accent-fg);
+  background: var(--hover);
+  color: var(--fg);
 }
 .browser-btn:disabled {
   opacity: 0.4;
@@ -107,8 +107,8 @@
 .browser-tabs {
   display: flex;
   align-items: stretch;
-  gap: 3px;
-  padding: 4px 6px 0;
+  gap: 1px;
+  padding: 0 6px;
   background: var(--panel);
   border-bottom: 1px solid var(--border);
   overflow-x: auto;
@@ -118,13 +118,13 @@
   align-items: center;
   gap: 6px;
   max-width: 200px;
-  padding: 5px 8px 6px 12px;
-  font-size: 12px;
+  padding: 4px 8px;
+  font-size: var(--fs-200);
   color: var(--muted);
-  background: var(--panel-2);
+  background: transparent;
   border: 1px solid transparent;
   border-bottom: none;
-  border-radius: 7px 7px 0 0;
+  border-radius: 0;
   cursor: pointer;
   white-space: nowrap;
   position: relative;
@@ -134,9 +134,9 @@
   color: var(--fg);
 }
 .browser-tab.active {
-  background: var(--bg-term);
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
   color: var(--fg);
-  border-color: var(--border);
+  border-color: transparent;
 }
 .browser-tab.active::after {
   content: '';
@@ -200,8 +200,8 @@
 .modal {
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 20px 22px 24px;
+  border-radius: var(--radius-lg);
+  padding: 16px 18px 18px;
   width: 420px;
   max-width: calc(100vw - 48px);
   max-height: calc(100vh - 48px);
@@ -248,9 +248,9 @@
   background: var(--input-bg);
   border: 1px solid var(--border);
   color: var(--fg);
-  border-radius: 4px;
-  padding: 6px 8px;
-  font-size: 13px;
+  border-radius: var(--radius-sm);
+  padding: 5px 8px;
+  font-size: var(--fs-300);
 }
 .modal .checkbox {
   flex-direction: row;
@@ -273,32 +273,28 @@
   gap: 8px;
   margin-top: 10px;
 }
-/* Bare buttons inside modals get the primary look; :where() keeps this at
-   zero-class specificity so component classes (.theme-swatch, icon buttons,
-   tab strips) always win over the default. */
+/* Bare modal buttons are quiet ghosts. Opt into `.primary` for the CTA.
+   :where() keeps this at zero-class specificity so swatches / tabs win. */
 :where(.modal) button {
-  background: var(--accent);
-  color: var(--accent-fg);
-  border: none;
+  background: transparent;
+  color: var(--fg);
+  border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  padding: 7px 16px;
-  font-size: 13px;
-  font-weight: 600;
+  padding: 5px 12px;
+  font-size: var(--fs-200);
+  font-weight: 500;
   cursor: pointer;
   transition:
-    filter 0.12s ease,
-    transform 0.05s ease;
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
 }
 .modal button:hover {
-  filter: brightness(1.08);
-}
-.modal button:active {
-  transform: translateY(1px);
+  background: var(--hover);
 }
 .modal button.ghost,
 .modal .btn--ghost {
-  background: var(--panel-2);
-  color: var(--fg);
+  background: transparent;
+  color: var(--muted);
 }
 .modal .btn--danger {
   background: transparent;
@@ -328,14 +324,19 @@
   font-size: 15px;
 }
 .modal .modal-x {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--control-h);
+  height: var(--control-h);
   background: transparent;
   border: none;
   color: var(--muted);
-  font-size: 20px;
+  font-size: 16px;
   line-height: 1;
-  padding: 0 4px;
+  padding: 0;
   cursor: pointer;
-  transition: color 0.12s ease;
+  transition: color var(--dur-fast) var(--ease-out);
 }
 .modal .modal-x:hover {
   color: var(--fg);
@@ -354,6 +355,10 @@
 }
 .modal-foot {
   margin-top: 4px;
+}
+.modal-foot .btn--danger {
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--border));
+  color: var(--danger);
 }
 
 /* Saved connections list inside the SSH modal */
@@ -444,14 +449,20 @@
   display: flex;
   flex-direction: column;
   height: 100%;
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
 }
 .panes-row {
   flex: 1;
   min-height: 0;
+  min-width: 0;
   display: flex;
+  width: 100%;
 }
-.pane-fixed {
-  flex: 0 0 auto;
+.pane-fixed,
+.sftp-col {
+  flex: 1 1 0;
   min-width: 0;
   display: flex;
   overflow: hidden;
@@ -778,25 +789,9 @@
   max-width: 92vw;
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
   box-shadow: var(--shadow-pop);
   overflow: hidden;
-}
-
-@keyframes palette-in {
-  from {
-    opacity: 0;
-    transform: translateY(8px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-@media (prefers-reduced-motion: no-preference) {
-  .modal-backdrop .palette {
-    animation: palette-in 160ms cubic-bezier(0.16, 1, 0.3, 1) both;
-  }
 }
 .palette-input {
   width: 100%;
@@ -804,10 +799,14 @@
   background: transparent;
   border: none;
   border-bottom: 1px solid var(--border);
-  padding: 14px 16px;
-  font-size: 15px;
+  padding: 12px 16px;
+  font-size: 14px;
   color: var(--fg);
   outline: none;
+}
+.palette-input:focus {
+  box-shadow: none;
+  border-bottom-color: var(--accent);
 }
 
 .palette-tabs {
@@ -1040,8 +1039,30 @@
 .palette-actions {
   display: flex;
   justify-content: flex-end;
+  align-items: center;
   gap: 8px;
   margin-top: 14px;
+}
+.palette-actions button {
+  background: transparent;
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 5px 12px;
+  font-size: var(--fs-200);
+  font-weight: 500;
+  cursor: pointer;
+}
+.palette-actions button:hover:not(:disabled) {
+  background: var(--hover);
+}
+.palette-actions button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-fg);
+}
+.palette-actions button.ghost {
+  color: var(--muted);
 }
 
 /* Section header inside the palette list (Snippets / <scope> history). */
@@ -1472,9 +1493,10 @@
 
 /* Empty-state secondary CTA */
 .empty-cta.secondary {
-  background: var(--panel-2);
+  background: transparent;
   color: var(--fg);
   border: 1px solid var(--border);
+  box-shadow: none;
 }
 .empty-cta.secondary:hover {
   border-color: var(--accent);
@@ -1572,17 +1594,15 @@
   display: flex;
   align-items: center;
   gap: 14px;
-  padding: 12px 16px;
-  background: linear-gradient(180deg, var(--panel), var(--surface-sunk));
+  padding: 10px 14px;
+  background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 12px;
-  transition:
-    border-color 0.12s ease,
-    transform 0.06s ease;
+  border-radius: var(--radius-lg);
+  transition: border-color var(--dur-fast) var(--ease-out);
 }
 .manager-row:hover {
-  border-color: var(--accent);
-  transform: translateY(-1px);
+  border-color: var(--border);
+  background: var(--hover);
 }
 .mr-icon {
   font-size: 20px;
@@ -1807,24 +1827,19 @@
   align-items: center;
   gap: 7px;
   margin-top: 8px;
-  background: linear-gradient(180deg, var(--accent), var(--accent-strong));
-  border: 1px solid var(--accent-strong);
+  background: var(--accent);
+  border: 1px solid var(--accent);
   color: var(--accent-fg);
-  font-size: 13px;
-  font-weight: 600;
-  border-radius: var(--radius);
-  padding: 9px 20px;
+  font-size: var(--fs-300);
+  font-weight: 500;
+  border-radius: var(--radius-sm);
+  padding: 7px 16px;
   cursor: pointer;
-  box-shadow: 0 6px 18px var(--accent-soft);
-  transition:
-    filter 0.12s ease,
-    transform 0.05s ease;
+  box-shadow: none;
+  transition: filter var(--dur-fast) var(--ease-out);
 }
 .empty-cta:hover {
-  filter: brightness(1.12);
-}
-.empty-cta:active {
-  transform: translateY(1px);
+  filter: brightness(1.06);
 }
 
 /* Top-level view panes share the panes-area box; only one is visible at a time.
@@ -1924,7 +1939,9 @@
   border: 1px solid transparent;
   cursor: pointer;
   text-align: left;
-  transition: background 0.12s ease, color 0.12s ease;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease;
 }
 .settings-nav-item svg {
   flex: 0 0 auto;
@@ -1940,8 +1957,8 @@
 }
 
 .settings-nav-item.active {
-  background: var(--accent);
-  color: var(--accent-fg);
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+  color: var(--fg);
   font-weight: 600;
 }
 
@@ -3152,8 +3169,8 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 2px 10px;
-  font-size: 11px;
+  padding: 6px 10px;
+  font-size: var(--fs-200);
   color: var(--muted);
   border-bottom: 1px solid var(--border);
 }
@@ -3253,7 +3270,10 @@
   font-weight: 500;
   padding: 3px 10px;
   cursor: pointer;
-  transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+  transition:
+    color 0.12s ease,
+    border-color 0.12s ease,
+    background 0.12s ease;
 }
 .transfers-action:hover:not(:disabled) {
   color: var(--accent);
@@ -3276,7 +3296,10 @@
   background: transparent;
   color: var(--muted);
   cursor: pointer;
-  transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+  transition:
+    color 0.12s ease,
+    border-color 0.12s ease,
+    background 0.12s ease;
 }
 .transfers-close:hover {
   color: var(--status-error);
@@ -3296,7 +3319,10 @@
   font-weight: 500;
   padding: 3px 0;
   cursor: pointer;
-  transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+  transition:
+    color 0.12s ease,
+    border-color 0.12s ease,
+    background 0.12s ease;
 }
 .transfers-row-action:hover {
   color: var(--accent);
@@ -3343,6 +3369,17 @@
 .browser-tab.is-muted {
   opacity: 0.85;
 }
+.browser-tab-mute {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 1px 4px;
+  cursor: pointer;
+}
 .browser-tab.is-muted .browser-tab-mute {
   opacity: 1;
   color: var(--accent);
@@ -3355,6 +3392,13 @@
   padding: 0 4px;
   min-width: 38px;
   justify-content: center;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+}
+.browser-zoom-label:hover {
+  color: var(--fg);
 }
 .browser-dl-btn {
   position: relative;
@@ -3717,8 +3761,8 @@
 /* --- Git panel (right sidebar) --------------------------------------------- */
 
 .git-sidebar {
-  flex: 0 0 320px;
-  min-width: 260px;
+  flex: 0 0 auto;
+  min-width: 220px;
   max-width: 480px;
   background: var(--panel);
   border-left: 1px solid var(--border);
@@ -4017,20 +4061,52 @@
   text-transform: uppercase;
   font-family: var(--font-ui);
 }
-.git-badge.git-m { background: color-mix(in srgb, var(--git-modified) 22%, transparent); color: var(--git-modified); }
-.git-badge.git-a { background: color-mix(in srgb, var(--git-added) 22%, transparent); color: var(--git-added); }
-.git-badge.git-d { background: color-mix(in srgb, var(--git-deleted) 22%, transparent); color: var(--git-deleted); }
-.git-badge.git-q { background: color-mix(in srgb, var(--git-untracked) 22%, transparent); color: var(--git-untracked); }
-.git-badge.git-r { background: color-mix(in srgb, var(--git-renamed) 22%, transparent); color: var(--git-renamed); }
-.git-badge.git-u { background: color-mix(in srgb, var(--status-error) 25%, transparent); color: var(--status-error); }
+.git-badge.git-m {
+  background: color-mix(in srgb, var(--git-modified) 22%, transparent);
+  color: var(--git-modified);
+}
+.git-badge.git-a {
+  background: color-mix(in srgb, var(--git-added) 22%, transparent);
+  color: var(--git-added);
+}
+.git-badge.git-d {
+  background: color-mix(in srgb, var(--git-deleted) 22%, transparent);
+  color: var(--git-deleted);
+}
+.git-badge.git-q {
+  background: color-mix(in srgb, var(--git-untracked) 22%, transparent);
+  color: var(--git-untracked);
+}
+.git-badge.git-r {
+  background: color-mix(in srgb, var(--git-renamed) 22%, transparent);
+  color: var(--git-renamed);
+}
+.git-badge.git-u {
+  background: color-mix(in srgb, var(--status-error) 25%, transparent);
+  color: var(--status-error);
+}
 
-.git-row.git-row-m { color: var(--git-modified); }
-.git-row.git-row-a { color: var(--git-added); }
-.git-row.git-row-d { color: var(--git-deleted); }
-.git-row.git-row-q { color: var(--git-untracked); }
-.git-row.git-row-r { color: var(--git-renamed); }
-.git-row.git-row-u { color: var(--status-error); }
-.git-row-name { color: var(--fg); }
+.git-row.git-row-m {
+  color: var(--git-modified);
+}
+.git-row.git-row-a {
+  color: var(--git-added);
+}
+.git-row.git-row-d {
+  color: var(--git-deleted);
+}
+.git-row.git-row-q {
+  color: var(--git-untracked);
+}
+.git-row.git-row-r {
+  color: var(--git-renamed);
+}
+.git-row.git-row-u {
+  color: var(--status-error);
+}
+.git-row-name {
+  color: var(--fg);
+}
 
 .git-changes-actions {
   position: sticky;
@@ -4524,12 +4600,25 @@
 
 /* ---- Tree-row status tinting (legacy FileTree badges) -------------------- */
 
-.tree-row.git-m .tree-name { color: var(--git-modified); }
-.tree-row.git-a .tree-name { color: var(--git-added); }
-.tree-row.git-d .tree-name { color: var(--git-deleted); }
-.tree-row.git-q .tree-name { color: var(--git-untracked); font-style: italic; }
-.tree-row.git-r .tree-name { color: var(--git-renamed); }
-.tree-row.git-u .tree-name { color: var(--status-error); }
+.tree-row.git-m .tree-name {
+  color: var(--git-modified);
+}
+.tree-row.git-a .tree-name {
+  color: var(--git-added);
+}
+.tree-row.git-d .tree-name {
+  color: var(--git-deleted);
+}
+.tree-row.git-q .tree-name {
+  color: var(--git-untracked);
+  font-style: italic;
+}
+.tree-row.git-r .tree-name {
+  color: var(--git-renamed);
+}
+.tree-row.git-u .tree-name {
+  color: var(--status-error);
+}
 
 .tree-git-badge {
   flex: 0 0 auto;
@@ -4544,9 +4633,27 @@
   font-weight: 700;
   font-family: var(--font-ui);
 }
-.tree-git-badge.git-m { background: color-mix(in srgb, var(--git-modified) 22%, transparent); color: var(--git-modified); }
-.tree-git-badge.git-a { background: color-mix(in srgb, var(--git-added) 22%, transparent); color: var(--git-added); }
-.tree-git-badge.git-d { background: color-mix(in srgb, var(--git-deleted) 22%, transparent); color: var(--git-deleted); }
-.tree-git-badge.git-q { background: color-mix(in srgb, var(--git-untracked) 22%, transparent); color: var(--git-untracked); }
-.tree-git-badge.git-r { background: color-mix(in srgb, var(--git-renamed) 22%, transparent); color: var(--git-renamed); }
-.tree-git-badge.git-u { background: color-mix(in srgb, var(--status-error) 25%, transparent); color: var(--status-error); }
+.tree-git-badge.git-m {
+  background: color-mix(in srgb, var(--git-modified) 22%, transparent);
+  color: var(--git-modified);
+}
+.tree-git-badge.git-a {
+  background: color-mix(in srgb, var(--git-added) 22%, transparent);
+  color: var(--git-added);
+}
+.tree-git-badge.git-d {
+  background: color-mix(in srgb, var(--git-deleted) 22%, transparent);
+  color: var(--git-deleted);
+}
+.tree-git-badge.git-q {
+  background: color-mix(in srgb, var(--git-untracked) 22%, transparent);
+  color: var(--git-untracked);
+}
+.tree-git-badge.git-r {
+  background: color-mix(in srgb, var(--git-renamed) 22%, transparent);
+  color: var(--git-renamed);
+}
+.tree-git-badge.git-u {
+  background: color-mix(in srgb, var(--status-error) 25%, transparent);
+  color: var(--status-error);
+}

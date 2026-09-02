@@ -9,6 +9,7 @@ import { attachRenderer, attachClipboard } from '../../lib/renderer'
 import { createIdleChime, AGENT_ATTENTION_BODY } from '../../lib/attention'
 import { useBridgeActivity } from '../../lib/bridge-activity'
 import { AGENT_BRIDGE_POLICY, agentKindLabel, injectAgentPrompt } from '../../lib/agent-ui'
+import { getTheme } from '../../lib/themes'
 
 /** Live state of the agent's link to this host (what the status pill reflects). */
 type BridgeState = AgentBridgeStatus['state'] | 'connecting' | 'exited'
@@ -145,7 +146,14 @@ export default function AgentPane({
       fontSize: 13,
       cursorBlink: true,
       allowProposedApi: true,
-      theme: { background: '#16181d', foreground: '#d7dae0', cursor: '#7c5cff' }
+      theme: (() => {
+        const t = getTheme(useSettings.getState().themeId)
+        return {
+          background: t.glass ? 'transparent' : t.terminal.background,
+          foreground: t.terminal.foreground,
+          cursor: t.chrome.accent
+        }
+      })()
     })
     const fit = new FitAddon()
     term.loadAddon(fit)
@@ -390,6 +398,7 @@ export default function AgentPane({
     <div className={`agent-pane${active ? '' : ' is-inactive'}`}>
       <div
         className={`agent-status agent-status--${pill.tone}`}
+        role="status"
         title={
           statusTitle ||
           (isLocal

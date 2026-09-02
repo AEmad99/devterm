@@ -331,7 +331,7 @@ export default function FileExplorer() {
       <div className="explorer-head">
         <span className="ex-kind">
           {kind === 'remote' ? <IconRemote size={14} /> : <IconLocal size={14} />}
-          {kind === 'remote' ? 'Remote' : 'Local'}
+          Files
         </span>
         <span className="spacer" />
         <button

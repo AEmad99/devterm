@@ -20,6 +20,19 @@ import {
 } from '../../lib/browser-control'
 import { formatBytes } from '../../lib/format'
 import type { BrowserDownloadItem } from '@shared/types'
+import {
+  IconArrowDown,
+  IconArrowLeft,
+  IconArrowRight,
+  IconArrowUp,
+  IconClose,
+  IconDownload,
+  IconExternal,
+  IconHome,
+  IconInspect,
+  IconPlus,
+  IconRefresh
+} from '../common/Icons'
 
 /** Default landing page and search engine. */
 const HOME_URL = 'https://www.google.com'
@@ -147,7 +160,17 @@ const BrowserTab = memo(
       onClose: () => void
     }
   >(function BrowserTab(
-    { tab, onState, onTitle, onOpenTab, onWebContents, paneSessionId, agentOwned, ownerAgentSessionId, onClose },
+    {
+      tab,
+      onState,
+      onTitle,
+      onOpenTab,
+      onWebContents,
+      paneSessionId,
+      agentOwned,
+      ownerAgentSessionId,
+      onClose
+    },
     ref
   ) {
     const el = useRef<Electron.WebviewTag | null>(null)
@@ -400,28 +423,31 @@ const BrowserToolbar = memo(function BrowserToolbar({
       <button
         className="browser-btn"
         title="Back"
+        aria-label="Back"
         disabled={!canBack}
         onClick={() => getHandle()?.back()}
       >
-        ‹
+        <IconArrowLeft size={14} />
       </button>
       <button
         className="browser-btn"
         title="Forward"
+        aria-label="Forward"
         disabled={!canFwd}
         onClick={() => getHandle()?.forward()}
       >
-        ›
+        <IconArrowRight size={14} />
       </button>
       <button
         className="browser-btn"
         title={loading ? 'Stop' : 'Reload'}
+        aria-label={loading ? 'Stop' : 'Reload'}
         onClick={() => getHandle()?.reloadOrStop()}
       >
-        {loading ? '✕' : '⟳'}
+        {loading ? <IconClose size={14} /> : <IconRefresh size={14} />}
       </button>
-      <button className="browser-btn" title="Home" onClick={() => onGo(HOME_URL)}>
-        ⌂
+      <button className="browser-btn" title="Home" aria-label="Home" onClick={() => onGo(HOME_URL)}>
+        <IconHome size={14} />
       </button>
       <form
         className="browser-addr-form"
@@ -442,47 +468,52 @@ const BrowserToolbar = memo(function BrowserToolbar({
       <button
         className="browser-btn"
         title="Zoom out (Ctrl/Cmd+-)"
+        aria-label="Zoom out"
         onClick={() => getHandle()?.zoomOut()}
       >
         −
       </button>
-      <span className="browser-zoom-label" title="Per-origin zoom level">
+      <button
+        type="button"
+        className="browser-zoom-label"
+        title="Reset zoom (Ctrl/Cmd+0)"
+        aria-label={`Zoom ${Math.round(zoom * 100)} percent, click to reset`}
+        onClick={() => getHandle()?.zoomReset()}
+      >
         {Math.round(zoom * 100)}%
-      </span>
+      </button>
       <button
         className="browser-btn"
         title="Zoom in (Ctrl/Cmd++)"
+        aria-label="Zoom in"
         onClick={() => getHandle()?.zoomIn()}
       >
         +
       </button>
       <button
-        className="browser-btn"
-        title="Reset zoom (Ctrl/Cmd+0)"
-        onClick={() => getHandle()?.zoomReset()}
-      >
-        100%
-      </button>
-      <button
         className={`browser-btn browser-dl-btn ${dlCount > 0 ? 'has-active' : ''}`}
         title={dlCount > 0 ? `${dlCount} active download${dlCount === 1 ? '' : 's'}` : 'Downloads'}
+        aria-label="Downloads"
         onClick={onToggleDownloads}
       >
-        ⬇{dlCount > 0 && <span className="browser-dl-count">{dlCount}</span>}
+        <IconDownload size={14} />
+        {dlCount > 0 && <span className="browser-dl-count">{dlCount}</span>}
       </button>
       <button
         className="browser-btn"
         title="Open DevTools for this tab (detached)"
+        aria-label="Open DevTools"
         onClick={() => getHandle()?.openDevtools()}
       >
-        {window.devterm.platform === 'darwin' ? '⌘ DevTools' : 'DevTools'}
+        <IconInspect size={14} />
       </button>
       <button
         className="browser-btn"
         title="Open in system browser"
+        aria-label="Open in system browser"
         onClick={() => void window.devterm.openExternal(address || HOME_URL)}
       >
-        ↗
+        <IconExternal size={14} />
       </button>
     </div>
   )
@@ -525,6 +556,9 @@ const BrowserFindBar = memo(function BrowserFindBar({
             e.preventDefault()
             if (e.shiftKey) getHandle()?.findNext(false)
             else getHandle()?.findNext(true)
+          } else if (e.key === 'Escape') {
+            e.preventDefault()
+            onClose()
           }
         }}
       />
@@ -547,7 +581,7 @@ const BrowserFindBar = memo(function BrowserFindBar({
         disabled={findMatches === 0}
         onClick={() => getHandle()?.findNext(false)}
       >
-        ↑
+        <IconArrowUp size={12} />
       </button>
       <button
         type="button"
@@ -556,10 +590,16 @@ const BrowserFindBar = memo(function BrowserFindBar({
         disabled={findMatches === 0}
         onClick={() => getHandle()?.findNext(true)}
       >
-        ↓
+        <IconArrowDown size={12} />
       </button>
-      <button type="button" className="browser-btn" title="Close find bar" onClick={onClose}>
-        ✕
+      <button
+        type="button"
+        className="browser-btn"
+        title="Close find bar"
+        aria-label="Close find bar"
+        onClick={onClose}
+      >
+        <IconClose size={12} />
       </button>
     </form>
   )
@@ -741,30 +781,39 @@ function BrowserPane({ session }: { session: Session }) {
             }}
           >
             <span className="browser-tab-title">{t.title}</span>
-            <button
-              className="browser-tab-mute"
-              title={t.muted ? 'Unmute tab' : 'Mute tab'}
-              onClick={(e) => {
-                e.stopPropagation()
-                handles.current.get(t.id)?.toggleMute()
-              }}
-            >
-              {t.muted ? '🔇' : '🔊'}
-            </button>
+            {t.muted && (
+              <button
+                className="browser-tab-mute"
+                title="Unmute tab"
+                aria-label="Unmute tab"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  handles.current.get(t.id)?.toggleMute()
+                }}
+              >
+                muted
+              </button>
+            )}
             <button
               className="browser-tab-close"
               title="Close tab"
+              aria-label="Close tab"
               onClick={(e) => {
                 e.stopPropagation()
                 closeTab(t.id)
               }}
             >
-              ✕
+              <IconClose size={11} />
             </button>
           </div>
         ))}
-        <button className="browser-tab-new" title="New tab" onClick={() => addTab()}>
-          ＋
+        <button
+          className="browser-tab-new"
+          title="New tab"
+          aria-label="New tab"
+          onClick={() => addTab()}
+        >
+          <IconPlus size={14} />
         </button>
       </div>
       <BrowserToolbar
@@ -823,8 +872,12 @@ function BrowserPane({ session }: { session: Session }) {
           <div className="browser-dl-head">
             <span>Downloads</span>
             <span className="spacer" />
-            <button className="ghost small" onClick={() => setDlDrawerOpen(false)}>
-              ✕
+            <button
+              className="ghost small"
+              onClick={() => setDlDrawerOpen(false)}
+              aria-label="Close downloads"
+            >
+              <IconClose size={12} />
             </button>
           </div>
           {downloads.length === 0 ? (

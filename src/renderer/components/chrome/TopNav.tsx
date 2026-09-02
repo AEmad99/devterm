@@ -14,12 +14,12 @@ const ITEMS: { id: View; label: string }[] = [
 
 export default function TopNav({ view, setView }: TopNavProps) {
   return (
-    <nav className="top-nav" role="tablist" aria-label="Top views">
+    <nav className="top-nav" aria-label="Views">
       {ITEMS.map((item) => (
         <button
           key={item.id}
-          role="tab"
-          aria-selected={view === item.id}
+          type="button"
+          aria-current={view === item.id ? 'page' : undefined}
           className={view === item.id ? 'active' : ''}
           onClick={() => setView(item.id)}
         >

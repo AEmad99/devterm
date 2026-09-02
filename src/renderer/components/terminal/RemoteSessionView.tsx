@@ -10,13 +10,14 @@ import Splitter from '../common/Splitter'
 import PortForwardPanel from './PortForwardPanel'
 import { AGENT_BRIDGE_POLICY } from '../../lib/agent-ui'
 import { useBridgeActivity } from '../../lib/bridge-activity'
+import { IconFolder, IconPorts, IconSplit, IconTerminals } from '../common/Icons'
 
 const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n))
 const MIN_SHELL_WIDTH = 340
 const MIN_AGENT_WIDTH = 320
 const MAX_AGENT_WIDTH = 1200
-const MIN_FILES_WIDTH = 280
-const MAX_FILES_WIDTH = 900
+const MIN_FILES_WIDTH = 360
+const MAX_FILES_WIDTH = 1100
 const SPLITTER_WIDTH = 4
 
 function fitAgentWidth(width: number, totalWidth: number): number {
@@ -78,7 +79,7 @@ function RemoteSessionView({ session }: { session: Session }) {
   const agentDocked = agentUiMode === 'docked'
   const [agentWidth, setAgentWidth] = useState(480)
   const [filesSideOpen, setFilesSideOpen] = useState(false)
-  const [filesWidth, setFilesWidth] = useState(420)
+  const [filesWidth, setFilesWidth] = useState(640)
   const splitRef = useRef<HTMLDivElement>(null)
   const filesSplitRef = useRef<HTMLDivElement>(null)
   const sftpSidePane = useSettings((s) => s.sftpSidePane)
@@ -163,14 +164,24 @@ function RemoteSessionView({ session }: { session: Session }) {
           )}
         </div>
       )}
-      <div className="view-toggle">
-        <button className={view === 'terminal' ? 'active' : ''} onClick={() => setView('terminal')}>
+      <div className="view-toggle" role="toolbar" aria-label="Remote session views">
+        <button
+          className={view === 'terminal' ? 'active' : ''}
+          title="Terminal"
+          aria-label="Terminal"
+          aria-pressed={view === 'terminal'}
+          onClick={() => setView('terminal')}
+        >
+          <IconTerminals size={14} />
           Terminal
         </button>
         <button
           className={
             (!sftpSidePane && view === 'files') || (sftpSidePane && filesSideOpen) ? 'active' : ''
           }
+          title="Files (SFTP)"
+          aria-label="Files (SFTP)"
+          aria-pressed={(!sftpSidePane && view === 'files') || (sftpSidePane && filesSideOpen)}
           onClick={() => {
             if (sftpSidePane) {
               setFilesSideOpen((v) => !v)
@@ -180,7 +191,21 @@ function RemoteSessionView({ session }: { session: Session }) {
             }
           }}
         >
-          Files (SFTP)
+          <IconFolder size={14} />
+          Files
+        </button>
+        <button
+          className={view === 'ports' ? 'active' : ''}
+          title="Port forwards"
+          aria-label="Port forwards"
+          aria-pressed={view === 'ports'}
+          onClick={() => {
+            setView('ports')
+            setPortsOpened(true)
+          }}
+        >
+          <IconPorts size={14} />
+          Ports
         </button>
         <button
           className={`side-pane-toggle ${sftpSidePane ? 'active' : ''}`}
@@ -189,18 +214,11 @@ function RemoteSessionView({ session }: { session: Session }) {
               ? 'SFTP opens docked beside the terminal'
               : 'SFTP opens as a full-pane view'
           }
+          aria-label="Dock SFTP beside the terminal"
+          aria-pressed={sftpSidePane}
           onClick={() => setSftpSidePane(!sftpSidePane)}
         >
-          Side
-        </button>
-        <button
-          className={view === 'ports' ? 'active' : ''}
-          onClick={() => {
-            setView('ports')
-            setPortsOpened(true)
-          }}
-        >
-          Ports
+          <IconSplit size={14} />
         </button>
       </div>
 

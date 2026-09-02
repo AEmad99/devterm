@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useSessions } from '../../store/sessions'
 import { useSettings } from '../../store/settings'
 import { IconLocal, IconRemote, IconBrowser } from '../common/Icons'
+import { IconBranch } from '../git/GitIcons'
 import type { GitStatus, HostContext } from '@shared/types'
 
 function osLabel(os?: string): string {
@@ -27,7 +28,37 @@ function ContextBadge({ ctx }: { ctx?: HostContext }) {
   )
 }
 
-/** Pinging the SSH server is expensive; back off exponentially on failure. */
+function agentLabel(state?: string): string | null {
+  if (!state) return null
+  switch (state) {
+    case 'connecting':
+      return 'Connecting'
+    case 'starting':
+      return 'Starting bridge'
+    case 'listening':
+      return 'Waiting for agent'
+    case 'connected':
+      return 'Agent connected'
+    case 'disconnected':
+      return 'Bridge disconnected'
+    case 'stopped':
+      return 'Agent stopped'
+    case 'exited':
+      return 'Agent exited'
+    case 'error':
+      return 'Agent error'
+    default:
+      return state
+  }
+}
+
+function statusTone(status?: string): string {
+  if (!status) return ''
+  if (status.startsWith('reconnect failed') || status.toLowerCase().includes('error')) return 'err'
+  if (status.startsWith('reconnecting') || status.includes('cancelled')) return 'warn'
+  return ''
+}
+
 const SSH_PING_INITIAL_MS = 30_000
 const SSH_PING_MAX_MS = 5 * 60_000
 
@@ -38,37 +69,36 @@ export default function StatusBar() {
   const [git, setGit] = useState<GitStatus | null>(null)
   const [latency, setLatency] = useState<{ ms: number | null; err?: string } | null>(null)
 
-  // Depend on primitives only — the whole `active` object is replaced on every
-  // store update (cwd tick, status, agent bridge), which would re-subscribe
-  // git watchers and restart the latency loop with an immediate SSH exec.
   const activeId = active?.id
   const activeKind = active?.kind
   const activeCwd = active?.cwd
   const activeClosed = active?.closed
 
-  // Local sessions: lazy-fetch git status for the cwd.
   useEffect(() => {
     if (!showStatusBar) return
-    if (activeKind !== 'local' || !activeCwd) {
+    if ((activeKind !== 'local' && activeKind !== 'remote') || !activeCwd) {
       setGit(null)
       return
     }
     let cancelled = false
     setGit(null)
-    void window.devterm.git.status({ path: activeCwd }).then((s) => {
+    const args =
+      activeKind === 'remote' && activeId
+        ? { sessionId: activeId, path: activeCwd }
+        : { path: activeCwd }
+    void window.devterm.git.status(args).then((s) => {
       if (!cancelled) setGit(s)
     })
-    const off = window.devterm.git.onChange({ path: activeCwd }, (s) => {
+    const off = window.devterm.git.onChange(args, (s) => {
       if (!cancelled) setGit(s)
     })
-    window.devterm.git.watch({ path: activeCwd })
+    window.devterm.git.watch(args)
     return () => {
       cancelled = true
       off()
     }
-  }, [showStatusBar, activeKind, activeCwd])
+  }, [showStatusBar, activeKind, activeCwd, activeId])
 
-  // Remote sessions: probe latency with exponential backoff on failure.
   const backoffRef = useRef(SSH_PING_INITIAL_MS)
   useEffect(() => {
     if (!showStatusBar) return
@@ -108,13 +138,14 @@ export default function StatusBar() {
   if (!active) {
     return (
       <div className="statusbar" role="status" aria-label="Session status">
-        <span className="status-cell">ready</span>
+        <span className="status-cell">Ready</span>
         <span className="spacer" />
       </div>
     )
   }
 
-  const agentState = active.agentBridgeState
+  const agentText = agentLabel(active.agentBridgeState)
+  const msgTone = statusTone(active.status)
 
   return (
     <div className="statusbar" role="status" aria-label="Session status">
@@ -132,12 +163,13 @@ export default function StatusBar() {
         ) : (
           <>
             <ContextBadge ctx={active.context} />
-            {active.status && <span className="status-msg">{active.status}</span>}
+            {active.status && <span className={`status-msg ${msgTone}`}>{active.status}</span>}
           </>
         )}
-        {active.kind === 'local' && git?.isRepo && (
+        {git?.isRepo && (
           <span className="status-cell status-git" title={`Branch: ${git.branch}`}>
-            ⎇ {git.branch || 'detached'}
+            <IconBranch size={12} />
+            {git.branch || 'detached'}
             {git.ahead > 0 ? ` ↑${git.ahead}` : ''}
             {git.behind > 0 ? ` ↓${git.behind}` : ''}
           </span>
@@ -147,7 +179,7 @@ export default function StatusBar() {
             className={`status-cell status-ssh ${latency.err ? 'err' : ''}`}
             title={latency.err ?? `Round-trip: ${latency.ms} ms`}
           >
-            {latency.err ? '⚠ SSH' : `SSH ${latency.ms ?? '—'} ms`}
+            {latency.err ? 'SSH error' : `SSH ${latency.ms ?? '—'} ms`}
           </span>
         )}
       </span>
@@ -155,9 +187,12 @@ export default function StatusBar() {
       <span className="spacer" />
 
       <span className="statusbar-right">
-        {agentState && (
-          <span className="status-cell status-agent" title={`Agent bridge: ${agentState}`}>
-            {agentState}
+        {agentText && (
+          <span
+            className="status-cell status-agent"
+            title={`Agent bridge: ${active.agentBridgeState}`}
+          >
+            {agentText}
           </span>
         )}
       </span>

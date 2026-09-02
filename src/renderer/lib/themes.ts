@@ -207,7 +207,7 @@ export const THEMES: Theme[] = [
       bg: '#181825',
       panel: '#1e1e2e',
       panel2: '#313244',
-      border: '#313244',
+      border: '#45475a',
       fg: '#cdd6f4',
       muted: '#7f849c',
       accent: '#cba6f7',
@@ -365,8 +365,8 @@ export const THEMES: Theme[] = [
       panel: '#073642',
       panel2: '#0a4250',
       border: '#0e4b5a',
-      fg: '#93a1a1',
-      muted: '#586e75',
+      fg: '#eee8d5',
+      muted: '#93a1a1',
       accent: '#268bd2',
       accent2: '#2aa198'
     }
@@ -560,9 +560,18 @@ export function applyTheme(theme: Theme): void {
   set('--accent-fg', c.accentFg ?? readableOn(c.accent))
   set('--selection', theme.terminal.selection)
   set('--term-fg', theme.terminal.foreground)
-  // Ambient backdrop intensity: glass themes lean into the glow, solid themes
-  // keep it subtle. styles.css scales the bloom opacity by this number.
-  set('--ambient-strength', theme.glass ? '1' : '0.55')
+  set('--agent', c.accent)
+  set('--danger', theme.terminal.red)
+  set('--ok', theme.terminal.green)
+  set('--status-warn', theme.terminal.yellow)
+  set('--tab-status-warn', theme.terminal.yellow)
+  set('--tab-status-error', theme.terminal.red)
+  set('--tab-status-pending', theme.terminal.yellow)
+  set('--tab-status-attention', theme.terminal.green)
+  set('--tab-status-running', theme.terminal.blue)
+  set('--tab-status-unread', theme.terminal.magenta)
+  // Glass themes keep a static ambient bloom to sample; solid themes stay flat.
+  set('--ambient-strength', theme.glass ? '1' : '0')
   root.dataset.theme = theme.id
   root.dataset.glass = theme.glass ? 'on' : 'off'
   root.style.colorScheme = theme.dark ? 'dark' : 'light'

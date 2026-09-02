@@ -13,13 +13,21 @@ import {
   type LeafNode,
   type Rect
 } from '../../store/layout'
-import { IconMerge, IconPlus, IconFocus, IconClose, IconTmux } from '../common/Icons'
+import {
+  IconMerge,
+  IconPlus,
+  IconFocus,
+  IconClose,
+  IconTmux,
+  IconChevronLeft,
+  IconChevronRight
+} from '../common/Icons'
 import PaneAgentControls from './PaneAgentControls'
 import { openTmuxPicker } from '../../lib/terms'
 import { deriveTabLabel } from '../../lib/tab-label'
 import TabStatusDot from './TabStatusDot'
 
-const TAB_H = 30 // px height of a pane's tab strip
+const TAB_H = 28 // px height of a pane's tab strip — keep in sync with --tab-h
 
 // Centered, enlarged rect used for the magnified pane in focus mode. It sits
 // above the dimming backdrop (see .term-slot.focused / .focus-backdrop in CSS).
@@ -481,7 +489,7 @@ function PaneChrome({
               scrollTabs(-1)
             }}
           >
-            ‹
+            <IconChevronLeft size={12} />
           </button>
         )}
         <div
@@ -502,7 +510,7 @@ function PaneChrome({
               <div
                 key={sid}
                 role="tab"
-                tabIndex={0}
+                tabIndex={s.id === leaf.active ? 0 : -1}
                 aria-selected={s.id === leaf.active}
                 className={`tab ${s.id === leaf.active ? 'active' : ''} ${s.closed ? 'closed' : ''}`}
                 draggable
@@ -575,7 +583,7 @@ function PaneChrome({
                     onTabClose(sid)
                   }}
                 >
-                  ×
+                  <IconClose size={11} />
                 </button>
               </div>
             )
@@ -590,7 +598,7 @@ function PaneChrome({
               scrollTabs(1)
             }}
           >
-            ›
+            <IconChevronRight size={12} />
           </button>
         )}
         {showAgentControls && activeSession && <PaneAgentControls session={activeSession} />}
@@ -598,6 +606,7 @@ function PaneChrome({
           <button
             className="pane-tmux"
             title="tmux sessions — Ctrl/Cmd+Alt+T"
+            aria-label="tmux sessions"
             onClick={(e) => {
               e.stopPropagation()
               if (leaf.active) openTmuxPicker(leaf.active)
@@ -610,6 +619,7 @@ function PaneChrome({
           <button
             className="pane-focus"
             title="Focus (magnify) this terminal — Ctrl/Cmd+Shift+Z"
+            aria-label="Focus this terminal"
             onClick={(e) => {
               e.stopPropagation()
               if (leaf.active) onToggleFocus(leaf.active)
@@ -622,6 +632,7 @@ function PaneChrome({
           <button
             className="pane-merge"
             title="Merge this pane into the other pane"
+            aria-label="Merge this pane"
             onClick={(e) => {
               e.stopPropagation()
               onMerge()
@@ -633,6 +644,7 @@ function PaneChrome({
         <button
           className="pane-add"
           title="New terminal (or double-click the tab bar)"
+          aria-label="New terminal"
           onClick={(e) => {
             e.stopPropagation()
             onNewTerminal?.()

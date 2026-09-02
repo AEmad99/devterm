@@ -10,6 +10,7 @@ interface AppToolbarProps {
   view: View
   setView: (view: View) => void
   setShowSidebar: (v: boolean | ((prev: boolean) => boolean)) => void
+  sidebarOpen: boolean
   bottomPanelMode: BottomPanelMode
   setBottomPanelMode: (mode: BottomPanelMode) => void
   local?: HostContext | null
@@ -24,6 +25,7 @@ export default function AppToolbar({
   view,
   setView,
   setShowSidebar,
+  sidebarOpen,
   bottomPanelMode,
   setBottomPanelMode,
   gitPanelOpen,
@@ -37,35 +39,39 @@ export default function AppToolbar({
       <button
         className="sidebar-toggle"
         title="Toggle file explorer"
+        aria-label="Toggle file explorer"
+        aria-expanded={sidebarOpen}
         onClick={() => setShowSidebar((v) => !v)}
       >
-        <IconMenu size={17} />
+        <IconMenu size={16} />
       </button>
-      <span className="brand">
-        <LogoMark size={20} />
+      <span className="brand" aria-label="DevTerm">
+        <LogoMark size={18} />
         <span className="brand-name">DevTerm</span>
       </span>
       <TopNav view={view} setView={setView} />
       <span className="spacer" />
       <button
         className={`settings-btn ${gitPanelOpen ? 'active' : ''}`}
-        title="Toggle Git panel (branches, log, changes, stash, tags, remotes)"
+        title="Toggle Git panel"
+        aria-label="Toggle Git panel"
         aria-pressed={gitPanelOpen}
         onClick={() => setGitPanelOpen((v) => !v)}
       >
-        <IconBranch size={17} />
+        <IconBranch size={16} />
       </button>
       <BottomPanelToggle mode={bottomPanelMode} setMode={setBottomPanelMode} />
       <MicButton hotkey={dictateHotkey} />
       <button
         className="settings-btn"
         title="Keyboard shortcuts (Ctrl/Cmd+/)"
+        aria-label="Keyboard shortcuts"
         onClick={onShortcuts}
       >
-        <IconKeyboard size={17} />
+        <IconKeyboard size={16} />
       </button>
-      <button className="settings-btn" title="Settings" onClick={onSettings}>
-        <IconSettings size={17} />
+      <button className="settings-btn" title="Settings" aria-label="Settings" onClick={onSettings}>
+        <IconSettings size={16} />
       </button>
     </div>
   )

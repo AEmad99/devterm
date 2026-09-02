@@ -1667,8 +1667,8 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                 DevTerm v{appVersion}
               </span>
             )}
-            <button className="primary" onClick={onClose}>
-              Done
+            <button className="ghost" onClick={onClose}>
+              Close
             </button>
           </div>
         </div>

@@ -584,6 +584,14 @@ export default function CommandPalette({
       >
         {!chosen ? (
           <>
+            <input
+              ref={inputRef}
+              className="palette-input"
+              value={query}
+              placeholder="Run a snippet, connect, launch a workspace, or search history…"
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={onListKey}
+            />
             <div className="palette-tabs">
               {CATEGORIES.map((c) => (
                 <button
@@ -600,14 +608,6 @@ export default function CommandPalette({
                 </button>
               ))}
             </div>
-            <input
-              ref={inputRef}
-              className="palette-input"
-              value={query}
-              placeholder="Run a snippet, connect, launch a workspace, or search history…"
-              onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={onListKey}
-            />
             <div className="palette-list">
               {isEmpty ? (
                 <div className="palette-empty">{emptyMessage}</div>
@@ -681,6 +681,7 @@ export default function CommandPalette({
             {error && <div className="palette-error">{error}</div>}
             <div className="palette-actions">
               <button
+                type="button"
                 className="ghost"
                 onClick={clearRecentValues}
                 disabled={!canClearCache}
@@ -689,9 +690,13 @@ export default function CommandPalette({
                 Clear recent values
               </button>
               <span className="spacer" />
-              <button onClick={() => setChosen(null)}>Back</button>
-              <button onClick={() => submitParams(false)}>Insert</button>
-              <button className="primary" onClick={() => submitParams(true)}>
+              <button type="button" className="ghost" onClick={() => setChosen(null)}>
+                Back
+              </button>
+              <button type="button" className="ghost" onClick={() => submitParams(false)}>
+                Insert
+              </button>
+              <button type="button" className="primary" onClick={() => submitParams(true)}>
                 Run
               </button>
             </div>

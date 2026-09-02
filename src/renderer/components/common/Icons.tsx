@@ -37,13 +37,13 @@ export function LogoMark({ size = 22, ...rest }: SVGProps<SVGSVGElement> & { siz
           <stop offset="1" stopColor="var(--accent)" stopOpacity="0.55" />
         </linearGradient>
       </defs>
-      <rect x="1.5" y="1.5" width="29" height="29" rx="8" fill="url(#dt-logo)" />
+      <rect x="1.5" y="1.5" width="29" height="29" rx="6" fill="url(#dt-logo)" />
       <rect
         x="1.5"
         y="1.5"
         width="29"
         height="29"
-        rx="8"
+        rx="6"
         fill="none"
         stroke="#fff"
         strokeOpacity="0.25"
@@ -317,6 +317,89 @@ export const IconAgentFloat = (p: IconProps) => (
 export const IconAgentStop = (p: IconProps) => (
   <Svg {...p}>
     <rect x="6.5" y="6.5" width="11" height="11" rx="2.2" fill="currentColor" stroke="none" />
+  </Svg>
+)
+
+export const IconActivity = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M3.5 12h3.2l2.1-6.5 3.4 13 2.3-6.5H20.5" />
+  </Svg>
+)
+
+export const IconTransfer = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M7 4v16M4 7l3-3 3 3M17 20V4M14 17l3 3 3-3" />
+  </Svg>
+)
+
+export const IconPorts = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M8.5 8.5h7v4.5H8.5z" />
+    <path d="M10 13v3.5M14 13v3.5M8 17.5h8M12 8.5V5" />
+  </Svg>
+)
+
+export const IconChevronLeft = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="m14.5 5.5-7 6.5 7 6.5" />
+  </Svg>
+)
+
+export const IconChevronRight = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="m9.5 5.5 7 6.5-7 6.5" />
+  </Svg>
+)
+
+export const IconArrowDown = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M12 5v13M6 13l6 6 6-6" />
+  </Svg>
+)
+
+export const IconArrowLeft = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M19 12H6M11 6l-6 6 6 6" />
+  </Svg>
+)
+
+export const IconArrowRight = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M5 12h13M13 6l6 6-6 6" />
+  </Svg>
+)
+
+export const IconDownload = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M12 4v11M7.5 11.5 12 16l4.5-4.5M5 20h14" />
+  </Svg>
+)
+
+export const IconExternal = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M14 5h5v5M19 5l-9 9" />
+    <path d="M17 13.5V18a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 5 18V9A1.5 1.5 0 0 1 6.5 7.5H11" />
+  </Svg>
+)
+
+export const IconMore = (p: IconProps) => (
+  <Svg {...p}>
+    <circle cx="6" cy="12" r="1.3" fill="currentColor" stroke="none" />
+    <circle cx="12" cy="12" r="1.3" fill="currentColor" stroke="none" />
+    <circle cx="18" cy="12" r="1.3" fill="currentColor" stroke="none" />
+  </Svg>
+)
+
+export const IconSplit = (p: IconProps) => (
+  <Svg {...p}>
+    <rect x="3.5" y="4.5" width="17" height="15" rx="2.2" />
+    <path d="M12 4.5v15" />
+  </Svg>
+)
+
+export const IconInspect = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="m8 7-3.5 5L8 17M16 7l3.5 5L16 17M13.5 6.5 10.5 17.5" />
   </Svg>
 )
 

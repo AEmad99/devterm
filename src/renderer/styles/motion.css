@@ -95,22 +95,8 @@
 @media (prefers-reduced-motion: no-preference) {
   /* --- Ambient backdrop blooms drift slowly for a living-glass feel. Long,
      offset loops so the motion is felt, never watched. Compositor-only. --- */
-  .app::before {
-    animation: dt-ambient-a 46s ease-in-out infinite alternate;
-  }
-  .app::after {
-    animation: dt-ambient-b 62s ease-in-out infinite alternate;
-  }
-
-  /* Glass themes sample the ambient layer through ~20 backdrop-filter blurs,
-     so animating it forces every frosted region to recomposite on every frame,
-     forever — even when the app is idle. Keep the blooms static under glass
-     (the blur alone carries the effect); solid themes keep the drift since
-     nothing samples the backdrop there. */
-  :root[data-glass='on'] .app::before,
-  :root[data-glass='on'] .app::after {
-    animation: none;
-  }
+  /* Ambient blooms stay static. Drift recomposites frosted glass forever and
+     adds nothing on solid themes (strength is 0). */
 
   /* --- Overlay entrances: backdrop fades, panel scales up.
      These mount fresh on each open, so the keyframe plays once per open. --- */
@@ -120,6 +106,9 @@
   .modal,
   .palette,
   .confirm-modal {
+    animation: dt-pop-in var(--dur) var(--ease-out) both;
+  }
+  .modal-backdrop .palette {
     animation: dt-pop-in var(--dur) var(--ease-out) both;
   }
 
@@ -189,32 +178,8 @@
     animation: dt-fade-up var(--dur-fast) var(--ease-out) both;
   }
 
-  /* --- Pane focus ring: animate border + glow together when focus moves
-     between split panes (this is the panes' premium touch). --- */
-  .pane-leaf {
-    transition:
-      box-shadow var(--dur-fast) ease,
-      border-color var(--dur-fast) ease;
-  }
-
-  /* --- Primary buttons: a touch of spring lift on hover. --- */
-  .modal button.primary,
-  .ws-card button.primary {
-    transition:
-      filter var(--dur-fast) ease,
-      transform var(--dur-fast) var(--ease-spring);
-  }
-  .modal button.primary:hover,
-  .ws-card button.primary:hover {
-    transform: translateY(-1px);
-  }
-
-  /* --- Voice dictation: pulse the mic icon while recording and the status dot
-     while recording/transcribing. Opacity/transform only, gated here so it's
-     silent under reduced-motion. --- */
-  .titlebar button.mic-btn.recording svg {
-    animation: activity-pulse 1.4s ease-in-out infinite;
-  }
+  /* --- Voice dictation: pulse the status dot while recording/transcribing.
+     Opacity only — no scale on the titlebar mic (it blurs the glyph). --- */
   .dictation-status.status-recording .dictation-dot,
   .dictation-status.status-transcribing .dictation-dot,
   .dictation-status.status-loading .dictation-dot {
@@ -236,10 +201,8 @@
   0%,
   100% {
     opacity: 0.95;
-    transform: scale(1);
   }
   50% {
-    opacity: 0.75;
-    transform: scale(1.12);
+    opacity: 0.7;
   }
 }

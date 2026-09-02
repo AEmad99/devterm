@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import type { ReactNode } from 'react'
 import ModalShell from './ModalShell'
+import Button from './Button'
 
 export interface ConfirmDialogProps {
   open: boolean
@@ -14,10 +15,8 @@ export interface ConfirmDialogProps {
 }
 
 /**
- * The house "are you sure?" dialog — a small ModalShell with a Cancel ghost
- * and a danger confirm (the same `ghost` / `danger` classes SettingsModal and
- * FilePane use). Esc and overlay-click close via ModalShell; the confirm
- * button is autofocused on open so Enter accepts.
+ * House confirm dialog. Cancel is focused on destructive confirms so Enter
+ * does not immediately kill. Esc / overlay-click close via ModalShell.
  */
 export default function ConfirmDialog({
   open,
@@ -28,11 +27,14 @@ export default function ConfirmDialog({
   onConfirm,
   onClose
 }: ConfirmDialogProps) {
+  const cancelRef = useRef<HTMLButtonElement>(null)
   const confirmRef = useRef<HTMLButtonElement>(null)
 
   useEffect(() => {
-    if (open) confirmRef.current?.focus()
-  }, [open])
+    if (!open) return
+    const target = danger ? cancelRef.current : confirmRef.current
+    target?.focus()
+  }, [open, danger])
 
   return (
     <ModalShell
@@ -42,17 +44,12 @@ export default function ConfirmDialog({
       size="sm"
       footer={
         <>
-          <button type="button" className="ghost" onClick={onClose}>
+          <Button ref={cancelRef} variant="ghost" onClick={onClose}>
             Cancel
-          </button>
-          <button
-            ref={confirmRef}
-            type="button"
-            className={danger ? 'danger' : 'primary'}
-            onClick={onConfirm}
-          >
+          </Button>
+          <Button ref={confirmRef} variant={danger ? 'danger' : 'primary'} onClick={onConfirm}>
             {confirmLabel}
-          </button>
+          </Button>
         </>
       }
     >
