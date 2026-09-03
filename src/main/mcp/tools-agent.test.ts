@@ -13,6 +13,7 @@ describe('local agent handoff tools', () => {
     const prompt = buildAgentHandoffPrompt({
       sourceKind: 'grok',
       sourceSessionId: 'local-source-1',
+      sessionId: 'local-agent-abc123',
       cwd: 'D:\\projects\\DevTerm',
       kind: 'codex',
       model: 'luna',
@@ -20,10 +21,32 @@ describe('local agent handoff tools', () => {
       prompt: task
     })
     assert.match(prompt, /Source: Grok \(session local-source-1\)/)
+    assert.match(prompt, /Your session: local-agent-abc123/)
     assert.match(prompt, /Working directory: D:\\projects\\DevTerm/)
     assert.match(prompt, /Your CLI: Codex/)
     assert.match(prompt, /Model \/ effort: luna \/ max/)
+    // Orca-style worker contract: exactly one report back, no further spawns.
+    assert.match(prompt, /send ONE summary back with your `agent_message`/)
+    assert.match(prompt, /to session local-source-1/)
+    assert.match(prompt, /Do not open another agent/)
     assert.ok(prompt.endsWith(task))
+  })
+
+  it('surfaces a dropped-model note without touching the raw task', () => {
+    const prompt = buildAgentHandoffPrompt({
+      sourceKind: 'grok',
+      sourceSessionId: 'local-source-1',
+      sessionId: 'local-agent-xyz',
+      cwd: 'D:\\projects\\DevTerm',
+      kind: 'opencode',
+      model: undefined,
+      modelNote:
+        'Requested model "muse spark 1.3 free" is not a valid OpenCode model — starting with the operator default model.',
+      prompt: 'do the thing'
+    })
+    assert.doesNotMatch(prompt, /Model \/ effort/)
+    assert.match(prompt, /Requested model "muse spark 1\.3 free"/)
+    assert.ok(prompt.endsWith('do the thing'))
   })
 
   it('returns a structured error when the delegate cap rejects a request', async () => {

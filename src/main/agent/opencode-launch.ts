@@ -20,17 +20,25 @@ export async function resolveOpencodeBin(): Promise<string> {
 }
 
 /**
+ * CLI-arg budget for the handoff prompt. Windows CreateProcess caps the whole
+ * command line at 32767 chars; stay far below it so delegated tasks with long
+ * plans still spawn. Oversized prompts are omitted here and delivered by the
+ * renderer's PTY injection fallback instead (see `promptDelivered`).
+ */
+export const OPENCODE_PROMPT_ARG_LIMIT = 12000
+
+/**
  * Prepare a per-session working directory containing an `opencode.json` that
  * wires the in-process MCP bridge as a remote server, and return the spawn
- * spec for interactive `opencode` scoped to the bridge tools. NEVER `--prompt`
- * / non-interactive mode.
+ * spec for interactive `opencode` scoped to the bridge tools.
  *
- * OpenCode supports MCP via project-level `opencode.json` with a `mcp.<name>`
- * block; a `remote` entry is just `url` + `headers`. Unlike Claude's
- * `--mcp-config` or pi's loaded extension, opencode also has built-in file
- * and bash tools; the briefing file steers the agent toward the bridge, and
- * the config disables every built-in tool so the only thing it can act on
- * the host with is the `devterm_*` MCP tools. The config also disables
+ * The TUI stays interactive: `opencode [project] --prompt "..."` opens the
+ * TUI with the prompt pre-filled (only `opencode run` is non-interactive), so
+ * the handoff task travels as a CLI argument — never `--prompt`-less PTY
+ * typing. `--model` takes `provider/model`.
+ *
+ * OpenCode ships these built-in tools (https://opencode.ai/docs/tools/) — turning every one off means
+ * every host action has to go through `devterm_*` on this SSH session.
  * autoupdate (the bridge is short-lived — an update prompt mid-session is
  * noise) and share/upload defaults; the control server defaults keep it on
  * localhost with an OS-assigned port.
@@ -89,23 +97,42 @@ export async function prepareOpencodeLaunch(
       question: false
     }
   } else if (extras?.appendSystemPrompt) {
-    opencodeConfig.instructions = extras.appendSystemPrompt
+    // `instructions` is a string ARRAY in opencode's schema — a bare string
+    // fails config validation ("Expected array | undefined") and the TUI
+    // exits immediately. One entry = one appended system-prompt document.
+    opencodeConfig.instructions = [extras.appendSystemPrompt]
   }
   writeFileSync(join(overlay, 'opencode.json'), JSON.stringify(opencodeConfig, null, 2), {
     mode: 0o600
   })
 
   const project = extras?.spawnCwd || overlay
+  // `opencode [project]` is the default command — when no subcommand is
+  // given, opencode starts the TUI against the project at `[project]` (or
+  // cwd). MCP config is always the overlay file via OPENCODE_CONFIG.
+  // `--prompt` pre-fills the TUI input (it does NOT switch to non-interactive
+  // `run` mode); `-m` selects `provider/model` for this session only.
+  const args = [project]
+  const model = extras?.model?.trim()
+  if (model) args.push('--model', model)
+  const prompt = extras?.initialPrompt?.replace(/\s+$/u, '')
+  let promptDelivered = false
+  if (prompt) {
+    if (prompt.length <= OPENCODE_PROMPT_ARG_LIMIT) {
+      args.push('--prompt', prompt)
+      promptDelivered = true
+    }
+    // Oversized prompts stay out of argv (CreateProcess command-line cap) and
+    // are typed into the TUI by the renderer's PTY injection fallback.
+  }
   return {
     bin: await resolveOpencodeBin(),
-    // `opencode [project]` is the default command — when no subcommand is
-    // given, opencode starts the TUI against the project at `[project]` (or
-    // cwd). MCP config is always the overlay file via OPENCODE_CONFIG.
-    args: [project],
+    args,
     cwd: project,
     env: {
       OPENCODE_CONFIG: join(overlay, 'opencode.json')
     },
+    promptDelivered,
     cleanup: () => {
       try {
         rmSync(overlay, { recursive: true, force: true })

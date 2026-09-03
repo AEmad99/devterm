@@ -3,9 +3,23 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { homedir, tmpdir } from 'os'
 import { join } from 'path'
 import type { BridgeInfo } from '../mcp/server'
+import type { AgentEffort } from '@shared/types'
 import type { AgentLaunchExtras, AgentLaunchSpec } from './launch'
 import { resolveCached } from './launch'
 import { buildAntigravityMd } from './context'
+
+/** Map DevTerm effort levels onto agy's `--effort` (low | medium | high). */
+export function antigravityEffort(value: unknown): AgentEffort | undefined {
+  if (value === 'max') return 'high'
+  return value === 'low' || value === 'medium' || value === 'high' ? value : undefined
+}
+
+/**
+ * CLI-arg budget for the handoff prompt (same Windows CreateProcess cap
+ * concern as the opencode launcher). Oversized prompts fall back to the
+ * renderer's PTY injection.
+ */
+export const ANTIGRAVITY_PROMPT_ARG_LIMIT = 12000
 
 /**
  * Resolve the interactive `agy` / `antigravity` binary (Google Antigravity CLI).
@@ -92,11 +106,32 @@ export async function prepareAntigravityLaunch(
 
   writeFileSync(join(overlay, 'mcp.json'), jsonContent, { mode: 0o600 })
 
+  // A positional prompt starts an INTERACTIVE session with that initial input
+  // (only `-p`/`--prompt` is headless) — so the handoff task travels on argv.
+  // `--model` takes the model slug/display name for this session; `--effort`
+  // takes low | medium | high.
+  const args: string[] = []
+  const model = extras?.model?.trim()
+  if (model) args.push('--model', model)
+  const effort = antigravityEffort(extras?.effort)
+  if (effort) args.push('--effort', effort)
+  const prompt = extras?.initialPrompt?.replace(/\s+$/u, '')
+  let promptDelivered = false
+  if (prompt) {
+    if (prompt.length <= ANTIGRAVITY_PROMPT_ARG_LIMIT) {
+      args.push(prompt)
+      promptDelivered = true
+    }
+    // Oversized prompts stay out of argv (CreateProcess command-line cap) and
+    // are typed into the TUI by the renderer's PTY injection fallback.
+  }
+
   return {
     bin: await resolveAntigravityBin(),
-    args: [],
+    args,
     cwd: extras?.spawnCwd || overlay,
     env: {},
+    promptDelivered,
     cleanup: () => {
       try {
         rmSync(overlay, { recursive: true, force: true })

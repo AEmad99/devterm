@@ -66,6 +66,7 @@ describe('bundled DevTerm Agent launch', () => {
     )
     try {
       assert.equal(spec.args[spec.args.length - 1], 'list files on this host')
+      assert.equal(spec.promptDelivered, true)
     } finally {
       spec.cleanup()
     }

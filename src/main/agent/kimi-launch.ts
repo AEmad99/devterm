@@ -62,9 +62,16 @@ export async function prepareKimiLaunch(
   mkdirSync(kimiCodeDir, { recursive: true })
   writeFileSync(join(kimiCodeDir, 'mcp.json'), JSON.stringify(mcpConfig, null, 2), { mode: 0o600 })
 
+  // `-m` selects a model alias for this launch and keeps the interactive TUI.
+  // `-p` would switch to non-interactive print mode, so the handoff prompt is
+  // NOT passed here — the renderer types it into the TUI after startup.
+  const args: string[] = []
+  const model = extras?.model?.trim()
+  if (model) args.push('--model', model)
+
   return {
     bin: await resolveKimiBin(),
-    args: [],
+    args,
     cwd: extras?.spawnCwd || overlay,
     env: {},
     cleanup: () => {

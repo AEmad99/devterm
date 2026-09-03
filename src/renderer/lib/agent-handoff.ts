@@ -1,6 +1,6 @@
 import type { AgentDelegateRequest } from '@shared/types'
 import { useSessions } from '../store/sessions'
-import { DEFAULT_GROUP, useLayout } from '../store/layout'
+import { DEFAULT_GROUP, allLeaves, useLayout } from '../store/layout'
 
 function report(req: AgentDelegateRequest, ok: boolean, error?: string): void {
   window.devterm.agent.ackDelegate({
@@ -53,6 +53,23 @@ function handleDelegateRequest(req: AgentDelegateRequest): void {
       )
       placed = layout.addTabToSessionLeaf(req.sourceSessionId, sessionId)
     }
+    if (!placed) {
+      // Last resort: App's sync drops a prescribed id into its group's active
+      // leaf, which is a working home even when the source leaf is gone
+      // (closed group, restore race). A delegate must never die on placement —
+      // the pane is what the source agent's receipt points at.
+      layout.sync(
+        useSessions.getState().sessions.map((session) => ({
+          id: session.id,
+          groupId: session.groupId
+        }))
+      )
+      placed = useLayout
+        .getState()
+        .groups.some(
+          (g) => g.root && allLeaves(g.root).some((leaf) => leaf.tabs.includes(sessionId))
+        )
+    }
     if (!placed) throw new Error('Could not place the delegated tab beside its source agent.')
     if (req.layout === 'split') {
       layout.splitBeside(req.sourceSessionId, sessionId, 'right')
@@ -61,7 +78,10 @@ function handleDelegateRequest(req: AgentDelegateRequest): void {
     // Set the mode only after the pane is in the layout, so AgentPane mounts
     // with the one-time launch payload ready to consume.
     sessions.setAgentUi(sessionId, { mode: 'docked', kind: req.kind })
-    report(req, true)
+    // Do NOT acknowledge success here: the definitive ack comes from AgentPane
+    // after `agent.open` actually resolves, so the source agent learns about
+    // real spawn failures instead of a premature success. Only placement
+    // failures (below) report early — a mounted AgentPane always reports.
   } catch (error) {
     if (created) useSessions.getState().close(req.sessionId)
     report(req, false, messageOf(error))

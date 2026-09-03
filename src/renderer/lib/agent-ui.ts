@@ -154,12 +154,19 @@ export async function injectAgentPrompt(
 ): Promise<void> {
   const trimmed = text.replace(/\s+$/u, '')
   if (!trimmed) return
+  if (opts?.fresh) await sleep(400)
+  // Wait for the bridge handshake AND PTY quiet concurrently: a fresh TUI
+  // draws its banner (PTY data) while the MCP client connects, so the two
+  // readiness signals overlap instead of stacking two full timeouts.
+  const quiet = waitForPtyQuiet(ptyId, {
+    requireData: !!opts?.fresh,
+    quietMs: opts?.fresh ? 600 : 280
+  })
   const ready = await waitForAgentBridge(sessionId, 20000)
   if (!ready) {
     throw new Error('Agent is not ready yet. Wait until the pane shows a prompt, then Ask again.')
   }
-  if (opts?.fresh) await sleep(400)
-  await waitForPtyQuiet(ptyId, { requireData: !!opts?.fresh, quietMs: opts?.fresh ? 600 : 280 })
+  await quiet
   await sleep(80)
   window.devterm.pty.input(ptyId, trimmed)
   await sleep(80)

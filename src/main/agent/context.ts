@@ -49,7 +49,7 @@ You can coordinate with other visible local agents in this DevTerm window.
 - ${t('agent_list')} lists running local agents and their bridge state.
 - ${t('agent_delegate')} opens a sibling tab; include a complete, self-contained task with the relevant plan, files, constraints, model, and effort.
 - ${t('agent_message')} sends a follow-up into another running local agent's terminal.
-Delegation is local-only, capped, and fire-and-forget. Do not delegate unless the operator asks, and do not pass bridge tokens or temporary overlay paths in a task.`
+Delegation is local-only, capped, and fire-and-forget: call ${t('agent_delegate')} ONCE per operator request, then report the returned sessionId. Never spawn agent CLIs via the shell and never read or edit their config files — DevTerm owns launch, config, and auth. Do not delegate unless the operator asks, and do not pass bridge tokens or temporary overlay paths in a task.`
 }
 
 /**

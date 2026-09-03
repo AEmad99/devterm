@@ -57,6 +57,7 @@ describe('grok launch', () => {
         'max',
         'implement the plan'
       ])
+      assert.equal(valid.promptDelivered, true)
     } finally {
       valid.cleanup()
     }

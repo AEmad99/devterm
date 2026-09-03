@@ -180,6 +180,13 @@ export interface AgentLaunchSpec {
   cwd: string
   env: Record<string, string>
   cleanup: () => void
+  /**
+   * True when the spec already delivers `initialPrompt` as a CLI argument, so
+   * the renderer must NOT type it into the PTY after startup. Launchers that
+   * cannot pass a prompt on the command line (interactive TUI without a prompt
+   * flag) leave this unset and the renderer falls back to PTY injection.
+   */
+  promptDelivered?: boolean
 }
 
 interface BuiltinLaunchOptions extends AgentLaunchExtras {
@@ -530,6 +537,9 @@ async function finishPiLaunch(
         ? { DEVTERM_MODEL_FALLBACKS: JSON.stringify(options?.preferences?.fallbackModels ?? []) }
         : {})
     },
+    // isolatedAgentArgs appends a trailing initialPrompt when present, so the
+    // new agent starts working without any PTY typing from the renderer.
+    promptDelivered: Boolean(options?.initialPrompt?.replace(/\s+$/u, '')),
     cleanup: files.cleanup
   }
 }

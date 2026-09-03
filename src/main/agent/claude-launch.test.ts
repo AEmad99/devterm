@@ -27,6 +27,7 @@ describe('fallback native local launches', () => {
       assert.equal(spec.args.includes('--mcp-config'), true)
       assert.equal(spec.args[spec.args.indexOf('--model') + 1], 'claude-sonnet')
       assert.equal(spec.args.at(-1), 'implement the plan')
+      assert.equal(spec.promptDelivered, true)
     } finally {
       spec.cleanup()
       rmSync(project, { recursive: true, force: true })
@@ -65,6 +66,7 @@ describe('fallback native local launches', () => {
       assert.equal(spec.args[spec.args.indexOf('-m') + 1], 'luna')
       assert.equal(spec.args[spec.args.indexOf('-c') + 1], 'model_reasoning_effort=xhigh')
       assert.equal(spec.args.at(-1), 'implement the plan')
+      assert.equal(spec.promptDelivered, true)
     } finally {
       spec.cleanup()
       rmSync(project, { recursive: true, force: true })
@@ -88,10 +90,10 @@ describe('fallback native local launches', () => {
       assert.ok(spec.env.OPENCODE_CONFIG)
       const cfg = JSON.parse(readFileSync(spec.env.OPENCODE_CONFIG, 'utf8')) as {
         tools?: unknown
-        instructions?: string
+        instructions?: unknown
       }
       assert.equal(cfg.tools, undefined)
-      assert.equal(cfg.instructions, 'native local')
+      assert.deepEqual(cfg.instructions, ['native local'])
     } finally {
       spec.cleanup()
       rmSync(project, { recursive: true, force: true })

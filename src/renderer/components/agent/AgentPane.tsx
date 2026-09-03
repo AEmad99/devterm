@@ -193,7 +193,8 @@ export default function AgentPane({
         const {
           ptyId,
           mcpUrl: url,
-          reused
+          reused,
+          promptDelivered
         } = await window.devterm.agent.open({
           sessionId,
           kind,
@@ -284,11 +285,11 @@ export default function AgentPane({
             term.write(`\r\n\x1b[90m[${kind} exited with code ${exitCode}]\x1b[0m\r\n`)
           })
         )
-        if (
-          launch?.prompt &&
-          (kind === 'opencode' || kind === 'kimi' || kind === 'antigravity') &&
-          !reused
-        ) {
+        if (launch?.prompt && promptDelivered !== true && !reused) {
+          // Launchers that cannot pass the first message on the command line
+          // (Kimi's `-p` is headless-only; oversized CLI-arg prompts) need the
+          // task typed into the TUI once it is ready. Every other launcher
+          // reports promptDelivered and skips this entirely.
           void injectAgentPrompt(sessionId, ptyId, launch.prompt, { fresh: true }).catch(
             (error) => {
               term.write(

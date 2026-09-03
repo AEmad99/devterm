@@ -39,6 +39,7 @@ import {
   type AgentLaunchExtras
 } from '../agent/launch'
 import { buildLocalNativeMd, localBrowserToolPrefix } from '../agent/context'
+import { assertAgentBinAvailable, normalizeHandoffModel } from '../agent/agent-bin'
 import { buildClaudeMd, prepareClaudeLaunch } from '../agent/claude-launch'
 import { buildKimiMd, prepareKimiLaunch } from '../agent/kimi-launch'
 import { buildOpencodeMd, prepareOpencodeLaunch } from '../agent/opencode-launch'
@@ -70,12 +71,17 @@ interface AgentSession {
   agentExited: boolean
   /** Last launch opts (for the auto-restart-after-reconnect path). */
   lastOpts?: AgentOpenOpts
+  /** Whether the launcher passed the first message on the CLI (no PTY inject). */
+  promptDelivered?: boolean
   /** Last bridge status emitted; reused for `sshDown` mirror so the UI sees it. */
   lastBridgeStatus?: AgentBridgeStatus
 }
 
 const MAX_DELEGATED_AGENTS_PER_SOURCE = 4
-const HANDOFF_WAIT_MS = 8000
+// Renderer ack budget for a delegated launch: the ack now fires only after the
+// new pane's `agent.open` resolves (not on tab placement), so allow time for a
+// cold CLI spawn + bridge listen on Windows. Failures still report immediately.
+const HANDOFF_WAIT_MS = 30000
 const AGENT_READY_WAIT_MS = 20000
 
 const AGENT_EFFORTS: readonly AgentEffort[] = ['low', 'medium', 'high', 'max']
@@ -174,6 +180,7 @@ export function registerAgentIpc(
       resolve: (result: AgentDelegateResult) => void
       reject: (error: Error) => void
       timer: ReturnType<typeof setTimeout>
+      warnings: string[]
     }
   >()
   /** Delegated local agent ids grouped by their source agent. */
@@ -222,7 +229,9 @@ export function registerAgentIpc(
         sessionId: ack.sessionId,
         kind: opts?.kind ?? 'devterm',
         cwd: cwds.get(ack.sessionId) ?? opts?.cwd ?? '',
-        title: opts?.title ?? `${agentKindLabel(opts?.kind ?? 'devterm')} agent`
+        title: opts?.title ?? `${agentKindLabel(opts?.kind ?? 'devterm')} agent`,
+        promptDelivered: target?.promptDelivered,
+        ...(waiter.warnings.length > 0 ? { warnings: waiter.warnings } : {})
       })
     } else {
       waiter.reject(new Error(ack.error || 'the delegated agent failed to start'))
@@ -389,6 +398,29 @@ export function registerAgentIpc(
     sourceSessionId: string,
     input: AgentHandoffInput
   ): Promise<AgentDelegateResult> => {
+    const t0 = Date.now()
+    try {
+      return await delegateFromInner(sourceSessionId, input)
+    } catch (error) {
+      // The MCP wrapper logs the call itself as ok (the handler returns an
+      // error payload instead of throwing), so leave an explicit failed row —
+      // otherwise a rejected delegate is invisible in the activity panel.
+      bridgeActivity.record({
+        sessionId: sourceSessionId,
+        kind: 'tool_call',
+        tool: 'agent_delegate',
+        detail: (error instanceof Error ? error.message : String(error)).slice(0, 200),
+        durationMs: Date.now() - t0,
+        ok: false
+      })
+      throw error
+    }
+  }
+
+  const delegateFromInner = async (
+    sourceSessionId: string,
+    input: AgentHandoffInput
+  ): Promise<AgentDelegateResult> => {
     const source = getLocalAgent(sourceSessionId)
     if (!source?.lastOpts) throw new Error('Agent handoff is available only from local agents.')
     const delegated = delegatedBySource.get(sourceSessionId) ?? new Set<string>()
@@ -419,6 +451,15 @@ export function registerAgentIpc(
     if (!AGENT_KINDS.includes(input.kind)) {
       throw new Error(`Unknown local agent kind: ${String(input.kind)}`)
     }
+    // Fail fast when the target CLI is not installed: without this the caller
+    // gets a success ack, a tab flashes open, and the spawn dies a second
+    // later with the binary missing.
+    await assertAgentBinAvailable(input.kind)
+    // Orca rule: never pass a model flag the launcher cannot honor. A bogus
+    // `--model` kills the new TUI on startup; drop it with a warning so the
+    // worker starts on the operator default instead.
+    const normalized = normalizeHandoffModel(input.kind, model || undefined)
+    const warnings = normalized.warnings
     const layout = input.layout ?? 'tab'
     if (layout !== 'tab' && layout !== 'split') {
       throw new Error(`Unknown handoff layout: ${String(input.layout)}`)
@@ -430,10 +471,12 @@ export function registerAgentIpc(
     const prompt = buildAgentHandoffPrompt({
       sourceKind: source.lastOpts.kind,
       sourceSessionId,
+      sessionId,
       cwd,
       kind,
-      model: model || undefined,
+      model: normalized.model,
       effort: input.effort,
+      modelNote: warnings[0],
       prompt: input.prompt
     })
     const request: AgentDelegateRequest = {
@@ -444,7 +487,7 @@ export function registerAgentIpc(
       kind,
       cwd,
       prompt,
-      model: model || undefined,
+      model: normalized.model,
       effort: input.effort,
       title,
       layout
@@ -460,7 +503,7 @@ export function registerAgentIpc(
         handoffWaiters.delete(requestId)
         reject(new Error('The delegated agent pane did not start in time.'))
       }, HANDOFF_WAIT_MS)
-      handoffWaiters.set(requestId, { sessionId, resolve, reject, timer })
+      handoffWaiters.set(requestId, { sessionId, resolve, reject, timer, warnings })
     })
     try {
       win.webContents.send(IPC.agentDelegateRequest, request)
@@ -877,9 +920,10 @@ export function registerAgentIpc(
         sshDispose,
         ptyDispose,
         agentExited: false,
-        lastOpts: { ...opts, initialPrompt: undefined }
+        lastOpts: { ...opts, initialPrompt: undefined },
+        promptDelivered: spec.promptDelivered
       })
-      return { ptyId, mcpUrl: info.url }
+      return { ptyId, mcpUrl: info.url, promptDelivered: spec.promptDelivered }
     } catch (err) {
       // Partial failure cleanup: the bridge may be listening, the launch
       // spec may have written a temp dir, the PTY may not have spawned.

@@ -85,6 +85,8 @@ export async function prepareClaudeLaunch(
     args,
     cwd: extras?.spawnCwd || overlay,
     env: {},
+    // A trailing prompt arg starts the interactive session with that input.
+    promptDelivered: Boolean(prompt),
     cleanup: () => {
       try {
         rmSync(overlay, { recursive: true, force: true })

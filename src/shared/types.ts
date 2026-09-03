@@ -453,9 +453,10 @@ export interface AgentOpenOpts {
    */
   forceRestart?: boolean
   /**
-   * First user message for a brand-new agent. DevTerm/Pi, Claude, Grok, and
-   * Codex receive it as a CLI argument; other CLIs receive it via PTY inject.
-   * Ignored on reuse.
+   * First user message for a brand-new agent. DevTerm/Pi, Claude, Grok, Codex,
+   * OpenCode, and Antigravity receive it as a CLI argument (staying
+   * interactive); Kimi and oversized prompts receive it via PTY inject after
+   * the TUI is ready. Ignored on reuse.
    */
   initialPrompt?: string
   /** Explicit model override, primarily used by local agent handoffs. */
@@ -552,6 +553,12 @@ export interface AgentOpenResult {
   mcpUrl: string
   /** True when an existing agent was reused (no relaunch). */
   reused?: boolean
+  /**
+   * True when the launcher already passed `initialPrompt` on the CLI, so the
+   * renderer must NOT type it into the PTY. False/omitted means the renderer
+   * falls back to PTY injection once the TUI is ready.
+   */
+  promptDelivered?: boolean
 }
 
 /** Snapshot of a running agent session (attach UI without relaunching). */
@@ -608,6 +615,14 @@ export interface AgentDelegateResult {
   kind: AgentKind
   cwd: string
   title: string
+  /**
+   * True when the task was already passed to the new agent on its command
+   * line. False/omitted means it is being typed into the TUI after startup
+   * and may land a few seconds later.
+   */
+  promptDelivered?: boolean
+  /** Non-fatal notes (e.g. a requested model the launcher could not honor). */
+  warnings?: string[]
 }
 
 /** Open or focus a floating agent BrowserWindow. */

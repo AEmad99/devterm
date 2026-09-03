@@ -171,6 +171,9 @@ export function prepareGrokLaunch(
     args,
     cwd: extras?.spawnCwd || overlay,
     env,
+    // A trailing prompt arg starts the interactive TUI with that input
+    // (only `-p` would be headless).
+    promptDelivered: Boolean(prompt),
     cleanup: () => {
       try {
         rmSync(overlay, { recursive: true, force: true })

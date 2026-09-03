@@ -54,14 +54,19 @@ function cliLabel(kind: AgentKind): string {
 /**
  * Build the first message for a delegated agent. The task is appended without
  * modification so plans containing code, paths, or formatting survive intact.
+ * The worker contract is deliberately Orca-style: report back exactly once
+ * with `agent_message`, then stop — no supervision loop, no further spawns.
  */
 export function buildAgentHandoffPrompt(input: {
   sourceKind: AgentKind
   sourceSessionId: string
+  sessionId: string
   cwd: string
   kind: AgentKind
   model?: string
   effort?: AgentEffort
+  /** Requested-but-not-applied model note (launcher could not honor it). */
+  modelNote?: string
   prompt: string
 }): string {
   const modelEffort = [input.model, input.effort].filter(Boolean).join(' / ')
@@ -69,11 +74,17 @@ export function buildAgentHandoffPrompt(input: {
     'You were opened by DevTerm to take over a task from another local agent.',
     '',
     `- Source: ${cliLabel(input.sourceKind)} (session ${input.sourceSessionId})`,
+    `- Your session: ${input.sessionId}`,
     `- Working directory: ${input.cwd}`,
     `- Your CLI: ${cliLabel(input.kind)}`,
     ...(modelEffort ? [`- Model / effort: ${modelEffort}`] : []),
+    ...(input.modelNote ? [`- ${input.modelNote}`] : []),
     '',
-    'Do the work in this directory. Do not re-open another agent unless the operator asked.',
+    'Do the work in this directory. Do not open another agent, do not launch',
+    'agent CLIs yourself, and do not read DevTerm config or bridge files.',
+    '',
+    `When finished (or blocked), send ONE summary back with your \`agent_message\``,
+    `tool to session ${input.sourceSessionId}, then stop and wait for the operator.`,
     '',
     '## Task',
     input.prompt
@@ -93,7 +104,10 @@ export function registerAgentHandoffTools(
   mcp.registerTool(
     'agent_list',
     {
-      description: 'List other local DevTerm agents running in this window.',
+      description:
+        'List local DevTerm agents in this window as JSON ' +
+        '(sessionId, kind, title, cwd, bridge state; your own row has isSelf true). ' +
+        'Use it to find the sessionId for agent_message.',
       inputSchema: {}
     },
     async () => text(JSON.stringify(handoff.list(), null, 2))
@@ -103,8 +117,17 @@ export function registerAgentHandoffTools(
     'agent_delegate',
     {
       description:
-        'Open a visible sibling local DevTerm agent tab and hand it a complete task. ' +
-        'This returns once the new pane has started, not when the task is finished.',
+        'Open a VISIBLE sibling tab running the requested agent CLI and hand it a complete task ' +
+        'as its first message. DevTerm creates the tab, installs the bridge config, launches the ' +
+        'CLI, and delivers the prompt, then returns JSON {sessionId, kind, cwd, title, ' +
+        'promptDelivered, warnings} immediately (fire-and-forget: report these and stop — do NOT ' +
+        'wait, poll, or re-check). kinds: devterm, pi, claude, opencode, kimi, grok, codex, ' +
+        'antigravity. model is passed to the target CLI as-is, except opencode which needs ' +
+        'provider/model (anything else starts the default model with a warning); omit when unsure. ' +
+        'cwd defaults to your directory. NEVER launch agent CLIs yourself via the shell and NEVER ' +
+        'read or write agent config files (opencode.json, .grok, CODEX_HOME, mcp.json) — just call ' +
+        'this tool ONCE with a self-contained prompt. If it fails, relay the error to the operator; ' +
+        'do not retry in a loop.',
       inputSchema: {
         kind: z.enum(AGENT_KINDS),
         prompt: z.string().min(1).max(30000),
@@ -130,7 +153,11 @@ export function registerAgentHandoffTools(
   mcp.registerTool(
     'agent_message',
     {
-      description: 'Send a follow-up message into another running local agent terminal.',
+      description:
+        'Type a follow-up message into another RUNNING local agent tab (take the sessionId from ' +
+        'agent_list) and submit it. Returns {ok, sessionId} once sent — the reply arrives as new ' +
+        'tool activity, not as a return value, so do NOT poll after sending. If the sessionId is ' +
+        'unknown, re-run agent_list instead of guessing ids.',
       inputSchema: {
         sessionId: z.string().trim().min(1).max(200),
         text: z.string().min(1).max(30000)

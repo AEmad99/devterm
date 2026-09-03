@@ -137,6 +137,9 @@ Authorization = "Bearer ${bridge.token}"
     env: {
       CODEX_HOME: codexHome
     },
+    // A trailing prompt arg starts the interactive TUI with that input
+    // (only `exec` would be headless).
+    promptDelivered: Boolean(prompt),
     cleanup: () => {
       try {
         rmSync(overlay, { recursive: true, force: true })
