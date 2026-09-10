@@ -6,7 +6,12 @@ import { useSessions } from '../../store/sessions'
 import { useSettings } from '../../store/settings'
 import { fitNow, fitSoon } from '../../lib/fit'
 import { attachRenderer, attachClipboard } from '../../lib/renderer'
-import { createIdleChime, AGENT_ATTENTION_BODY } from '../../lib/attention'
+import {
+  createIdleChime,
+  signalAttention,
+  AGENT_ATTENTION_BODY,
+  type AttentionNotice
+} from '../../lib/attention'
 import { useBridgeActivity } from '../../lib/bridge-activity'
 import { AGENT_BRIDGE_POLICY, agentKindLabel, injectAgentPrompt } from '../../lib/agent-ui'
 import { getTheme } from '../../lib/themes'
@@ -64,6 +69,10 @@ export default function AgentPane({
   closeOnUnmount = false,
   /** Mirror bridge/task into the main sessions store (skip in floating window). */
   mirrorToStore = true,
+  /** Floating window: explicit local/remote because that renderer has no store. */
+  sessionKindOverride,
+  /** Floating window: external restart signal (header button). */
+  restartSignal,
   /** Extra controls rendered in the status bar (mode buttons). */
   toolbar
 }: {
@@ -73,6 +82,8 @@ export default function AgentPane({
   active?: boolean
   closeOnUnmount?: boolean
   mirrorToStore?: boolean
+  sessionKindOverride?: 'local' | 'remote'
+  restartSignal?: number
   toolbar?: ReactNode
 }) {
   const label = agentKindLabel(kind).replace(/ Agent$/, '')
@@ -83,12 +94,21 @@ export default function AgentPane({
   const [bridgeMessage, setBridgeMessage] = useState<string | undefined>()
   const [mcpUrl, setMcpUrl] = useState<string | undefined>()
   const [lastHeartbeatAt, setLastHeartbeatAt] = useState<number | undefined>()
-  const [restartNonce, setRestartNonce] = useState(0)
+  const [localRestartNonce, setLocalRestartNonce] = useState(0)
+  // The main window's AgentPane restarts via the session store (so the pane
+  // cluster and agent overview can trigger it); the floating window keeps a
+  // local nonce because its renderer has no session record.
+  const storeRestartNonce = useSessions(
+    (s) => s.sessions.find((x) => x.id === sessionId)?.agentRestartNonce ?? 0
+  )
+  const restartNonce = mirrorToStore
+    ? storeRestartNonce
+    : localRestartNonce + (restartSignal ?? 0)
   const hostClosed = useSessions((s) => s.sessions.find((x) => x.id === sessionId)?.closed ?? false)
-  const sessionKind = useSessions(
+  const storeSessionKind = useSessions(
     (s) => s.sessions.find((x) => x.id === sessionId)?.kind ?? 'remote'
   )
-  const isLocal = sessionKind === 'local'
+  const isLocal = (sessionKindOverride ?? storeSessionKind) === 'local'
   // The operator's live shell cwd (tracked from OSC 7 in TerminalView). Pushed
   // to main so the agent's commands follow the operator's `cd`. Kept out of the
   // agent-launch effect's deps so a `cd` never restarts the agent.
@@ -96,6 +116,7 @@ export default function AgentPane({
   const setAgentBridgeState = useSessions((s) => s.setAgentBridgeState)
   const setAgentTask = useSessions((s) => s.setAgentTask)
   const setAgentUi = useSessions((s) => s.setAgentUi)
+  const setAgentExited = useSessions((s) => s.setAgentExited)
   const { entries } = useBridgeActivity(sessionId)
 
   // Surface the latest agent activity in the session tab.
@@ -208,7 +229,7 @@ export default function AgentPane({
           model: launch?.model,
           effort: launch?.effort,
           title: live?.title,
-          sessionKind: live?.kind === 'local' ? 'local' : 'remote',
+          sessionKind: isLocal ? 'local' : 'remote',
           browserTools: useSettings.getState().agentPreferences.browserTools !== false
         })
         if (disposed) {
@@ -220,6 +241,7 @@ export default function AgentPane({
         acknowledge(true)
         if (mirrorToStore) {
           setAgentUi(sessionId, { kind, policyMode: mode, ptyId })
+          setAgentExited(sessionId, false)
         }
         setMcpUrl(url)
         setBridge((cur) => (cur === 'connecting' ? (reused ? 'connected' : 'listening') : cur))
@@ -259,14 +281,29 @@ export default function AgentPane({
             const s = useSessions.getState().sessions.find((x) => x.id === sessionId)
             const hostName = s?.context?.hostname || s?.title || 'host'
             return { title: `${label} · ${hostName}`, body: AGENT_ATTENTION_BODY }
+          },
+          // Alert on the surface that owns the live process:
+          //  • floating window → local chime + main-process badge/OS signal
+          //  • main window when docked/hidden → chime + badge directly
+          //  • stashed main pane while the float runs → badge only (no double chime)
+          notify: (notice: AttentionNotice) => {
+            if (!mirrorToStore) {
+              signalAttention(sessionId, notice, { chimeOnly: true })
+              window.devterm.window.agentAttention?.(sessionId, notice)
+              return
+            }
+            const mode = useSessions
+              .getState()
+              .sessions.find((x) => x.id === sessionId)?.agentUiMode
+            signalAttention(sessionId, notice, { badgeOnly: mode === 'floating' })
           }
         })
         cleanups.push(attention.dispose)
         cleanups.push(
           window.devterm.pty.onData(ptyId, (d) => {
-            // Only the active surface owns attention chimes (stashed + floating
-            // would otherwise double-notify).
-            if (activeRef.current) attention.feed(d)
+            // Always feed idle detection, even on the stashed/hidden surface:
+            // an agent that finishes while hidden still needs its tab badge.
+            attention.feed(d)
             term.write(d)
           })
         )
@@ -274,6 +311,25 @@ export default function AgentPane({
           window.devterm.pty.onExit(ptyId, ({ exitCode }) => {
             setBridge('exited')
             setBridgeMessage(`${label} exited with code ${exitCode}`)
+            if (mirrorToStore) {
+              setAgentExited(sessionId, true)
+              // A crash while the operator is elsewhere should surface like a
+              // finished turn; an intentional Stop unmounts first, so this
+              // only fires for genuine exits.
+              const stillOwned = !!useSessions
+                .getState()
+                .sessions.find((x) => x.id === sessionId)?.agentUiMode
+              if (stillOwned) {
+                signalAttention(
+                  sessionId,
+                  {
+                    title: `${label} exited`,
+                    body: `Exited with code ${exitCode}. Restart it from the agent controls.`
+                  },
+                  { badgeOnly: true }
+                )
+              }
+            }
             term.write(
               '\x1b[?1049l' +
                 '\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l' +
@@ -382,9 +438,9 @@ export default function AgentPane({
               : bridge === 'exited'
                 ? { tone: 'idle', text: 'Agent exited' }
                 : { tone: 'down', text: 'Failed to start' }
-  const canRestart =
-    !hostClosed &&
-    (bridge === 'disconnected' || bridge === 'stopped' || bridge === 'exited' || bridge === 'error')
+  // Restart is available whenever the agent is alive (not only on failure):
+  // a CLI stuck on "Waiting for agent" can be recovered without docking first.
+  const canRestart = !hostClosed
   const statusTitle = [
     bridgeMessage,
     mcpUrl,
@@ -413,7 +469,10 @@ export default function AgentPane({
           <button
             className="agent-restart"
             title="Restart the agent and reconnect the MCP bridge"
-            onClick={() => setRestartNonce((n) => n + 1)}
+            onClick={() => {
+              if (mirrorToStore) useSessions.getState().bumpAgentRestart(sessionId)
+              else setLocalRestartNonce((n) => n + 1)
+            }}
           >
             Restart
           </button>

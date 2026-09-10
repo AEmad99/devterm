@@ -1,5 +1,16 @@
-import { ipcMain, BrowserWindow, Notification } from 'electron'
+import { ipcMain, app, BrowserWindow, Notification } from 'electron'
 import { IPC } from '@shared/types'
+
+/** Set by the renderer whenever editor buffers gain/lose unsaved changes. */
+let unsavedEditors = false
+
+/**
+ * True when the renderer reports unsaved editor buffers. The main-process
+ * window-close guard reads this alongside running agents.
+ */
+export function hasUnsavedEditors(): boolean {
+  return unsavedEditors
+}
 
 /**
  * Window appearance IPC. The renderer asks for a translucent "glass" material
@@ -35,32 +46,74 @@ export function registerWindowIpc(getWin: () => BrowserWindow | null): void {
   // / focus / debounce logic); main just performs the OS-level surfacing. Skip
   // it entirely when the window is focused — you can't flash a foreground window
   // and a toast would be redundant with the in-app chime + tab badge.
-  ipcMain.on(IPC.windowFlashAttention, (_e, notice: { title: string; body?: string }) => {
-    const win = getWin()
-    if (!win || win.isDestroyed() || win.isFocused()) return
-    // FLASHW_TIMERNOFG: flash until the window comes to the foreground (Windows
-    // auto-clears it on activate); the focus listener below is a belt-and-braces.
-    win.flashFrame(true)
-    if (Notification.isSupported()) {
-      const n = new Notification({
-        title: notice.title || 'DevTerm',
-        body: notice.body || '',
-        // Stay silent: the audible alert is the in-app Web Audio chime, whose
-        // loudness the user controls via the attention "Chime volume" slider. A
-        // non-silent toast would play Windows' own notification ding at the fixed
-        // system volume — which has no API to scale and ignores that slider — so
-        // the volume setting would appear to do nothing. The toast itself and the
-        // taskbar flash still surface; only the uncontrollable OS sound is dropped.
-        silent: true
-      })
-      n.on('click', () => {
-        const w = getWin()
-        if (!w || w.isDestroyed()) return
-        if (w.isMinimized()) w.restore()
-        w.show()
-        w.focus()
-      })
-      n.show()
+  ipcMain.on(
+    IPC.windowFlashAttention,
+    (_e, notice: { title: string; body?: string; sessionId?: string }) => {
+      const win = getWin()
+      if (!win || win.isDestroyed() || win.isFocused()) return
+      raiseAttention(win, notice)
     }
+  )
+
+  // A floating agent window finished a turn. The float renderer has no session
+  // store of its own, so it reports here: main raises the OS signal and tells
+  // the main window to badge the session's tab.
+  ipcMain.on(
+    IPC.windowAgentAttention,
+    (_e, sessionId: string, notice: { title: string; body?: string }) => {
+      if (typeof sessionId !== 'string' || !sessionId) return
+      const win = getWin()
+      if (!win || win.isDestroyed()) return
+      win.webContents.send(IPC.windowAgentAttention, { sessionId, notice })
+      if (!win.isFocused()) raiseAttention(win, { ...notice, sessionId })
+    }
+  )
+
+  // The renderer reports whether unsaved editor buffers exist so the
+  // window-close guard can include them in its confirmation.
+  ipcMain.on(IPC.appCloseGuard, (_e, hasUnsaved: boolean) => {
+    unsavedEditors = hasUnsaved === true
   })
+}
+
+/**
+ * Shared OS-level surfacing: taskbar flash (until foreground) + a silent toast.
+ * Clicking the toast focuses the window and, when the notice carries a
+ * sessionId, asks the renderer to focus that exact session.
+ */
+function raiseAttention(
+  win: BrowserWindow,
+  notice: { title: string; body?: string; sessionId?: string }
+): void {
+  // FLASHW_TIMERNOFG: flash until the window comes to the foreground (Windows
+  // auto-clears it on activate); the focus listener in index.ts is belt-and-braces.
+  win.flashFrame(true)
+  // Persistent badge where the platform supports it (dock/taskbar); cleared on
+  // window focus in index.ts.
+  try {
+    app.setBadgeCount(1)
+  } catch {
+    /* unsupported platform */
+  }
+  if (Notification.isSupported()) {
+    const n = new Notification({
+      title: notice.title || 'DevTerm',
+      body: notice.body || '',
+      // Stay silent: the audible alert is the in-app Web Audio chime, whose
+      // loudness the user controls via the attention "Chime volume" slider. A
+      // non-silent toast would play Windows' own notification ding at the fixed
+      // system volume — which has no API to scale and ignores that slider — so
+      // the volume setting would appear to do nothing. The toast itself and the
+      // taskbar flash still surface; only the uncontrollable OS sound is dropped.
+      silent: true
+    })
+    n.on('click', () => {
+      if (win.isDestroyed()) return
+      if (win.isMinimized()) win.restore()
+      win.show()
+      win.focus()
+      if (notice.sessionId) win.webContents.send(IPC.windowFocusSession, notice.sessionId)
+    })
+    n.show()
+  }
 }

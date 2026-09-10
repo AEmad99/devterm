@@ -54,6 +54,8 @@ export default function GroupBar({
             }`}
             onClick={() => switchGroup(g.id)}
             onKeyDown={(e) => {
+              // Keys from the inner close button must not re-activate the group.
+              if (e.target !== e.currentTarget) return
               if (e.key === 'Enter' || e.key === ' ') {
                 e.preventDefault()
                 switchGroup(g.id)

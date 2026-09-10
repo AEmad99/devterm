@@ -34,6 +34,8 @@ export type CreateGridRequest = {
   groupName?: string
   /** Optional command to broadcast to every created cell after the grid is ready. */
   broadcast?: CreateGridBroadcast
+  /** Called once the broadcast finished (or timed out) with delivery counts. */
+  onBroadcast?: (result: { sent: number; total: number; timedOut: boolean }) => void
   /**
    * Remote grids finish asynchronously (one SSH connect per cell). When set,
    * called once all cells have settled with the final result — including any
@@ -171,6 +173,7 @@ function maybeBroadcast(ids: string[], req: CreateGridRequest, scope: 'local' | 
     const pending = ids.filter((id) => !sent.has(id))
     if (pending.length === 0) {
       window.clearInterval(timer)
+      req.onBroadcast?.({ sent: sent.size, total: ids.length, timedOut: false })
       setTimeout(() => focusTerminal(ids[0]), 0)
       return
     }
@@ -185,6 +188,7 @@ function maybeBroadcast(ids: string[], req: CreateGridRequest, scope: 'local' | 
     }
     if (attempts >= maxAttempts) {
       window.clearInterval(timer)
+      req.onBroadcast?.({ sent: sent.size, total: ids.length, timedOut: true })
       setTimeout(() => focusTerminal(ids[0]), 0)
     }
   }, 100)

@@ -739,7 +739,12 @@
 .pane-add:hover,
 .pane-merge:hover,
 .pane-focus:hover,
-.pane-tmux:hover {
+.pane-tmux:hover,
+.pane-more:hover {
+  background: var(--panel-2);
+  color: var(--fg);
+}
+.pane-more[aria-expanded='true'] {
   background: var(--panel-2);
   color: var(--fg);
 }
@@ -919,6 +924,45 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Pane "more" menu + tab context menu (shared popup). */
+.pane-menu {
+  position: fixed;
+  z-index: 90;
+  padding: 5px;
+  border-radius: 10px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-2, 0 12px 32px color-mix(in srgb, #000 28%, transparent));
+}
+.pane-menu-item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  padding: 6px 9px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--fg);
+  cursor: pointer;
+  text-align: left;
+  font-size: 12px;
+  font-weight: 600;
+}
+.pane-menu-item:hover {
+  background: var(--hover);
+}
+.pane-menu-item.is-danger {
+  color: var(--danger);
+}
+.pane-menu-item.is-danger:hover {
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+}
+.pane-menu-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border);
 }
 
 /* horizontally scrollable tab list (no visible scrollbar) + overflow chevrons */
@@ -1516,4 +1560,21 @@ button.danger:hover:not(:disabled) {
 }
 .dictation-action:hover {
   background: var(--hover);
+}
+
+/* Transient app toast (session restore feedback, etc.). */
+.app-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 34px;
+  transform: translateX(-50%);
+  z-index: 120;
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--fg);
+  font-size: var(--fs-200);
+  box-shadow: var(--shadow-2, 0 12px 32px color-mix(in srgb, #000 28%, transparent));
+  pointer-events: none;
 }

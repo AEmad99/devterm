@@ -37,6 +37,8 @@ export default function ModalShell({
     if (!open) return
     const root = panelRef.current
     if (!root) return
+    // Remember what had focus so closing returns the operator to their place.
+    const previouslyFocused = document.activeElement as HTMLElement | null
     const focusables = () =>
       Array.from(
         root.querySelectorAll<HTMLElement>(
@@ -60,7 +62,12 @@ export default function ModalShell({
       }
     }
     root.addEventListener('keydown', onKey)
-    return () => root.removeEventListener('keydown', onKey)
+    return () => {
+      root.removeEventListener('keydown', onKey)
+      if (previouslyFocused && document.contains(previouslyFocused)) {
+        previouslyFocused.focus()
+      }
+    }
   }, [open])
 
   if (!open) return null

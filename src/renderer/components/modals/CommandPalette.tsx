@@ -7,7 +7,7 @@ import type {
   WorkspaceItem
 } from '@shared/types'
 import { activeSession, runInActive } from '../../lib/input'
-import { openTmuxPicker } from '../../lib/terms'
+import { clearTerminal, focusTerminal, openTmuxPicker } from '../../lib/terms'
 import {
   applyPlaceholders,
   clearCachedPlaceholders,
@@ -24,7 +24,9 @@ import {
 import { scoreTerms } from '../../lib/fuzzy'
 import { useEscapeKey } from '../../lib/useEscapeKey'
 import { useSessions } from '../../store/sessions'
-import { useLayout } from '../../store/layout'
+import { useEditors } from '../../store/editors'
+import { useLayout, DEFAULT_GROUP } from '../../store/layout'
+import { useSettings } from '../../store/settings'
 import { toLiveSnapshot } from '../../lib/workspace'
 import { IconGroup, IconGrid, IconPalette, IconRemote, IconTerminals } from '../common/Icons'
 
@@ -65,13 +67,24 @@ function workspaceTarget(ws: Workspace, connName: (id?: string) => string): stri
 export default function CommandPalette({
   onRun,
   onClose,
-  onCreateGrid
+  onCreateGrid,
+  onNewRemote,
+  onSettings,
+  onShortcuts,
+  onGlobalSearch,
+  onAgents
 }: {
   /** Called right before a command is sent, so the host can switch to the terminals view. */
   onRun: () => void
   onClose: () => void
   /** Open the Create Grid modal (optional action). */
   onCreateGrid?: () => void
+  /** Open the SSH connection form (optional action). */
+  onNewRemote?: () => void
+  onSettings?: () => void
+  onShortcuts?: () => void
+  onGlobalSearch?: () => void
+  onAgents?: () => void
 }) {
   const [snippets, setSnippets] = useState<Snippet[]>([])
   const [hist, setHist] = useState<HistoryResult | null>(null)
@@ -218,32 +231,145 @@ export default function CommandPalette({
   }, [hist, snippets, queryTrimmed])
 
   const actionItems = useMemo<PaletteItem[]>(() => {
-    const actions = [
+    const actions: Array<{
+      id: string
+      title: string
+      subtitle: string
+      kw: string
+      available?: boolean
+    }> = [
       {
-        kind: 'action' as const,
+        id: 'new-local',
+        title: 'New terminal',
+        subtitle: 'Open a local shell in the active group',
+        kw: 'local shell terminal new tab'
+      },
+      {
+        id: 'new-remote',
+        title: 'Connect to server…',
+        subtitle: 'Open the SSH connection form',
+        kw: 'ssh remote connect server host',
+        available: !!onNewRemote
+      },
+      {
+        id: 'new-browser',
+        title: 'New browser pane',
+        subtitle: 'Open an in-app browser tab',
+        kw: 'browser web url'
+      },
+      {
+        id: 'new-group',
+        title: 'New group',
+        subtitle: 'Create a group with a local shell',
+        kw: 'group workspace new'
+      },
+      {
         id: 'grid',
         title: 'Create terminal grid…',
         subtitle: 'Open rows × columns of local shells in a new group',
-        score: 0
+        kw: 'grid split 2x2 3x3 new grid'
       },
       {
-        kind: 'action' as const,
         id: 'tmux',
         title: 'tmux sessions…',
         subtitle: 'Preview, attach, or kill tmux sessions on this remote',
-        score: 0
+        kw: 'tmux session attach kill'
+      },
+      {
+        id: 'split-right',
+        title: 'Split terminal right',
+        subtitle: 'Open a new shell in a pane beside this one',
+        kw: 'split pane right vertical'
+      },
+      {
+        id: 'split-down',
+        title: 'Split terminal down',
+        subtitle: 'Open a new shell in a pane below this one',
+        kw: 'split pane down horizontal'
+      },
+      {
+        id: 'focus',
+        title: 'Toggle focus mode',
+        subtitle: 'Magnify the active terminal pane',
+        kw: 'focus magnify zoom pane'
+      },
+      {
+        id: 'zen',
+        title: 'Toggle zen mode',
+        subtitle: 'Hide the app chrome for a distraction-free window',
+        kw: 'zen fullscreen hide chrome'
+      },
+      {
+        id: 'clear',
+        title: 'Clear terminal',
+        subtitle: 'Clear the active terminal scrollback',
+        kw: 'clear scrollback'
+      },
+      {
+        id: 'close',
+        title: 'Close terminal',
+        subtitle: 'Close the active terminal tab',
+        kw: 'close kill tab'
+      },
+      {
+        id: 'git',
+        title: 'Toggle Git panel',
+        subtitle: 'Show or hide the Git sidebar',
+        kw: 'git panel toggle source control'
+      },
+      {
+        id: 'transfers',
+        title: 'Toggle transfers panel',
+        subtitle: 'Show or hide the file transfer queue',
+        kw: 'transfers queue upload download panel'
+      },
+      {
+        id: 'search',
+        title: 'Search all terminals',
+        subtitle: 'Find text across every terminal session',
+        kw: 'search find global text',
+        available: !!onGlobalSearch
+      },
+      {
+        id: 'agents',
+        title: 'Agent overview',
+        subtitle: 'See and control every running agent',
+        kw: 'agent list cockpit status',
+        available: !!onAgents
+      },
+      {
+        id: 'settings',
+        title: 'Open settings',
+        subtitle: 'Themes, terminal, agent, and keybindings',
+        kw: 'settings preferences options',
+        available: !!onSettings
+      },
+      {
+        id: 'shortcuts',
+        title: 'Keyboard shortcuts',
+        subtitle: 'View every shortcut',
+        kw: 'shortcuts keys hotkeys',
+        available: !!onShortcuts
       }
     ]
-    if (!queryTrimmed) return actions
-    return actions
+    const visible = actions.filter((a) => a.available !== false)
+    const mapped = visible.map((a) => ({
+      kind: 'action' as const,
+      id: a.id,
+      title: a.title,
+      subtitle: a.subtitle,
+      score: 0
+    }))
+    if (!queryTrimmed) return mapped
+    return mapped
       .map((a) => {
-        const extra = a.id === 'grid' ? ' grid split 2x2 3x3 new grid' : ' tmux session attach kill'
-        const target = `${a.title} ${a.subtitle}${extra}`
+        const def = visible.find((v) => v.id === a.id)
+        const target = `${a.title} ${a.subtitle} ${def?.kw ?? ''}`
         const scored = scoreTerms(target, queryTrimmed)
         return scored ? { ...a, score: scored.score } : null
       })
       .filter(Boolean) as Extract<PaletteItem, { kind: 'action' }>[]
-  }, [queryTrimmed])
+  }, [queryTrimmed, onNewRemote, onSettings, onShortcuts, onGlobalSearch, onAgents])
 
   // The union of "commands already saved as a snippet (any name)" — for the
   // ✓ indicator.
@@ -308,6 +434,18 @@ export default function CommandPalette({
   useEffect(() => {
     setSel((i) => Math.max(0, Math.min(i, flatItems.length - 1)))
   }, [flatItems.length])
+
+  // Arrow-key navigation must not walk the selection off-screen.
+  useEffect(() => {
+    document
+      .querySelector<HTMLElement>('.palette-row[data-selected="true"]')
+      ?.scrollIntoView({ block: 'nearest' })
+  }, [sel])
+
+  // A stale error (e.g. "No active terminal") must not linger across queries.
+  useEffect(() => {
+    setError(null)
+  }, [query])
 
   // Send a fully-resolved command, or surface a message on failure.
   const send = (command: string, execute: boolean) => {
@@ -382,11 +520,96 @@ export default function CommandPalette({
       void launchWorkspace(item.ws)
       onClose()
     } else if (item.kind === 'action') {
-      onRun()
-      if (item.id === 'grid') onCreateGrid?.()
-      if (item.id === 'tmux') {
-        const sid = useSessions.getState().activeId
-        if (sid) openTmuxPicker(sid)
+      const settings = useSettings.getState()
+      const activeId = useSessions.getState().activeId
+      const splitActive = (zone: 'right' | 'bottom') => {
+        const { activeId: aid, sessions: list } = useSessions.getState()
+        const s = list.find((x) => x.id === aid)
+        if (!s || s.kind === 'browser') return
+        const gid = s.groupId || DEFAULT_GROUP
+        const newId = useSessions.getState().addLocal({ groupId: gid })
+        useLayout
+          .getState()
+          .sync(
+            [...list, { id: newId, groupId: gid }].map((x) => ({ id: x.id, groupId: x.groupId }))
+          )
+        useLayout.getState().splitBeside(s.id, newId, zone)
+        useSessions.getState().setActive(newId)
+        focusTerminal(newId)
+      }
+      switch (item.id) {
+        case 'grid':
+          onRun()
+          onCreateGrid?.()
+          break
+        case 'new-local':
+          onRun()
+          useSessions.getState().addLocal({ groupId: useLayout.getState().activeGroupId })
+          break
+        case 'new-remote':
+          onRun()
+          onNewRemote?.()
+          break
+        case 'new-browser':
+          onRun()
+          useSessions.getState().addBrowser({ groupId: useLayout.getState().activeGroupId })
+          break
+        case 'new-group': {
+          onRun()
+          const gid = useLayout.getState().createGroup()
+          useSessions.getState().addLocal({ groupId: gid })
+          break
+        }
+        case 'tmux':
+          onRun()
+          if (activeId) openTmuxPicker(activeId)
+          break
+        case 'split-right':
+          onRun()
+          splitActive('right')
+          break
+        case 'split-down':
+          onRun()
+          splitActive('bottom')
+          break
+        case 'focus':
+          if (activeId) {
+            useLayout.getState().toggleFocus(activeId)
+            focusTerminal(activeId)
+          }
+          break
+        case 'zen':
+          settings.setZenMode(!settings.zenMode)
+          break
+        case 'clear':
+          if (activeId) clearTerminal(activeId)
+          break
+        case 'close': {
+          const s = useSessions.getState().sessions.find((x) => x.id === activeId)
+          if (s) {
+            useEditors.getState().closeForSession(s.id)
+            useSessions.getState().close(s.id)
+          }
+          break
+        }
+        case 'git':
+          settings.setGitPanelOpen(!settings.gitPanelOpen)
+          break
+        case 'transfers':
+          settings.setTransfersPanelOpen(!settings.transfersPanelOpen)
+          break
+        case 'search':
+          onGlobalSearch?.()
+          break
+        case 'agents':
+          onAgents?.()
+          break
+        case 'settings':
+          onSettings?.()
+          break
+        case 'shortcuts':
+          onShortcuts?.()
+          break
       }
       onClose()
     }
@@ -533,9 +756,10 @@ export default function CommandPalette({
       <div
         key={`${item.kind}-${key}`}
         className={`palette-row ${selected ? 'sel' : ''}`}
+        data-selected={selected}
         title={isHistory ? item.command : undefined}
         onMouseEnter={() => setSel(idx)}
-        onClick={() => activate(item, true)}
+        onClick={(e) => activate(item, !e.shiftKey)}
       >
         <span className="palette-row-icon">{rowIcon(item.kind)}</span>
         <div className="palette-row-main">

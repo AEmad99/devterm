@@ -36,6 +36,13 @@ export type HotkeyId =
   | 'saveEditor'
   | 'previewMarkdown'
   | 'dictate'
+  | 'newGroup'
+  | 'nextGroup'
+  | 'prevGroup'
+  | 'splitRight'
+  | 'splitDown'
+  | 'agents'
+  | 'toggleGit'
 
 export interface Hotkey {
   id: HotkeyId
@@ -81,7 +88,14 @@ export const HOTKEYS: Hotkey[] = [
   { id: 'shortcuts', mod: true, key: '/', label: 'Keyboard shortcuts' },
   { id: 'saveEditor', mod: true, key: 's', label: 'Save file' },
   { id: 'previewMarkdown', mod: true, alt: true, key: 'm', label: 'Markdown preview' },
-  { id: 'dictate', mod: true, shift: true, key: 'm', label: 'Toggle voice dictation' }
+  { id: 'dictate', mod: true, shift: true, key: 'm', label: 'Toggle voice dictation' },
+  { id: 'newGroup', mod: true, shift: true, key: 'n', label: 'New terminal group' },
+  { id: 'nextGroup', mod: true, alt: true, key: 'PageDown', label: 'Next group' },
+  { id: 'prevGroup', mod: true, alt: true, key: 'PageUp', label: 'Previous group' },
+  { id: 'splitRight', mod: true, alt: true, key: 'r', label: 'Split terminal right' },
+  { id: 'splitDown', mod: true, alt: true, key: 'd', label: 'Split terminal down' },
+  { id: 'agents', mod: true, alt: true, key: 'a', label: 'Agent overview' },
+  { id: 'toggleGit', mod: true, alt: true, key: 'g', label: 'Toggle Git panel' }
 ]
 
 interface Keyish {

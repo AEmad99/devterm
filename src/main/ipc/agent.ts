@@ -1,6 +1,6 @@
 import { ipcMain, BrowserWindow, app, dialog, type OpenDialogOptions } from 'electron'
 import { createHash, randomUUID } from 'crypto'
-import { mkdirSync, readFileSync, statSync } from 'fs'
+import { mkdirSync, readFileSync, statSync, writeFileSync } from 'fs'
 import { basename, isAbsolute, join } from 'path'
 import {
   IPC,
@@ -77,6 +77,41 @@ interface AgentSession {
   lastBridgeStatus?: AgentBridgeStatus
 }
 
+const floatWindowStatePath = (): string => join(app.getPath('userData'), 'agent-window-state.json')
+
+/** Last floating-agent window geometry (shared by all floats). */
+function loadFloatWindowState(): {
+  width: number
+  height: number
+  x?: number
+  y?: number
+} {
+  const fallback = { width: 720, height: 640 }
+  try {
+    const raw = JSON.parse(readFileSync(floatWindowStatePath(), 'utf8')) as Record<string, unknown>
+    return {
+      width: typeof raw.width === 'number' && raw.width >= 420 ? raw.width : fallback.width,
+      height: typeof raw.height === 'number' && raw.height >= 320 ? raw.height : fallback.height,
+      x: typeof raw.x === 'number' ? raw.x : undefined,
+      y: typeof raw.y === 'number' ? raw.y : undefined
+    }
+  } catch {
+    return fallback
+  }
+}
+
+function saveFloatWindowState(win: BrowserWindow): void {
+  try {
+    const b = win.isMaximized() ? win.getNormalBounds() : win.getBounds()
+    writeFileSync(
+      floatWindowStatePath(),
+      JSON.stringify({ width: b.width, height: b.height, x: b.x, y: b.y })
+    )
+  } catch {
+    /* best-effort */
+  }
+}
+
 const MAX_DELEGATED_AGENTS_PER_SOURCE = 4
 // Renderer ack budget for a delegated launch: the ack now fires only after the
 // new pane's `agent.open` resolves (not on tab placement), so allow time for a
@@ -129,6 +164,8 @@ export interface AgentController {
    * wait for the async bridge shutdown to finish.
    */
   closeAll: () => Promise<void>
+  /** Number of agent processes still alive (for the quit confirmation). */
+  runningCount: () => number
 }
 
 export function registerAgentIpc(
@@ -253,7 +290,8 @@ export function registerAgentIpc(
   // Ask the renderer to approve a guarded action (confirm mode / destructive op).
   // Resolves 'timeout' if the operator never answers — distinct from an explicit
   // 'denied' so the tool can tell the agent the connection is still healthy.
-  // Broadcast so a floating agent window can approve without switching back.
+  // Routed to the focused DevTerm window when there is one (so the same request
+  // no longer pops in both the main and floating windows); otherwise broadcast.
   const confirm = (sessionId: string, tool: string, detail: string): Promise<ConfirmOutcome> =>
     new Promise((resolve) => {
       const reqId = randomUUID()
@@ -264,8 +302,23 @@ export function registerAgentIpc(
         }
       }, 120000)
       pendingConfirms.set(reqId, { sessionId, resolve, timer })
-      const req: ConfirmRequest = { reqId, sessionId, tool, detail }
-      broadcast(IPC.agentConfirm, req)
+      const label = sessions.get(sessionId)?.lastOpts?.title
+      const req: ConfirmRequest = {
+        reqId,
+        sessionId,
+        tool,
+        detail,
+        ...(label ? { sessionLabel: label } : {})
+      }
+      const focused = BrowserWindow.getFocusedWindow()
+      const isOurs =
+        !!focused &&
+        (focused === getWindow() || [...agentWindows.values()].includes(focused))
+      if (focused && isOurs && !focused.isDestroyed()) {
+        focused.webContents.send(IPC.agentConfirm, req)
+      } else {
+        broadcast(IPC.agentConfirm, req)
+      }
     })
 
   ipcMain.on(IPC.agentConfirmReply, (_e, reqId: string, approved: boolean) => {
@@ -990,9 +1043,11 @@ export function registerAgentIpc(
 
     uiModes.set(sessionId, 'floating')
     const hostLabel = (opts.title || 'agent').replace(/[^\w.@\-: ]+/g, '').slice(0, 64)
+    const saved = loadFloatWindowState()
     const win = new BrowserWindow({
-      width: 720,
-      height: 640,
+      width: saved.width,
+      height: saved.height,
+      ...(saved.x !== undefined && saved.y !== undefined ? { x: saved.x, y: saved.y } : {}),
       minWidth: 420,
       minHeight: 320,
       show: false,
@@ -1013,12 +1068,37 @@ export function registerAgentIpc(
     })
     agentWindows.set(sessionId, win)
 
+    const isLocalSession = sessions.get(sessionId)?.lastOpts?.sessionKind === 'local'
     const params = new URLSearchParams({
       sessionId,
       kind: opts.kind,
       mode: opts.mode,
-      title: opts.title ?? ''
+      title: opts.title ?? '',
+      ...(isLocalSession ? { local: '1' } : {})
     })
+
+    // Same hardening as the main window: the float carries the full preload
+    // bridge, so its top frame must never navigate away from the app bundle.
+    const floatIsAppUrl = (url: string): boolean => {
+      if (process.env.ELECTRON_RENDERER_URL) return url.startsWith(process.env.ELECTRON_RENDERER_URL)
+      return url.startsWith('file://')
+    }
+    win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+    win.webContents.on('will-navigate', (e, url) => {
+      if (!floatIsAppUrl(url)) e.preventDefault()
+    })
+
+    // Persist the float's geometry so multi-monitor users don't reposition it
+    // on every launch.
+    let floatBoundsTimer: ReturnType<typeof setTimeout> | undefined
+    const scheduleFloatBoundsSave = () => {
+      if (floatBoundsTimer) clearTimeout(floatBoundsTimer)
+      floatBoundsTimer = setTimeout(() => {
+        if (!win.isDestroyed()) saveFloatWindowState(win)
+      }, 500)
+    }
+    win.on('resize', scheduleFloatBoundsSave)
+    win.on('move', scheduleFloatBoundsSave)
 
     win.on('ready-to-show', () => win.show())
     win.on('closed', () => {
@@ -1054,6 +1134,11 @@ export function registerAgentIpc(
       delegatedBySource.clear()
       for (const id of [...agentWindows.keys()]) closeAgentWindow(id, false)
       for (const id of [...sessions.keys()]) await closeOne(id)
+    },
+    runningCount: () => {
+      let n = 0
+      for (const sess of sessions.values()) if (!sess.agentExited) n++
+      return n
     }
   }
 }

@@ -23,6 +23,8 @@ export interface SearchResult {
   lineNumber: number
   text: string
   kind: 'live' | 'history' | 'detached'
+  /** Total lines ever ingested for the session (maps to a live buffer line). */
+  totalLines?: number
 }
 
 interface StoredLine {
@@ -147,7 +149,8 @@ export class SearchIndex {
             sessionTitle: rec.title,
             lineNumber: ln.lineNumber,
             text: ln.text,
-            kind: 'live'
+            kind: 'live',
+            totalLines: rec.nextLineNumber
           })
           if (out.length >= limit) return out
         }

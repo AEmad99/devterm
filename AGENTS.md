@@ -4,7 +4,7 @@ Guidance for coding agents working in the DevTerm repository.
 
 DevTerm is an Electron 29 desktop terminal: local shells (prebuilt node-pty), SSH/SFTP sessions, workspaces, file browsing/editing (CodeMirror 6), an in-app browser, snippets, a Warp-style Git panel, a persistent transfer queue, offline Whisper dictation, global terminal search, and an embedded multi-provider **DevTerm Agent** with seven external CLI fallbacks (`pi`, `claude`, `opencode`, `kimi`, `grok`, `codex`, `antigravity`). Every agent runs in a local PTY and reaches the remote host only through DevTerm's in-process MCP bridge. Stack: electron-vite, TypeScript strict, React 18, Zustand, xterm.js, ssh2, marked + DOMPurify, `@huggingface/transformers`, `@earendil-works/pi-coding-agent` (bundled runtime), dedicated `node` binary for the agent, electron-updater, zod.
 
-**Current version:** `package.json` → `1.3.20`. Top-level views: **Terminals** (always-mounted workspace: group tabs, split panes, local/remote/browser sessions), **Connections**, **Workspaces**, **Snippets**. DevTerm is a normal framed desktop app; the first screen is the terminal, not a marketing page.
+**Current version:** `package.json` → `1.3.21`. Top-level views: **Terminals** (always-mounted workspace: group tabs, split panes, local/remote/browser sessions), **Connections**, **Workspaces**, **Snippets**. DevTerm is a normal framed desktop app; the first screen is the terminal, not a marketing page.
 
 ## Architecture
 
@@ -192,7 +192,7 @@ Bridge & tools:
 
 ## Packaging
 
-- Version = `package.json` `version` (currently **1.3.20**).
+- Version = `package.json` `version` (currently **1.3.21**).
 - electron-builder: `appId com.devterm.app`, `productName DevTerm`, NSIS x64 (`oneClick: false`, `perMachine: false`, `allowToChangeInstallationDirectory: true`), unsigned (`verifyUpdateCodeSignature: false`), `npmRebuild: false`, GitHub publish provider `AEmad99/devterm`.
 - NSIS reinstall close logic: `resources/installer.nsh` (`nsis.include`) — `customInit` + `customCheckAppRunning` force-kill install-dir processes (required because elevated UAC inner installs skip stock `CHECK_APP_RUNNING`); `customUnInstallCheck*` lets upgrades continue if the old uninstaller fails.
 - `asarUnpack` must include: `node-pty`, `ort/*.wasm`, bundled agent Node binary (`node/bin/**`), `@earendil-works/**`, and the listed agent runtime dependency packages in `electron-builder.yml`. Do not drop those entries or the built-in agent fails to start from the installed app.
@@ -217,6 +217,7 @@ Bridge & tools:
 
 ## Recent release notes (for context)
 
+- **1.3.21** — Window/agent management pass: pane **⋮ menu** (split right/down, equalize, merge, close pane) + **tab context menu** (rename, split, move to new group, close others/to-the-right); guarded closes (agent/process/dirty editor) + quit confirmation (unsaved editors + running agents); active tab scroll-into-view; split handles double-click to equalize; window bounds persistence, dynamic taskbar title, single-instance lock, tray reopen, notification click → session focus, badge count; agent **overview cockpit** (Ctrl/Cmd+Alt+A) with show/float/restart/stop; restart from pane cluster + float; hidden/floating agent attention fixed (badge from float via main, exit badge); float gets local/remote awareness, Restart, persisted bounds; local agents get an activity panel; session restore now includes **browsers, agents, editors** and always runs alongside auto-launch workspaces, with a restore toast; approval rules `ask` now actually prompts under `full`; activity log marks `isError` tool results as failures; palette gained ~17 actions; new hotkeys `newGroup` / `nextGroup` / `prevGroup` / `splitRight` / `splitDown` / `agents` / `toggleGit`; Settings gets Escape/focus-trap, confirmations for destructive resets, keybinding conflict warnings, default-agent picker, and UI for status bar / idle detection / scroll speed / terminal bg color.
 - **1.3.20** — Quiet terminal chrome (Ghostty / Windows Terminal density); theme-aware status colors; docked SFTP shows local and remote without a resize.
 - **1.3.19** — Native local agent (builtin tools in the operator folder; MCP is browser-only); first-class in-app `browser_*` tools with a visible agent cursor; `browser_open` splits beside the agent; tab-strip Open Agent + kind picker (ask bar gone); local `agent_list` / `agent_delegate` / `agent_message` handoff; Markdown preview hotkey.
 - **1.3.18** — Remote ask bar is the agent launch surface (no duplicated Open agent / Policy picker); first DevTerm Agent prompt is passed on the CLI so the agent starts working; permission prompts belong to the agent CLI; SSH shell-integration reclaim leftover inject rows without `clear`.
@@ -240,7 +241,7 @@ Bridge & tools:
 
 ---
 
-## Product inventory (what ships today — v1.3.20)
+## Product inventory (what ships today — v1.3.21)
 
 Snapshot of the **implemented** surface area as of this audit. Use this when prioritizing features so we do not re-build what already exists. Prefer reading the code for edge cases.
 

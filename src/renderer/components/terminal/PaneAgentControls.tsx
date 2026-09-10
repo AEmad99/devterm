@@ -8,6 +8,7 @@ import {
   AGENT_KIND_MENU,
   agentKindGlyph,
   agentKindLabel,
+  restartAgent,
   setAgentUiMode,
   stopAgent
 } from '../../lib/agent-ui'
@@ -19,7 +20,8 @@ import {
   IconAgentHide,
   IconAgentShow,
   IconAgentStop,
-  IconChevron
+  IconChevron,
+  IconRefresh
 } from '../common/Icons'
 
 /** Brand icon chip for an agent kind; falls back to the letter glyph. */
@@ -178,6 +180,14 @@ export default function PaneAgentControls({ session }: { session: Session }) {
               <IconAgentFloat size={14} />
             </button>
           )}
+          <button
+            type="button"
+            className="pane-agent-btn"
+            title={`Restart ${label} (fresh process + bridge)`}
+            onClick={() => restartAgent(session.id)}
+          >
+            <IconRefresh size={13} />
+          </button>
           <button
             type="button"
             className="pane-agent-btn pane-agent-stop"

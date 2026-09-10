@@ -59,6 +59,22 @@ export function clearTerminal(id: string): void {
 }
 
 /**
+ * Scroll a session's terminal to the line a global-search hit refers to.
+ * Search line numbers are absolute ingest counts; map them onto the live
+ * buffer using the total the index has seen (best-effort when scrollback is
+ * shorter than history). Returns false when the terminal isn't mounted.
+ */
+export function revealTerminalLine(id: string, lineNumber: number, totalLines?: number): boolean {
+  const term = registry.get(id)
+  if (!term) return false
+  const bufferLength = term.buffer.active.length
+  const seen = totalLines && totalLines > 0 ? totalLines : lineNumber
+  const target = Math.max(0, Math.min(bufferLength - 1, bufferLength - (seen - lineNumber) - 1))
+  term.scrollToLine(target)
+  return true
+}
+
+/**
  * Open the find bar on a mounted terminal session. Returns false when no
  * opener is registered (browser panes, pending sessions, unmounted).
  */

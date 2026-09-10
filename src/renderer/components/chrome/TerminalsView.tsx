@@ -1,6 +1,7 @@
-import { lazy, Suspense, type Dispatch, type SetStateAction } from 'react'
+import { lazy, Suspense, useState, type Dispatch, type SetStateAction } from 'react'
 import TerminalLayout from '../terminal/TerminalLayout'
 import GroupBar from './GroupBar'
+import ConfirmDialog from '../common/ConfirmDialog'
 import {
   IconTerminals,
   IconRemote,
@@ -43,6 +44,8 @@ interface TerminalsViewProps {
   setDragOverGroup?: Dispatch<SetStateAction<string | null>>
   switchGroup?: (id: string) => void
   closeGroup?: (id: string) => void
+  /** Guarded session close (confirmation lives in App). */
+  onRequestCloseSession?: (sid: string) => void
   createGroupAndLocal?: () => void
   moveToGroup?: (sid: string, gid: string) => void
   spinOffGroup?: (sid: string) => void
@@ -71,6 +74,7 @@ export default function TerminalsView({
   setDragOverGroup = (_value) => undefined,
   switchGroup = () => {},
   closeGroup = () => {},
+  onRequestCloseSession,
   createGroupAndLocal = () => {},
   moveToGroup = () => {},
   spinOffGroup = () => {}
@@ -80,6 +84,12 @@ export default function TerminalsView({
   ).length
   const zenMode = useSettings((s) => s.zenMode)
   const effectiveShowGroupBar = showGroupBar && !zenMode
+  // Dirty editor close confirmation (a single doc, so one pending id is enough).
+  const [pendingEditorClose, setPendingEditorClose] = useState<string | null>(null)
+  const requestEditorClose = (id: string, dirty: boolean) => {
+    if (dirty) setPendingEditorClose(id)
+    else editorClose(id)
+  }
 
   // Editor tabs must live *inside* `.terminals-stack` (flex column). The stack
   // is `position: absolute; inset: 0` over the whole view-pane, so a sibling
@@ -115,15 +125,17 @@ export default function TerminalsView({
                   {d.scope === 'remote' ? <IconRemote size={13} /> : <IconEdit size={13} />}
                 </span>
                 <span className="tab-title">{d.name}</span>
-                <span
+                <button
+                  type="button"
                   className="tab-close"
+                  aria-label={dirty ? `Close ${d.name} (unsaved)` : `Close ${d.name}`}
                   onClick={(e) => {
                     e.stopPropagation()
-                    editorClose(d.id)
+                    requestEditorClose(d.id, dirty)
                   }}
                 >
                   {dirty ? '●' : '×'}
-                </span>
+                </button>
               </div>
             )
           })}
@@ -150,7 +162,11 @@ export default function TerminalsView({
       )}
       <div className="terminals-body">
         <div className={`layout-wrap${editorFocused || sessionCount === 0 ? ' term-hidden' : ''}`}>
-          <TerminalLayout sessions={sessionsRef} onNewTerminal={onNewTerminal} />
+          <TerminalLayout
+            sessions={sessionsRef}
+            onNewTerminal={onNewTerminal}
+            onRequestCloseSession={onRequestCloseSession}
+          />
         </div>
 
         {!editorFocused && sessionCount > 0 && activeGroupCount === 0 && (
@@ -190,15 +206,34 @@ export default function TerminalsView({
             <div className="empty-card">
               <EmptyTerminalArt />
               <div className="empty-title">No terminals open</div>
-              <div className="empty-sub">Open a local shell or connect to a server.</div>
+              <div className="empty-sub">Open a local shell, connect to a server, or start a grid.</div>
               <button className="empty-cta" onClick={onNewTerminal}>
                 <IconPlus size={15} />
                 New terminal
+              </button>
+              <button
+                className="empty-cta secondary"
+                onClick={onCreateGrid ?? onNewTerminal}
+              >
+                <IconGrid size={15} />
+                Create grid…
               </button>
             </div>
           </div>
         )}
       </div>
+
+      <ConfirmDialog
+        open={pendingEditorClose !== null}
+        title="Discard unsaved changes?"
+        message="This file has unsaved changes. Closing the tab discards them."
+        confirmLabel="Discard & close"
+        onConfirm={() => {
+          if (pendingEditorClose) editorClose(pendingEditorClose)
+          setPendingEditorClose(null)
+        }}
+        onClose={() => setPendingEditorClose(null)}
+      />
     </div>
   )
 }

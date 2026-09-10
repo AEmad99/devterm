@@ -65,13 +65,16 @@ export class Policy {
   async evaluateCommandAsync(sessionId: string, cmd: string): Promise<PolicyVerdict> {
     // PRE-CHECK: explicit approval rules always win over mode for `allow` /
     // `deny` so a stored rule can't be silently bypassed by changing the
-    // host's policy mode. `ask` is a no-op here — it just falls through
-    // to the mode-based decision, which may itself ask.
+    // host's policy mode. `ask` forces a confirmation even under the shipped
+    // `full` mode — that is exactly what the Settings "Ask (always prompt)"
+    // option promises, and it used to be a silent no-op.
     if (this.ruleMatcher) {
       const r = await this.ruleMatcher(sessionId, cmd)
       if (r?.outcome === 'allow') return { allow: true, needConfirm: false }
       if (r?.outcome === 'deny')
         return { allow: false, needConfirm: false, reason: 'denied by approval rule' }
+      if (r?.outcome === 'ask')
+        return { allow: true, needConfirm: true, reason: 'approval rule requires confirmation' }
     }
     return this.evaluateCommand(cmd)
   }
@@ -116,6 +119,8 @@ export class Policy {
       if (r?.outcome === 'allow') return { allow: true, needConfirm: false }
       if (r?.outcome === 'deny')
         return { allow: false, needConfirm: false, reason: 'denied by approval rule' }
+      if (r?.outcome === 'ask')
+        return { allow: true, needConfirm: true, reason: 'approval rule requires confirmation' }
     }
     if (!mutating) return { allow: true, needConfirm: false }
     return this.evaluateWrite()

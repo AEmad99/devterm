@@ -211,6 +211,13 @@ export function attachClipboard(term: Terminal, host: HTMLElement): () => void {
 
   const onContextMenu = (e: MouseEvent) => {
     e.preventDefault()
+    // Optional terminal convention: right-click pastes directly (PuTTY/mintty
+    // style). The context menu remains the default so copy/select-all stay
+    // reachable.
+    if (useSettings.getState().prefs.rightClickPaste) {
+      void pasteFromClipboard()
+      return
+    }
     openContextMenu(e.clientX, e.clientY)
   }
   host.addEventListener('contextmenu', onContextMenu)

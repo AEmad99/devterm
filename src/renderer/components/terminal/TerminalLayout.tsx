@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import TerminalView from './TerminalView'
 import RemoteSessionView from './RemoteSessionView'
 import LocalSessionView from './LocalSessionView'
@@ -9,6 +10,7 @@ import { useSettings } from '../../store/settings'
 import {
   useLayout,
   computeLayout,
+  DEFAULT_GROUP,
   type DropZone,
   type LeafNode,
   type Rect
@@ -20,12 +22,14 @@ import {
   IconClose,
   IconTmux,
   IconChevronLeft,
-  IconChevronRight
+  IconChevronRight,
+  IconMore
 } from '../common/Icons'
 import PaneAgentControls from './PaneAgentControls'
-import { openTmuxPicker } from '../../lib/terms'
+import { focusTerminal, openTmuxPicker } from '../../lib/terms'
 import { deriveTabLabel } from '../../lib/tab-label'
 import TabStatusDot from './TabStatusDot'
+import { useEscapeKey } from '../../lib/useEscapeKey'
 
 const TAB_H = 28 // px height of a pane's tab strip — keep in sync with --tab-h
 
@@ -73,10 +77,13 @@ function indicatorStyle(zone: DropZone): React.CSSProperties {
 
 export default function TerminalLayout({
   sessions,
-  onNewTerminal
+  onNewTerminal,
+  onRequestCloseSession
 }: {
   sessions: Session[]
   onNewTerminal?: () => void
+  /** Ask the owner to close a session (confirmation lives there). Falls back to direct close. */
+  onRequestCloseSession?: (sid: string) => void
 }) {
   // The active group's tree drives the panes/chrome; sessions in other groups
   // still render in the term-layer (hidden) so their PTYs/shells stay alive.
@@ -100,6 +107,8 @@ export default function TerminalLayout({
   const setSessionActive = useSessions((s) => s.setActive)
   const setCustomTitle = useSessions((s) => s.setCustomTitle)
   const close = useSessions((s) => s.close)
+  const addLocal = useSessions((s) => s.addLocal)
+  const equalize = useLayout((s) => s.equalize)
   const editorBlur = useEditors((s) => s.blur)
   const editorCloseForSession = useEditors((s) => s.closeForSession)
   const inactivePaneDimming = useSettings((s) => s.inactivePaneDimming)
@@ -188,6 +197,43 @@ export default function TerminalLayout({
   const closeSession = (sid: string) => {
     editorCloseForSession(sid)
     close(sid)
+  }
+
+  /** Close through the owner's guard when available (confirm live agent/process). */
+  const requestClose = (sid: string) => {
+    if (onRequestCloseSession) onRequestCloseSession(sid)
+    else closeSession(sid)
+  }
+
+  /**
+   * Split the active pane with a brand-new local shell. The new session is
+   * synced into the layout synchronously before splitting so the tree always
+   * knows about it (App's debounced sync would otherwise race the split).
+   */
+  const splitWithNewTerminal = (sid: string, zone: DropZone) => {
+    const s = sessions.find((x) => x.id === sid)
+    if (!s) return
+    const gid = s.groupId || DEFAULT_GROUP
+    const newId = addLocal({ groupId: gid })
+    useLayout
+      .getState()
+      .sync([...sessions, { id: newId, groupId: gid }].map((x) => ({ id: x.id, groupId: x.groupId })))
+    useLayout.getState().splitBeside(sid, newId, zone)
+    useSessions.getState().setActive(newId)
+    focusTerminal(newId)
+  }
+
+  /** Close every tab in a pane (confirmation per session via requestClose). */
+  const closePane = (leafId: string) => {
+    const leaf = leaves.find((x) => x.leaf.id === leafId)?.leaf
+    if (!leaf) return
+    for (const sid of leaf.tabs) requestClose(sid)
+  }
+
+  /** Pull a tab into its own fresh group. */
+  const moveToNewGroup = (sid: string) => {
+    const gid = useLayout.getState().createGroup()
+    useSessions.getState().setGroup(sid, gid)
   }
 
   // --- splitter drag (pointer-based) ---
@@ -337,9 +383,13 @@ export default function TerminalLayout({
             over={over?.leafId === leaf.id ? over.zone : null}
             onToggleFocus={toggleFocus}
             onTabClick={focusSession}
-            onTabClose={closeSession}
+            onTabClose={requestClose}
             onRename={setCustomTitle}
             onMerge={() => mergeLeaf(leaf.id)}
+            onEqualize={equalize}
+            onClosePane={() => closePane(leaf.id)}
+            onSplit={splitWithNewTerminal}
+            onMoveToNewGroup={moveToNewGroup}
             onDragStart={setDragId}
             onDragEnd={() => {
               setDragId(null)
@@ -374,6 +424,10 @@ export default function TerminalLayout({
                 : { left: pct(h.rect.x), top: pct(h.rect.y), width: pct(h.rect.w) }
             }
             onPointerDown={(e) => beginResize(e, h.splitId, h.index, h.dir, h.span)}
+            onDoubleClick={(e) => {
+              e.preventDefault()
+              equalize()
+            }}
           />
         ))}
       </div>
@@ -395,6 +449,10 @@ function PaneChrome({
   onTabClose,
   onRename,
   onMerge,
+  onEqualize,
+  onClosePane,
+  onSplit,
+  onMoveToNewGroup,
   onDragStart,
   onDragEnd,
   onZone,
@@ -413,6 +471,10 @@ function PaneChrome({
   onTabClose: (sid: string) => void
   onRename: (sid: string, title: string) => void
   onMerge: () => void
+  onEqualize: () => void
+  onClosePane: () => void
+  onSplit: (sid: string, zone: DropZone) => void
+  onMoveToNewGroup: (sid: string) => void
   onDragStart: (sid: string) => void
   onDragEnd: () => void
   onZone: (zone: DropZone) => void
@@ -431,6 +493,10 @@ function PaneChrome({
   const [nav, setNav] = useState({ left: false, right: false })
   // Inline tab rename (double-click a tab title).
   const [editing, setEditing] = useState<{ id: string; value: string } | null>(null)
+  // Right-click tab menu + pane overflow ("more") menu.
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; sid: string } | null>(null)
+  const [moreMenu, setMoreMenu] = useState(false)
+  const moreBtnRef = useRef<HTMLButtonElement>(null)
   const commitRename = (sid: string) => {
     const v = (editing?.value ?? '').trim()
     if (v) onRename(sid, v)
@@ -447,8 +513,24 @@ function PaneChrome({
   }, [])
   // Re-measure when the tab count changes; width changes are handled by the
   // ResizeObserver below. (Running this on every render forced a scroll-geometry
-  // reflow per frame during drags/resizes.)
-  useEffect(syncNav, [leaf.tabs.length, syncNav])
+  // reflow per frame during drags/resizes.) Also keep the active tab visible —
+  // Ctrl+Tab or a freshly opened tab must not sit off-screen behind the
+  // chevrons with no visual cue.
+  useEffect(() => {
+    const strip = tabsRef.current
+    if (strip) {
+      const el = strip.querySelector<HTMLElement>('[aria-selected="true"]')
+      if (el) {
+        const left = el.offsetLeft
+        const right = left + el.offsetWidth
+        if (left < strip.scrollLeft) strip.scrollLeft = left
+        else if (right > strip.scrollLeft + strip.clientWidth) {
+          strip.scrollLeft = right - strip.clientWidth
+        }
+      }
+    }
+    syncNav()
+  }, [leaf.tabs.length, leaf.active, syncNav])
   useEffect(() => {
     const el = tabsRef.current
     if (!el) return
@@ -516,6 +598,11 @@ function PaneChrome({
                 draggable
                 title={label.tooltip}
                 onClick={() => onTabClick(sid)}
+                onContextMenu={(e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  setCtxMenu({ x: e.clientX, y: e.clientY, sid })
+                }}
                 onKeyDown={(e) => {
                   // Only the tab itself — keys from the inline rename input
                   // (or the close button) must not re-activate it.
@@ -642,6 +729,20 @@ function PaneChrome({
           </button>
         )}
         <button
+          ref={moreBtnRef}
+          className="pane-more"
+          title="Pane actions (split, equalize, close)"
+          aria-label="Pane actions"
+          aria-haspopup="menu"
+          aria-expanded={moreMenu}
+          onClick={(e) => {
+            e.stopPropagation()
+            setMoreMenu((v) => !v)
+          }}
+        >
+          <IconMore size={14} />
+        </button>
+        <button
           className="pane-add"
           title="New terminal (or double-click the tab bar)"
           aria-label="New terminal"
@@ -673,6 +774,141 @@ function PaneChrome({
       >
         {over && <div className="drop-indicator" style={indicatorStyle(over)} />}
       </div>
+
+      {ctxMenu && (
+        <PopupMenu
+          x={ctxMenu.x}
+          y={ctxMenu.y}
+          onClose={() => setCtxMenu(null)}
+          items={[
+            {
+              label: 'Rename',
+              onSelect: () => {
+                const s = sessions.get(ctxMenu.sid)
+                setEditing({ id: ctxMenu.sid, value: s ? deriveTabLabel(s).title : '' })
+              }
+            },
+            { label: 'Split right', onSelect: () => onSplit(ctxMenu.sid, 'right') },
+            { label: 'Split down', onSelect: () => onSplit(ctxMenu.sid, 'bottom') },
+            { label: 'Move to new group', onSelect: () => onMoveToNewGroup(ctxMenu.sid) },
+            { separator: true },
+            { label: 'Close', onSelect: () => onTabClose(ctxMenu.sid) },
+            {
+              label: 'Close others',
+              onSelect: () =>
+                leaf.tabs.filter((t) => t !== ctxMenu.sid).forEach((t) => onTabClose(t))
+            },
+            {
+              label: 'Close to the right',
+              onSelect: () => {
+                const i = leaf.tabs.indexOf(ctxMenu.sid)
+                leaf.tabs.slice(i + 1).forEach((t) => onTabClose(t))
+              }
+            }
+          ]}
+        />
+      )}
+      {moreMenu && (
+        <PopupMenu
+          anchor={moreBtnRef.current}
+          onClose={() => setMoreMenu(false)}
+          items={[
+            ...(leaf.active
+              ? [
+                  { label: 'Split right', onSelect: () => onSplit(leaf.active as string, 'right') },
+                  { label: 'Split down', onSelect: () => onSplit(leaf.active as string, 'bottom') }
+                ]
+              : []),
+            { label: 'Equalize panes', onSelect: onEqualize },
+            ...(canMerge ? [{ label: 'Merge into other pane', onSelect: onMerge }] : []),
+            { separator: true },
+            {
+              label: 'Rename tab',
+              onSelect: () => {
+                const active = leaf.active
+                if (!active) return
+                const s = sessions.get(active)
+                setEditing({ id: active, value: s ? deriveTabLabel(s).title : '' })
+              }
+            },
+            { label: 'Close pane', danger: true, onSelect: onClosePane }
+          ]}
+        />
+      )}
     </div>
+  )
+}
+
+interface PopupItem {
+  label?: string
+  separator?: boolean
+  danger?: boolean
+  onSelect?: () => void
+}
+
+/**
+ * Small portal menu used by the pane "more" button and the tab context menu.
+ * Positioned at (x, y) or under an anchor element; closes on outside click/Esc.
+ */
+function PopupMenu({
+  x,
+  y,
+  anchor,
+  items,
+  onClose
+}: {
+  x?: number
+  y?: number
+  anchor?: HTMLElement | null
+  items: PopupItem[]
+  onClose: () => void
+}) {
+  const ref = useRef<HTMLDivElement>(null)
+  useEscapeKey(onClose)
+  useEffect(() => {
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Node
+      if (ref.current?.contains(t) || anchor?.contains(t)) return
+      onClose()
+    }
+    window.addEventListener('mousedown', onDown)
+    return () => window.removeEventListener('mousedown', onDown)
+  }, [anchor, onClose])
+
+  const width = 200
+  let left = x ?? 0
+  let top = y ?? 0
+  if (anchor) {
+    const r = anchor.getBoundingClientRect()
+    left = r.right - width
+    top = r.bottom + 6
+  }
+  if (left < 8) left = 8
+  const maxLeft = window.innerWidth - width - 8
+  if (left > maxLeft) left = Math.max(8, maxLeft)
+  if (top > window.innerHeight - 8) top = Math.max(8, window.innerHeight - 8)
+
+  return createPortal(
+    <div ref={ref} className="pane-menu" role="menu" style={{ top, left, width }}>
+      {items.map((it, i) =>
+        it.separator ? (
+          <div key={i} className="pane-menu-sep" />
+        ) : (
+          <button
+            key={i}
+            type="button"
+            role="menuitem"
+            className={`pane-menu-item${it.danger ? ' is-danger' : ''}`}
+            onClick={() => {
+              it.onSelect?.()
+              onClose()
+            }}
+          >
+            {it.label}
+          </button>
+        )
+      )}
+    </div>,
+    document.body
   )
 }

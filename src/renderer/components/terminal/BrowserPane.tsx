@@ -9,6 +9,8 @@ import {
   useState
 } from 'react'
 import { useSessions, type Session } from '../../store/sessions'
+import { useSettings } from '../../store/settings'
+import { matchHotkey, resolveHotkeys } from '../../lib/hotkeys'
 import { registerBrowserGuest } from '../../lib/browserTabs'
 import {
   registerPaneOpener,
@@ -350,7 +352,46 @@ const BrowserTab = memo(
         unregister = registerBrowserGuest(wv.getWebContentsId(), onOpenTab)
       }
       wv.addEventListener('dom-ready', onReady)
+
+      // The guest runs in its own process, so the app's window-level keydown
+      // listener never sees keys typed into the page. Forward matching global
+      // shortcuts as a synthetic keydown and swallow the original so e.g.
+      // Ctrl+Shift+T / Ctrl+K / Ctrl+Alt+F keep working while browsing.
+      const onBeforeInput = (e: Event) => {
+        const input = (
+          e as unknown as {
+            input?: {
+              type: string
+              key: string
+              control: boolean
+              meta: boolean
+              shift: boolean
+              alt: boolean
+            }
+          }
+        ).input
+        if (!input || input.type !== 'keyDown') return
+        const synthetic = new KeyboardEvent('keydown', {
+          key: input.key,
+          ctrlKey: input.control,
+          metaKey: input.meta,
+          shiftKey: input.shift,
+          altKey: input.alt,
+          bubbles: true,
+          cancelable: true
+        })
+        const matched = matchHotkey(
+          synthetic,
+          resolveHotkeys(useSettings.getState().keybindings)
+        )
+        if (!matched) return
+        e.preventDefault()
+        window.dispatchEvent(synthetic)
+      }
+      wv.addEventListener('before-input-event', onBeforeInput)
+
       return () => {
+        wv.removeEventListener('before-input-event', onBeforeInput)
         unclose()
         unregister()
         onWebContents(id, null)

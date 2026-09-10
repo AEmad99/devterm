@@ -236,8 +236,18 @@ const api: DevTermApi = {
   },
   window: {
     setGlass: (enabled: boolean): Promise<void> => ipcRenderer.invoke(IPC.windowSetGlass, enabled),
-    flashAttention: (notice: { title: string; body?: string }) =>
-      ipcRenderer.send(IPC.windowFlashAttention, notice)
+    flashAttention: (notice: { title: string; body?: string; sessionId?: string }) =>
+      ipcRenderer.send(IPC.windowFlashAttention, notice),
+    onFocusSession: (cb) => subscribe<string>(IPC.windowFocusSession, cb),
+    agentAttention: (sessionId: string, notice: { title: string; body?: string }) =>
+      ipcRenderer.send(IPC.windowAgentAttention, sessionId, notice),
+    onAgentAttention: (cb) =>
+      subscribe<{ sessionId: string; notice: { title: string; body?: string } }>(
+        IPC.windowAgentAttention,
+        ({ sessionId, notice }) => cb(sessionId, notice)
+      ),
+    setCloseGuard: (hasUnsaved: boolean) =>
+      ipcRenderer.send(IPC.appCloseGuard, hasUnsaved)
   },
   localContext: (): Promise<HostContext> => ipcRenderer.invoke(IPC.localContext),
   platform: process.platform,

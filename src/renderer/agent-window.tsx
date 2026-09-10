@@ -1,5 +1,5 @@
 import ReactDOM from 'react-dom/client'
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import type { AgentKind, PolicyMode } from '@shared/types'
 import { useSettings } from './store/settings'
 import { applyTheme, getTheme } from './lib/themes'
@@ -16,6 +16,7 @@ function parseParams(): {
   kind: AgentKind
   mode: PolicyMode
   title: string
+  sessionKind: 'local' | 'remote'
 } {
   const q = new URLSearchParams(window.location.search)
   const kind = (q.get('kind') || 'devterm') as AgentKind
@@ -24,12 +25,14 @@ function parseParams(): {
     sessionId: q.get('sessionId') || '',
     kind,
     mode,
-    title: q.get('title') || ''
+    title: q.get('title') || '',
+    sessionKind: q.get('local') === '1' ? 'local' : 'remote'
   }
 }
 
 function AgentFloatingApp() {
   const params = useMemo(() => parseParams(), [])
+  const [restartSignal, setRestartSignal] = useState(0)
   const label = agentKindLabel(params.kind)
 
   if (!params.sessionId) {
@@ -75,6 +78,14 @@ function AgentFloatingApp() {
           </button>
           <button
             type="button"
+            className="ghost small"
+            title="Restart the agent and reconnect the MCP bridge"
+            onClick={() => setRestartSignal((n) => n + 1)}
+          >
+            Restart
+          </button>
+          <button
+            type="button"
             className="ghost small danger-text"
             title="Stop the agent process"
             onClick={() => {
@@ -94,6 +105,8 @@ function AgentFloatingApp() {
           active
           closeOnUnmount={false}
           mirrorToStore={false}
+          sessionKindOverride={params.sessionKind}
+          restartSignal={restartSignal}
         />
       </div>
       <ConfirmActionModal />

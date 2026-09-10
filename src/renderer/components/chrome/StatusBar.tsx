@@ -3,6 +3,7 @@ import { useSessions } from '../../store/sessions'
 import { useSettings } from '../../store/settings'
 import { IconLocal, IconRemote, IconBrowser } from '../common/Icons'
 import { IconBranch } from '../git/GitIcons'
+import { agentKindLabel } from '../../lib/agent-ui'
 import type { GitStatus, HostContext } from '@shared/types'
 
 function osLabel(os?: string): string {
@@ -86,9 +87,14 @@ export default function StatusBar() {
       activeKind === 'remote' && activeId
         ? { sessionId: activeId, path: activeCwd }
         : { path: activeCwd }
-    void window.devterm.git.status(args).then((s) => {
-      if (!cancelled) setGit(s)
-    })
+    void window.devterm.git
+      .status(args)
+      .then((s) => {
+        if (!cancelled) setGit(s)
+      })
+      .catch(() => {
+        if (!cancelled) setGit(null)
+      })
     const off = window.devterm.git.onChange(args, (s) => {
       if (!cancelled) setGit(s)
     })
@@ -106,6 +112,9 @@ export default function StatusBar() {
       setLatency(null)
       return
     }
+    // A previous host's failure backoff must not leak into this session's
+    // first sample.
+    backoffRef.current = SSH_PING_INITIAL_MS
     let cancelled = false
     let timer: ReturnType<typeof setTimeout> | null = null
     const tick = async () => {
@@ -144,7 +153,8 @@ export default function StatusBar() {
     )
   }
 
-  const agentText = agentLabel(active.agentBridgeState)
+  const agentText = active.agentExited ? 'Agent exited' : agentLabel(active.agentBridgeState)
+  const agentTone = active.agentPendingApproval ? 'warn' : active.agentExited ? 'err' : ''
   const msgTone = statusTone(active.status)
 
   return (
@@ -167,19 +177,27 @@ export default function StatusBar() {
           </>
         )}
         {git?.isRepo && (
-          <span className="status-cell status-git" title={`Branch: ${git.branch}`}>
+          <button
+            type="button"
+            className="status-cell status-git"
+            title={`Branch: ${git.branch} — click to open the Git panel`}
+            onClick={() => {
+              const s = useSettings.getState()
+              s.setGitPanelOpen(!s.gitPanelOpen)
+            }}
+          >
             <IconBranch size={12} />
             {git.branch || 'detached'}
             {git.ahead > 0 ? ` ↑${git.ahead}` : ''}
             {git.behind > 0 ? ` ↓${git.behind}` : ''}
-          </span>
+          </button>
         )}
         {active.kind === 'remote' && latency !== null && (
           <span
             className={`status-cell status-ssh ${latency.err ? 'err' : ''}`}
-            title={latency.err ?? `Round-trip: ${latency.ms} ms`}
+            title={latency.err ?? `Round-trip latency: ${latency.ms} ms`}
           >
-            {latency.err ? 'SSH error' : `SSH ${latency.ms ?? '—'} ms`}
+            {latency.err ? 'SSH error' : `SSH ~${latency.ms ?? '—'} ms`}
           </span>
         )}
       </span>
@@ -189,10 +207,12 @@ export default function StatusBar() {
       <span className="statusbar-right">
         {agentText && (
           <span
-            className="status-cell status-agent"
-            title={`Agent bridge: ${active.agentBridgeState}`}
+            className={`status-cell status-agent ${agentTone}`}
+            title={`${agentKindLabel(active.agentKind ?? 'devterm')}: ${
+              active.agentExited ? 'exited' : (active.agentBridgeState ?? 'starting')
+            }${active.agentPendingApproval ? ' — awaiting approval' : ''}`}
           >
-            {agentText}
+            {active.agentPendingApproval ? 'Approval needed' : agentText}
           </span>
         )}
       </span>

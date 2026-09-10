@@ -507,7 +507,8 @@ export function xtermTheme(theme: Theme, bg: TerminalBg): ITheme {
   const t = theme.terminal
   return {
     // A background image shows through, so the terminal layer goes fully clear.
-    background: bg.image ? 'rgba(0,0,0,0)' : t.background,
+    // Otherwise an explicit custom color overrides the theme background.
+    background: bg.image ? 'rgba(0,0,0,0)' : bg.color || t.background,
     foreground: t.foreground,
     cursor: t.cursor,
     cursorAccent: t.cursorAccent,

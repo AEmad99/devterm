@@ -118,7 +118,24 @@ const lastSignalAt = new Map<string, number>()
  * burst is one ping. Callers (the agent sink) are responsible for only calling
  * this on a genuine "finished / waiting" transition.
  */
-export function signalAttention(sessionId: string, notice: AttentionNotice): void {
+export function signalAttention(
+  sessionId: string,
+  notice: AttentionNotice,
+  opts?: {
+    /**
+     * Only set the tab badge — skip the chime and OS notification. Used when a
+     * stashed agent surface mirrors the active floating window so the operator
+     * is alerted exactly once.
+     */
+    badgeOnly?: boolean
+    /**
+     * Play the local chime but skip the OS-level flash/notification. The
+     * floating agent window uses this and lets the main process raise the OS
+     * signal exactly once.
+     */
+    chimeOnly?: boolean
+  }
+): void {
   const attention = useSettings.getState().attention
   if (!attention.enabled) return
 
@@ -135,6 +152,7 @@ export function signalAttention(sessionId: string, notice: AttentionNotice): voi
       /* store unavailable — non-fatal */
     }
   }
+  if (opts?.badgeOnly) return
 
   const now = Date.now()
   if (now - (lastSignalAt.get(sessionId) ?? 0) < DEBOUNCE_MS) return
@@ -152,10 +170,12 @@ export function signalAttention(sessionId: string, notice: AttentionNotice): voi
   } catch {
     /* audio unavailable */
   }
+  if (opts?.chimeOnly) return
   try {
     // OS-level surfacing only makes sense when DevTerm is backgrounded; main
     // re-checks focus and no-ops if we're foreground.
-    if (attention.system && !focused) window.devterm.window.flashAttention?.(notice)
+    if (attention.system && !focused)
+      window.devterm.window.flashAttention?.({ ...notice, sessionId })
   } catch {
     /* bridge unavailable */
   }
@@ -297,6 +317,8 @@ export function createIdleChime(opts: {
   sessionId: string
   makeNotice: () => AttentionNotice
   minBurstMs?: number
+  /** Override how a genuine idle transition is surfaced (defaults to signalAttention). */
+  notify?: (notice: AttentionNotice) => void
 }): {
   feed: (data: string) => void
   setArmed: (armed: boolean) => void
@@ -332,7 +354,10 @@ export function createIdleChime(opts: {
       timer = undefined
       // Only fire for a sustained burst that has now gone quiet — filters the
       // quick echo of a launch command and short, non-agent output.
-      if (lastOutputAt - burstStart >= minBurstMs) signalAttention(sessionId, makeNotice())
+      if (lastOutputAt - burstStart >= minBurstMs) {
+        const notify = opts.notify ?? ((notice: AttentionNotice) => signalAttention(sessionId, notice))
+        notify(makeNotice())
+      }
     }, IDLE_QUIET_MS)
   }
 

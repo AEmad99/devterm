@@ -316,6 +316,8 @@ interface LayoutState {
   addTabToSessionLeaf: (anchorSid: string, newSid: string) => boolean
   /** Collapse a split pane: move all its tabs into another leaf and prune. */
   mergeLeaf: (leafId: string) => void
+  /** Reset every split in the active group to equal sizes. */
+  equalize: () => void
   /** Adjust a split divider; delta is a fraction of the container. */
   resize: (splitId: string, index: number, delta: number) => void
   /** Set a group's tree from a workspace snapshot (fresh node ids) and focus it. */
@@ -644,6 +646,22 @@ export const useLayout = create<LayoutState>((set) => ({
           active: moving[moving.length - 1]
         }))
         return { root, activeLeaf: dest.id }
+      })
+    ),
+
+  equalize: () =>
+    set((s) =>
+      patchActive(s, (g) => {
+        if (!g.root) return null
+        const equalizeNode = (n: LayoutNode): LayoutNode =>
+          n.type === 'leaf'
+            ? n
+            : {
+                ...n,
+                sizes: n.children.map(() => 1 / n.children.length),
+                children: n.children.map(equalizeNode)
+              }
+        return { root: equalizeNode(g.root), activeLeaf: g.activeLeaf }
       })
     ),
 

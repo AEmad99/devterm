@@ -78,6 +78,15 @@ export function stopAgent(sessionId: string): void {
 }
 
 /**
+ * Ask the mounted AgentPane to relaunch the agent (fresh PTY + bridge) while
+ * keeping the current UI placement. Works from the pane cluster, the agent
+ * overview, and the floating window (which owns a local nonce instead).
+ */
+export function restartAgent(sessionId: string): void {
+  useSessions.getState().bumpAgentRestart(sessionId)
+}
+
+/**
  * Wait until the MCP bridge looks ready enough to accept work, or until timeout.
  * "connected" means the agent CLI has completed the MCP handshake (TUI is up).
  * "listening" is only the HTTP server — the CLI may still be drawing its banner.

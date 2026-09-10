@@ -169,7 +169,9 @@ export default function ConfirmActionModal() {
   }
 
   const session = sessions.find((x) => x.id === top.sessionId)
-  const host = session?.context?.hostname || session?.title || top.sessionId
+  // The floating window has no session store; main supplies a label there.
+  const host =
+    session?.context?.hostname || session?.title || top.sessionLabel || top.sessionId
   const name = agentName(session?.agentKind)
 
   return (

@@ -657,6 +657,8 @@ export interface ConfirmRequest {
   sessionId: string
   tool: string
   detail: string
+  /** Human label for the originating session (host/title) for cross-window modals. */
+  sessionLabel?: string
 }
 
 export interface TransferStartOpts {
@@ -887,6 +889,12 @@ export const IPC = {
   // attention: OS notification + taskbar flash when an agent/terminal wants the
   // operator and the window is in the background
   windowFlashAttention: 'window:flash-attention',
+  /** Main → main window: focus a specific session (notification click / tray). */
+  windowFocusSession: 'window:focus-session',
+  /** Renderer → main: an agent finished for `sessionId` (float window badge). */
+  windowAgentAttention: 'window:agent-attention',
+  /** Renderer → main: unsaved-editor flag used by the window close guard. */
+  appCloseGuard: 'app:close-guard',
 
   // foundation cluster: bridge activity log
   bridgeActivityList: 'bridge-activity:list',
@@ -1231,7 +1239,25 @@ export interface DevTermApi {
      * the window is already focused. Used by the agent/terminal attention signal
      * so a finished or input-waiting agent surfaces even when DevTerm is hidden.
      */
-    flashAttention(notice: { title: string; body?: string }): void
+    flashAttention(notice: { title: string; body?: string; sessionId?: string }): void
+    /**
+     * Main window: focus a specific session (notification click / tray reopen).
+     * The renderer switches to the owning group and focuses the session.
+     */
+    onFocusSession(cb: (sessionId: string) => void): () => void
+    /**
+     * Floating agent window → main: an agent finished/wants attention for a
+     * session that lives in the main window's store. Main broadcasts it to the
+     * main window (tab badge) and raises the OS-level attention signal.
+     */
+    agentAttention(sessionId: string, notice: { title: string; body?: string }): void
+    /** Main window: another surface reported attention for a session (badge only). */
+    onAgentAttention(cb: (sessionId: string, notice: { title: string; body?: string }) => void): () => void
+    /**
+     * Renderer → main: whether unsaved editor buffers exist. The main process
+     * uses this for the window-close confirmation (alongside running agents).
+     */
+    setCloseGuard(hasUnsaved: boolean): void
   }
   /** Context of the local workstation. */
   localContext(): Promise<HostContext>
@@ -1709,14 +1735,28 @@ export interface SettingsSnapshot {
 // Session restore (last-session snapshot) + SSH config import
 // ---------------------------------------------------------------------------
 
-/** One capturable terminal in a session-restore group. */
+/** One capturable terminal (or browser pane) in a session-restore group. */
 export interface SessionRestoreItem {
   id: string
-  kind: 'local' | 'remote'
+  kind: 'local' | 'remote' | 'browser'
   /** Remote items: saved connection id (required to reconnect). */
   connectionId?: string
   cwd?: string
   title?: string
+  /** Browser items: last URL to reopen. */
+  url?: string
+  /** Agent to relaunch for this session (local / saved remote only). */
+  agentKind?: AgentKind
+  /** Where the agent UI was placed (docked / floating / hidden). */
+  agentUiMode?: AgentUiMode
+}
+
+/** An editor document captured for restore. Remote docs reference the item id. */
+export interface SessionRestoreEditor {
+  scope: 'local' | 'remote'
+  /** SessionRestoreItem id of the owning remote session (remote scope). */
+  itemId?: string
+  path: string
 }
 
 export interface SessionRestoreGroup {
@@ -1737,6 +1777,8 @@ export interface SessionRestoreSnapshot {
   groups: SessionRestoreGroup[]
   /** Index into `groups` that was active when saved. */
   activeGroupIndex?: number
+  /** Open editor documents (best-effort restore). */
+  editors?: SessionRestoreEditor[]
 }
 
 /** Result of importing Host blocks from an OpenSSH config file. */
@@ -2152,4 +2194,6 @@ export interface SearchResult {
   text: string
   timestamp?: string
   kind: 'live' | 'history' | 'detached'
+  /** Total lines ever ingested for the session (lets the UI map to a buffer line). */
+  totalLines?: number
 }

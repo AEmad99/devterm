@@ -4,6 +4,7 @@ import { useSessions, type Session } from '../../store/sessions'
 import { useSettings } from '../../store/settings'
 import TerminalView from './TerminalView'
 import AgentPane from '../agent/AgentPane'
+import AgentActivityPanel from '../agent/AgentActivityPanel'
 import { AGENT_BRIDGE_POLICY } from '../../lib/agent-ui'
 import { useBridgeActivity } from '../../lib/bridge-activity'
 
@@ -20,6 +21,8 @@ function LocalSessionView({ session }: { session: Session }) {
   const agentUiMode = session.agentUiMode
   const agentAlive = !!agentUiMode
   const agentDocked = agentUiMode === 'docked'
+  const agentActivityCollapsed = useSettings((s) => s.agentActivityCollapsed)
+  const setAgentActivityCollapsed = useSettings((s) => s.setAgentActivityCollapsed)
 
   useEffect(() => {
     if (session.agentKind) setAgentKind(session.agentKind)
@@ -61,6 +64,27 @@ function LocalSessionView({ session }: { session: Session }) {
           </div>
         )}
       </div>
+      {agentDocked && (
+        <div className={`agent-activity-wrap ${agentActivityCollapsed ? 'is-collapsed' : ''}`}>
+          <button
+            className="agent-activity-toggle"
+            onClick={() => setAgentActivityCollapsed(!agentActivityCollapsed)}
+            title={agentActivityCollapsed ? 'Show activity panel' : 'Hide activity panel'}
+            aria-expanded={!agentActivityCollapsed}
+          >
+            <span className="agent-activity-toggle-glyph">
+              {agentActivityCollapsed ? '▸' : '▾'}
+            </span>
+            <span>{agentActivityCollapsed ? 'Activity' : 'Hide activity'}</span>
+          </button>
+          {!agentActivityCollapsed && (
+            <AgentActivityPanel
+              sessionId={session.id}
+              hostLabel={session.context?.hostname ?? session.title}
+            />
+          )}
+        </div>
+      )}
     </div>
   )
 }

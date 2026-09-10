@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ComponentType,
@@ -17,8 +18,17 @@ import type {
   PerformanceSnapshot
 } from '@shared/types'
 import { THEMES, getTheme, applyTheme, type Theme } from '../../lib/themes'
-import { HOTKEYS, comboLabel, captureCombo, type HotkeyId } from '../../lib/hotkeys'
+import {
+  HOTKEYS,
+  comboLabel,
+  captureCombo,
+  resolveHotkeys,
+  type HotkeyId
+} from '../../lib/hotkeys'
 import { chime } from '../../lib/attention'
+import { AGENT_KIND_MENU, agentKindLabel } from '../../lib/agent-ui'
+import ConfirmDialog from '../common/ConfirmDialog'
+import { useEscapeKey } from '../../lib/useEscapeKey'
 import {
   IconClose,
   IconLocal,
@@ -179,6 +189,8 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
   const setAutoReconnect = useSettings((s) => s.setAutoReconnect)
   const attention = useSettings((s) => s.attention)
   const setAttention = useSettings((s) => s.setAttention)
+  const showStatusBar = useSettings((s) => s.showStatusBar)
+  const setShowStatusBar = useSettings((s) => s.setShowStatusBar)
   const reset = useSettings((s) => s.reset)
   const defaultShell = useSettings((s) => s.defaultShell)
   const setDefaultShell = useSettings((s) => s.setDefaultShell)
@@ -199,10 +211,49 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
   const setStt = useSettings((s) => s.setStt)
   const agentPreferences = useSettings((s) => s.agentPreferences)
   const setAgentPreferences = useSettings((s) => s.setAgentPreferences)
+  const agentKind = useSettings((s) => s.agentKind)
+  const setAgentKind = useSettings((s) => s.setAgentKind)
   const remoteDetachedSessions = useSettings((s) => s.remoteDetachedSessions)
   const setRemoteDetachedSessions = useSettings((s) => s.setRemoteDetachedSessions)
   const sessionRestore = useSettings((s) => s.sessionRestore)
   const setSessionRestore = useSettings((s) => s.setSessionRestore)
+
+  // Destructive-setting confirmation (factory reset, keybinding reset, import,
+  // rule/skill/model deletion) — mirrors the git panel's ConfirmDialog usage.
+  const [confirmAction, setConfirmAction] = useState<{
+    title: string
+    message: string
+    confirmLabel: string
+    run: () => void
+  } | null>(null)
+  const dialogRef = useRef<HTMLDivElement>(null)
+  // A nested confirm dialog owns Escape while it is open.
+  useEscapeKey(onClose, !confirmAction)
+  useEffect(() => {
+    // Focus trap: the settings dialog is a custom modal, so keep Tab inside it.
+    const root = dialogRef.current
+    if (!root) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Tab') return
+      const items = Array.from(
+        root.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        )
+      ).filter((el) => el.offsetParent !== null)
+      if (!items.length) return
+      const first = items[0]
+      const last = items[items.length - 1]
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault()
+        last.focus()
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault()
+        first.focus()
+      }
+    }
+    root.addEventListener('keydown', onKey)
+    return () => root.removeEventListener('keydown', onKey)
+  }, [])
 
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -210,6 +261,7 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
   const [pwshBusy, setPwshBusy] = useState(false)
   const [ioHint, setIoHint] = useState<string | null>(null)
   const [capturing, setCapturing] = useState<HotkeyId | null>(null)
+  const [kbWarning, setKbWarning] = useState<string | null>(null)
   const [sttHint, setSttHint] = useState<string | null>(null)
   const [agentCapabilities, setAgentCapabilities] = useState<AgentCapabilities | null>(null)
   const [agentCapabilitiesError, setAgentCapabilitiesError] = useState<string | null>(null)
@@ -219,6 +271,18 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
   const [appVersion, setAppVersion] = useState<string | null>(null)
   const [updateBusy, setUpdateBusy] = useState(false)
   const [updateResult, setUpdateResult] = useState<AppUpdateCheckResult | null>(null)
+
+  // Duplicate shortcut detection (last writer wins silently otherwise).
+  const hotkeyConflicts = useMemo(() => {
+    const seen = new Map<string, string[]>()
+    for (const h of resolveHotkeys(keybindings)) {
+      const combo = `${h.mod ? 'M' : ''}${h.shift ? 'S' : ''}${h.alt ? 'A' : ''}:${h.key.toLowerCase()}`
+      const labels = seen.get(combo) ?? []
+      labels.push(h.label)
+      seen.set(combo, labels)
+    }
+    return [...seen.values()].filter((labels) => labels.length > 1)
+  }, [keybindings])
 
   // Agent guardrails (approval rules) state
   const [rules, setRules] = useState<ApprovalRule[]>([])
@@ -381,7 +445,16 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
         return
       }
       const combo = captureCombo(e)
-      if (combo) setKeybinding(capturing, combo)
+      if (combo) {
+        // Shift-only combos would swallow normal capital-letter typing in the
+        // terminal (TerminalView consumes any matched hotkey before the shell).
+        if (!combo.mod && !combo.alt) {
+          setKbWarning('Shift-only shortcuts intercept normal typing — use Ctrl/Cmd or Alt.')
+        } else {
+          setKbWarning(null)
+          setKeybinding(capturing, combo)
+        }
+      }
       setCapturing(null)
     }
     window.addEventListener('keydown', onKey, true)
@@ -450,9 +523,14 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
     try {
       const res = await window.devterm.settingsIo.import()
       if (res.ok && res.counts) {
+        // The imported theme may differ; repaint chrome immediately (terminal
+        // palettes already update live, chrome otherwise waited for a restart).
+        applyTheme(getTheme(useSettings.getState().themeId))
         setIoHint(
-          `Imported settings (${res.counts.snippets} snippets, ${res.counts.workspaces} workspaces)`
+          `Imported settings (${res.counts.snippets} snippets, ${res.counts.workspaces} workspaces, ${res.counts.approvalRules} approval rules)`
         )
+      } else if (res.error === 'canceled') {
+        setIoHint('Import cancelled')
       } else {
         setIoHint(`Import failed: ${res.error || 'unknown error'}`)
       }
@@ -464,6 +542,7 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div
+        ref={dialogRef}
         className="modal settings-modal-overhaul"
         role="dialog"
         aria-modal="true"
@@ -502,10 +581,18 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
           <div className="settings-sidebar-footer">
             <button
               className="ghost small"
-              onClick={() => {
-                reset()
-                applyTheme(getTheme(useSettings.getState().themeId))
-              }}
+              onClick={() =>
+                setConfirmAction({
+                  title: 'Reset all settings?',
+                  message:
+                    'This restores every setting, theme, and keybinding to factory defaults. Saved connections, workspaces, and snippets are not affected.',
+                  confirmLabel: 'Reset defaults',
+                  run: () => {
+                    reset()
+                    applyTheme(getTheme(useSettings.getState().themeId))
+                  }
+                })
+              }
               title="Reset all settings to original factory defaults"
             >
               Reset defaults
@@ -646,7 +733,8 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                       <span className="settings-label">
                         Zen mode (
                         {comboLabel(
-                          HOTKEYS.find((h) => h.id === 'toggleZenMode')!,
+                          resolveHotkeys(keybindings).find((h) => h.id === 'toggleZenMode') ??
+                            HOTKEYS.find((h) => h.id === 'toggleZenMode')!,
                           window.devterm.platform === 'darwin'
                         )}
                         )
@@ -709,6 +797,26 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                         </select>
                       </span>
                     </label>
+
+                    <div className="settings-row-grid">
+                      <span className="settings-label">Terminal background color</span>
+                      <span className="settings-control">
+                        <input
+                          type="color"
+                          className="settings-color"
+                          value={terminalBg.color || getTheme(themeId).terminal.background}
+                          onChange={(e) => setTerminalBg({ color: e.target.value })}
+                          title="Custom terminal background (overrides the theme)"
+                        />
+                        <button
+                          className="ghost small"
+                          disabled={!terminalBg.color}
+                          onClick={() => setTerminalBg({ color: '' })}
+                        >
+                          Use theme
+                        </button>
+                      </span>
+                    </div>
 
                     <div className="settings-row-grid">
                       <span className="settings-label">Background image</span>
@@ -903,6 +1011,26 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                         <span className="settings-hint">lines</span>
                       </span>
                     </label>
+
+                    <label className="settings-row-grid">
+                      <span className="settings-label">Mouse wheel scroll speed</span>
+                      <span className="settings-control">
+                        <input
+                          className="text-input num-input"
+                          type="number"
+                          min={1}
+                          max={10}
+                          step={1}
+                          value={prefs.scrollSensitivity}
+                          onChange={(e) =>
+                            setPrefs({
+                              scrollSensitivity: clamp(Number(e.target.value) || 1, 1, 10)
+                            })
+                          }
+                        />
+                        <span className="settings-hint">1–10</span>
+                      </span>
+                    </label>
                   </div>
                 </div>
               </div>
@@ -948,6 +1076,17 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                           type="checkbox"
                           checked={activityIndicators}
                           onChange={(e) => setActivityIndicators(e.target.checked)}
+                        />
+                      </span>
+                    </label>
+
+                    <label className="settings-row-grid">
+                      <span className="settings-label">Show status bar</span>
+                      <span className="settings-control">
+                        <input
+                          type="checkbox"
+                          checked={showStatusBar}
+                          onChange={(e) => setShowStatusBar(e.target.checked)}
                         />
                       </span>
                     </label>
@@ -1053,6 +1192,22 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                         />
                       </span>
                     </label>
+
+                    <label className="settings-row-grid">
+                      <span className="settings-label">Detect idle agent turns</span>
+                      <span className="settings-control">
+                        <input
+                          type="checkbox"
+                          checked={attention.idle}
+                          disabled={!attention.enabled}
+                          onChange={(e) => setAttention({ idle: e.target.checked })}
+                        />
+                      </span>
+                    </label>
+                    <p className="settings-hint">
+                      Watches agent output and alerts when a burst goes quiet (finished or waiting
+                      for input). Disable if quiet long-running commands raise false alerts.
+                    </p>
                   </div>
                 </div>
               </div>
@@ -1069,6 +1224,33 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                     </p>
                   </div>
                   <div className="settings-card-body">
+                    <label className="settings-row-grid">
+                      <span className="settings-label">Default agent</span>
+                      <span className="settings-control">
+                        <select
+                          className="settings-select"
+                          value={agentKind}
+                          onChange={(e) =>
+                            setAgentKind(e.target.value as typeof agentKind)
+                          }
+                        >
+                          {AGENT_KIND_MENU.map((group) => (
+                            <optgroup key={group.group} label={group.group}>
+                              {group.kinds.map((k) => (
+                                <option key={k} value={k}>
+                                  {agentKindLabel(k)}
+                                </option>
+                              ))}
+                            </optgroup>
+                          ))}
+                        </select>
+                      </span>
+                    </label>
+                    <p className="settings-hint">
+                      Backend used when a terminal's sparkle button opens an agent. The pane's kind
+                      picker overrides this per session.
+                    </p>
+
                     <label className="settings-row-grid">
                       <span className="settings-label">Provider</span>
                       <span className="settings-control">
@@ -1213,10 +1395,16 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                           <button
                             className="ghost small"
                             onClick={() =>
-                              setAgentPreferences({
-                                trustedSkills: agentPreferences.trustedSkills.filter(
-                                  (item) => item.path !== skill.path
-                                )
+                              setConfirmAction({
+                                title: 'Remove trusted skill?',
+                                message: `"${skill.path}" will no longer be allowlisted for agent launches.`,
+                                confirmLabel: 'Remove',
+                                run: () =>
+                                  setAgentPreferences({
+                                    trustedSkills: agentPreferences.trustedSkills.filter(
+                                      (item) => item.path !== skill.path
+                                    )
+                                  })
                               })
                             }
                           >
@@ -1325,7 +1513,17 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                             <span className="rule-scope">
                               {r.sessionId ? `session: ${r.sessionId.slice(0, 8)}…` : 'global'}
                             </span>
-                            <button className="ghost small" onClick={() => void removeRule(r.id)}>
+                            <button
+                              className="ghost small"
+                              onClick={() =>
+                                setConfirmAction({
+                                  title: 'Delete approval rule?',
+                                  message: `The ${r.outcome} rule for "${r.commandPrefix}" will stop applying immediately.`,
+                                  confirmLabel: 'Delete rule',
+                                  run: () => void removeRule(r.id)
+                                })
+                              }
+                            >
                               Delete
                             </button>
                           </li>
@@ -1348,6 +1546,18 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                     </p>
                   </div>
                   <div className="settings-card-body">
+                    {hotkeyConflicts.length > 0 && (
+                      <div className="settings-hint" role="alert" style={{ color: 'var(--danger)' }}>
+                        ⚠ Conflicting shortcuts:{' '}
+                        {hotkeyConflicts.map((labels) => labels.join(' / ')).join('; ')} — only the
+                        first match fires.
+                      </div>
+                    )}
+                    {kbWarning && (
+                      <div className="settings-hint" role="alert" style={{ color: 'var(--danger)' }}>
+                        {kbWarning}
+                      </div>
+                    )}
                     <div className="kb-list">
                       {HOTKEYS.filter((h) => !h.alias).map((h) => {
                         const custom = keybindings[h.id]
@@ -1404,7 +1614,17 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                     <div className="settings-row-grid" style={{ marginTop: 12 }}>
                       <span className="settings-label" />
                       <span className="settings-control">
-                        <button className="ghost small" onClick={resetKeybindings}>
+                        <button
+                          className="ghost small"
+                          onClick={() =>
+                            setConfirmAction({
+                              title: 'Reset all keybindings?',
+                              message: 'Every custom shortcut returns to its default combo.',
+                              confirmLabel: 'Reset keybindings',
+                              run: resetKeybindings
+                            })
+                          }
+                        >
                           Reset all keybindings
                         </button>
                       </span>
@@ -1510,22 +1730,30 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                       <span className="settings-control">
                         <button
                           className="ghost small"
-                          onClick={async () => {
-                            try {
-                              const keys = await caches.keys()
-                              const targets = keys.filter((k) => /transformers|onnx|hf/i.test(k))
-                              await Promise.all(targets.map((k) => caches.delete(k)))
-                              setSttHint(
-                                targets.length
-                                  ? `Cleared ${targets.length} cached model stores.`
-                                  : 'No cached model found.'
-                              )
-                            } catch (err) {
-                              setSttHint(
-                                err instanceof Error ? err.message : 'Could not clear cache.'
-                              )
-                            }
-                          }}
+                          onClick={() =>
+                            setConfirmAction({
+                              title: 'Clear cached speech model?',
+                              message:
+                                'The downloaded Whisper model is removed from local storage. The next dictation downloads it again.',
+                              confirmLabel: 'Clear cache',
+                              run: async () => {
+                                try {
+                                  const keys = await caches.keys()
+                                  const targets = keys.filter((k) => /transformers|onnx|hf/i.test(k))
+                                  await Promise.all(targets.map((k) => caches.delete(k)))
+                                  setSttHint(
+                                    targets.length
+                                      ? `Cleared ${targets.length} cached model stores.`
+                                      : 'No cached model found.'
+                                  )
+                                } catch (err) {
+                                  setSttHint(
+                                    err instanceof Error ? err.message : 'Could not clear cache.'
+                                  )
+                                }
+                              }
+                            })
+                          }
                         >
                           Clear cached speech model
                         </button>
@@ -1649,7 +1877,18 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                         <button className="ghost small" onClick={() => void runExport()}>
                           Export backup…
                         </button>
-                        <button className="ghost small" onClick={() => void runImport()}>
+                        <button
+                          className="ghost small"
+                          onClick={() =>
+                            setConfirmAction({
+                              title: 'Import settings backup?',
+                              message:
+                                'Imported settings overwrite your current preferences, theme, keybindings, and approval rules. Snippets and workspaces are merged.',
+                              confirmLabel: 'Choose backup…',
+                              run: () => void runImport()
+                            })
+                          }
+                        >
                           Import backup…
                         </button>
                       </span>
@@ -1673,6 +1912,17 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
           </div>
         </div>
       </div>
+      <ConfirmDialog
+        open={!!confirmAction}
+        title={confirmAction?.title ?? ''}
+        message={confirmAction?.message ?? ''}
+        confirmLabel={confirmAction?.confirmLabel ?? 'Confirm'}
+        onConfirm={() => {
+          confirmAction?.run()
+          setConfirmAction(null)
+        }}
+        onClose={() => setConfirmAction(null)}
+      />
     </div>
   )
 }

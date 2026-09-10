@@ -2,6 +2,7 @@ import {
   BrowserWindow,
   Menu,
   MenuItemConstructorOptions,
+  Tray,
   app,
   clipboard,
   dialog,
@@ -9,6 +10,7 @@ import {
   session,
   shell
 } from 'electron'
+import { readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
 
 // Pin Chromium's disk cache, GPU shader cache, and service-worker storage
@@ -110,7 +112,7 @@ import { registerSnippetsIpc } from './ipc/snippets'
 import { registerHistoryIpc } from './ipc/history'
 import { registerDialogIpc } from './ipc/dialog'
 import { registerClipboardIpc } from './ipc/clipboard'
-import { registerWindowIpc } from './ipc/window'
+import { registerWindowIpc, hasUnsavedEditors } from './ipc/window'
 import { registerFoundationIpc } from './ipc/foundation'
 import { registerGitIpc } from './ipc/git'
 import { registerTransfersIpc } from './ipc/transfers'
@@ -138,6 +140,7 @@ function openExternalSafe(url: string | undefined): void {
 }
 
 let mainWindow: BrowserWindow | null = null
+let tray: Tray | null = null
 let ptyManager: PtyManager | null = null
 let sshManager: SSHManager | null = null
 let fileController: FileController | null = null
@@ -145,10 +148,77 @@ let agentController: AgentController | null = null
 let transfersController: { shutdown: () => Promise<void> } | null = null
 let browserController: { shutdown: () => Promise<void> } | null = null
 
+/** Skip the close confirmation once the operator has approved (or quit began). */
+let allowWindowClose = false
+
+interface PersistedWindowState {
+  width: number
+  height: number
+  x?: number
+  y?: number
+  maximized?: boolean
+}
+
+function windowStatePath(): string {
+  return join(app.getPath('userData'), 'window-state.json')
+}
+
+/** Restore last window geometry (validated); falls back to a centered 1280×800. */
+function loadWindowState(): PersistedWindowState {
+  const fallback: PersistedWindowState = { width: 1280, height: 800 }
+  try {
+    const raw = JSON.parse(readFileSync(windowStatePath(), 'utf8')) as Partial<PersistedWindowState>
+    const width = typeof raw.width === 'number' && raw.width >= 800 ? raw.width : fallback.width
+    const height = typeof raw.height === 'number' && raw.height >= 500 ? raw.height : fallback.height
+    return {
+      width,
+      height,
+      x: typeof raw.x === 'number' ? raw.x : undefined,
+      y: typeof raw.y === 'number' ? raw.y : undefined,
+      maximized: raw.maximized === true
+    }
+  } catch {
+    return fallback
+  }
+}
+
+function saveWindowState(win: BrowserWindow): void {
+  try {
+    if (win.isDestroyed()) return
+    const maximized = win.isMaximized()
+    // Persist the restored (non-maximized) bounds so un-maximizing later keeps
+    // the last floating size instead of the maximized one.
+    const b = maximized ? win.getNormalBounds() : win.getBounds()
+    const state: PersistedWindowState = {
+      width: b.width,
+      height: b.height,
+      x: b.x,
+      y: b.y,
+      maximized
+    }
+    writeFileSync(windowStatePath(), JSON.stringify(state))
+  } catch {
+    /* best-effort */
+  }
+}
+
+/** Reopen/focus the main window (tray click, second instance, activate). */
+function showMainWindow(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    createWindow()
+    return
+  }
+  if (mainWindow.isMinimized()) mainWindow.restore()
+  mainWindow.show()
+  mainWindow.focus()
+}
+
 function createWindow(): void {
+  const state = loadWindowState()
   mainWindow = new BrowserWindow({
-    width: 1280,
-    height: 800,
+    width: state.width,
+    height: state.height,
+    ...(state.x !== undefined && state.y !== undefined ? { x: state.x, y: state.y } : {}),
     minWidth: 800,
     minHeight: 500,
     show: false,
@@ -185,15 +255,70 @@ function createWindow(): void {
     }
   })
 
-  mainWindow.on('ready-to-show', () => mainWindow?.show())
+  mainWindow.on('ready-to-show', () => {
+    if (state.maximized) mainWindow?.maximize()
+    mainWindow?.show()
+  })
   mainWindow.on('closed', () => {
     mainWindow = null
+  })
+
+  // Persist window geometry (debounced so a drag doesn't write per frame).
+  let boundsTimer: ReturnType<typeof setTimeout> | undefined
+  const scheduleBoundsSave = () => {
+    if (boundsTimer) clearTimeout(boundsTimer)
+    boundsTimer = setTimeout(() => {
+      if (mainWindow) saveWindowState(mainWindow)
+    }, 500)
+  }
+  mainWindow.on('resize', scheduleBoundsSave)
+  mainWindow.on('move', scheduleBoundsSave)
+  mainWindow.on('maximize', scheduleBoundsSave)
+  mainWindow.on('unmaximize', scheduleBoundsSave)
+
+  // Quit guard: unsaved editor buffers and/or live agents get one confirmation.
+  // Explicit app.quit() paths (before-quit) set allowWindowClose, so this only
+  // fires for the window's X button.
+  mainWindow.on('close', (e) => {
+    if (allowWindowClose || process.argv.includes('--self-test')) return
+    const agents = agentController?.runningCount() ?? 0
+    const unsaved = hasUnsavedEditors()
+    if (agents === 0 && !unsaved) return
+    e.preventDefault()
+    const parts: string[] = []
+    if (agents) parts.push(`${agents} running agent${agents === 1 ? '' : 's'}`)
+    if (unsaved) parts.push('unsaved editor changes')
+    const win = mainWindow
+    if (!win) return
+    void dialog
+      .showMessageBox(win, {
+        type: 'warning',
+        buttons: ['Quit anyway', 'Cancel'],
+        defaultId: 1,
+        cancelId: 1,
+        title: 'Quit DevTerm?',
+        message: 'Quit DevTerm?',
+        detail: `You have ${parts.join(' and ')}. Quitting now stops them.`
+      })
+      .then((r) => {
+        if (r.response === 0 && mainWindow && !mainWindow.isDestroyed()) {
+          allowWindowClose = true
+          mainWindow.close()
+        }
+      })
   })
 
   // Stop the attention taskbar flash as soon as the operator comes back to the
   // window (Windows usually auto-clears on activate, but be explicit so a flash
   // can never get stuck on after focus returns).
-  mainWindow.on('focus', () => mainWindow?.flashFrame(false))
+  mainWindow.on('focus', () => {
+    mainWindow?.flashFrame(false)
+    try {
+      app.setBadgeCount(0)
+    } catch {
+      /* unsupported platform */
+    }
+  })
 
   // Open external links in the OS browser, never in-app (and only safe schemes).
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -276,8 +401,46 @@ function registerIpc(): void {
   })
 }
 
-// Headless self-test entrypoint: `electron . --self-test`.
-if (process.argv.includes('--self-test')) {
+/**
+ * Tray icon: keeps DevTerm reachable after the main window is closed while an
+ * agent float window survives, and gives quick Show/Quit access. The icon is
+ * pulled from the executable itself (works in dev and packaged builds without
+ * shipping a separate asset).
+ */
+function createTray(): void {
+  if (tray) return
+  void app
+    .getFileIcon(process.execPath, { size: 'small' })
+    .then((icon) => {
+      if (tray) return
+      tray = new Tray(icon)
+      tray.setToolTip('DevTerm')
+      tray.setContextMenu(
+        Menu.buildFromTemplate([
+          { label: 'Show DevTerm', click: () => showMainWindow() },
+          { type: 'separator' },
+          {
+            label: 'Quit DevTerm',
+            click: () => {
+              allowWindowClose = true
+              app.quit()
+            }
+          }
+        ])
+      )
+      tray.on('click', () => showMainWindow())
+    })
+    .catch(() => undefined)
+}
+
+// Single-instance guard: a second launch focuses the existing window instead
+// of running a competing copy that could corrupt userData stores (settings,
+// session-restore, known_hosts) and fight over the same PTYs.
+const isSelfTest = process.argv.includes('--self-test')
+const gotSingleInstance = isSelfTest || app.requestSingleInstanceLock()
+if (!gotSingleInstance) {
+  app.quit()
+} else if (isSelfTest) {
   app.disableHardwareAcceleration()
   app.whenReady().then(async () => {
     const watchdog = setTimeout(() => {
@@ -290,6 +453,7 @@ if (process.argv.includes('--self-test')) {
     app.exit(ok ? 0 : 1)
   })
 } else {
+  app.on('second-instance', () => showMainWindow())
   app.whenReady().then(() => {
     Menu.setApplicationMenu(null) // no default File/Edit/View menu — cleaner UI
 
@@ -402,9 +566,10 @@ if (process.argv.includes('--self-test')) {
     })
     registerIpc()
     createWindow()
+    createTray()
     initAutoUpdater(() => mainWindow)
     app.on('activate', () => {
-      if (BrowserWindow.getAllWindows().length === 0) createWindow()
+      showMainWindow()
     })
   })
 
@@ -430,6 +595,8 @@ if (process.argv.includes('--self-test')) {
   // autoInstallOnAppQuit can run).
   let quitPrepared = false
   app.on('before-quit', (event) => {
+    // Explicit quit (menu/tray/updater): don't block on the close guard.
+    allowWindowClose = true
     if (quitPrepared) return
     quitPrepared = true
     event.preventDefault()

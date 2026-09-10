@@ -21,11 +21,14 @@ const PRESETS: Preset[] = [
 export default function CreateGridModal({
   open,
   onClose,
-  onCreated
+  onCreated,
+  onSettled
 }: {
   open: boolean
   onClose: () => void
   onCreated?: (result: CreateGridResult) => void
+  /** Remote grids finish asynchronously; surfaces per-cell failures. */
+  onSettled?: (result: CreateGridResult) => void
 }) {
   const [rows, setRows] = useState(2)
   const [cols, setCols] = useState(2)
@@ -84,7 +87,8 @@ export default function CreateGridModal({
         broadcast:
           broadcast.trim() && broadcastOpen
             ? { command: broadcast.trim(), execute: broadcastExecute }
-            : undefined
+            : undefined,
+        onSettled: kind === 'remote' ? onSettled : undefined
       })
       onCreated?.(result)
       onClose()

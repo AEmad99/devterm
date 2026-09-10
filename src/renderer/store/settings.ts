@@ -8,6 +8,7 @@ import type {
   STTLanguage
 } from '@shared/types'
 import type { HotkeyId } from '../lib/hotkeys'
+import { applyTheme, getTheme } from '../lib/themes'
 
 /**
  * User-facing settings for terminals. Persisted to localStorage (renderer-only,
@@ -685,9 +686,10 @@ export const useSettings = create<SettingsState>((set, get) => ({
     }
     set(next)
     persist(next)
-    // The setter side-effects (push live auto-reconnect policy to main) won't
-    // fire when we `set()` directly; do it here so the imported reconnect
-    // policy takes effect on the SSH manager without a restart.
+    // The setter side-effects won't fire when we `set()` directly:
+    //  • repaint chrome for an imported theme (terminals already update live)
+    //  • push the imported reconnect policy to the SSH manager
+    applyTheme(getTheme(next.themeId))
     void window.devterm.ssh.setReconnectPolicy?.(next.autoReconnect).catch(() => undefined)
   },
 

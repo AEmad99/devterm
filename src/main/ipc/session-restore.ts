@@ -42,20 +42,36 @@ export function registerSessionRestoreIpc(): void {
         name: typeof g.name === 'string' && g.name.trim() ? g.name.trim() : 'Terminals',
         items: g.items.slice(0, 64).map((it) => ({
           id: String(it.id),
-          kind: it.kind === 'remote' ? ('remote' as const) : ('local' as const),
+          kind:
+            it.kind === 'remote' ? ('remote' as const) : it.kind === 'browser' ? ('browser' as const) : ('local' as const),
           connectionId: typeof it.connectionId === 'string' ? it.connectionId : undefined,
           cwd: typeof it.cwd === 'string' ? it.cwd : undefined,
-          title: typeof it.title === 'string' ? it.title : undefined
+          title: typeof it.title === 'string' ? it.title : undefined,
+          url: typeof it.url === 'string' ? it.url : undefined,
+          agentKind: typeof it.agentKind === 'string' ? it.agentKind : undefined,
+          agentUiMode: typeof it.agentUiMode === 'string' ? it.agentUiMode : undefined
         })),
         layout: g.layout ?? null
       }))
       .filter((g) => g.items.length > 0)
+    // Editors reference item ids within the same snapshot; keep them small.
+    const editors = Array.isArray(snap.editors)
+      ? snap.editors
+          .slice(0, 64)
+          .filter((ed) => ed && typeof ed.path === 'string')
+          .map((ed) => ({
+            scope: ed.scope === 'remote' ? ('remote' as const) : ('local' as const),
+            itemId: typeof ed.itemId === 'string' ? ed.itemId : undefined,
+            path: ed.path
+          }))
+      : undefined
     const cleaned: SessionRestoreSnapshot = {
       version: 1,
       savedAt: typeof snap.savedAt === 'number' ? snap.savedAt : Date.now(),
       groups,
       activeGroupIndex:
-        typeof snap.activeGroupIndex === 'number' ? snap.activeGroupIndex : undefined
+        typeof snap.activeGroupIndex === 'number' ? snap.activeGroupIndex : undefined,
+      editors: editors?.length ? editors : undefined
     }
     await writeSnapshot(cleaned)
   })

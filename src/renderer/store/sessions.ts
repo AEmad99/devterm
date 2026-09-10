@@ -100,6 +100,10 @@ export interface Session {
    * refocuses on it. Drives the green "needs attention" tab dot.
    */
   needsAttention?: boolean
+  /** True when the agent process has exited (bridge may still be up). */
+  agentExited?: boolean
+  /** Incremented to ask the mounted AgentPane to relaunch (restart button). */
+  agentRestartNonce?: number
   /** True when new output has arrived while this session was not active. */
   hasUnreadOutput?: boolean
   /** True when a command is running in this session (set on Enter, cleared on prompt/exit). */
@@ -185,6 +189,10 @@ interface SessionState {
   setNeedsAttention: (id: string, pending: boolean) => void
   /** Set / clear the "new output arrived while not active" badge. */
   setHasUnreadOutput: (id: string, unread: boolean) => void
+  /** Set / clear whether the agent process has exited for this session. */
+  setAgentExited: (id: string, exited: boolean) => void
+  /** Ask the mounted AgentPane for this session to relaunch the agent. */
+  bumpAgentRestart: (id: string) => void
   /** Set / clear whether a process is currently running in this session. */
   setProcessRunning: (id: string, running: boolean) => void
   /** Record the shell's last exit code. */
@@ -267,8 +275,19 @@ export const useSessions = create<SessionState>((set, get) => ({
             sessionId,
             `reconnecting… attempt ${st.attempt}/${st.maxAttempts} in ${Math.round(st.delayMs / 100) / 10}s`
           )
-        else if (st.type === 'reconnected')
+        else if (st.type === 'reconnected') {
+          // A successful auto-reconnect revives the session: clear the closed
+          // tombstone so the reconnect overlay, Open Agent, workspace capture,
+          // and session restore all treat it as live again.
+          set((s) => ({
+            sessions: s.sessions.map((x) =>
+              x.id === sessionId
+                ? { ...x, closed: false, processRunning: false, exitCode: undefined }
+                : x
+            )
+          }))
           get().setStatus(sessionId, `reconnected (attempt ${st.attempt})`)
+        }
         else if (st.type === 'reconnect-failed')
           get().setStatus(sessionId, `reconnect failed after ${st.attempts} attempts: ${st.reason}`)
       })
@@ -455,7 +474,8 @@ export const useSessions = create<SessionState>((set, get) => ({
                   agentPtyId: undefined,
                   agentPolicyMode: undefined,
                   agentTask: undefined,
-                  agentBridgeState: undefined
+                  agentBridgeState: undefined,
+                  agentExited: undefined
                 }
               : x
           )
@@ -482,7 +502,9 @@ export const useSessions = create<SessionState>((set, get) => ({
                 agentUiMode: nextMode,
                 agentPtyId: nextPty,
                 agentKind: nextKind,
-                agentPolicyMode: nextPolicy
+                agentPolicyMode: nextPolicy,
+                // A fresh open/reattach clears a prior exited marker.
+                agentExited: patch.ptyId !== undefined ? false : x.agentExited
               }
             : x
         )
@@ -555,6 +577,22 @@ export const useSessions = create<SessionState>((set, get) => ({
         sessions: s.sessions.map((x) => (x.id === id ? { ...x, processRunning: running } : x))
       }
     }),
+
+  setAgentExited: (id, exited) =>
+    set((s) => {
+      const cur = s.sessions.find((x) => x.id === id)
+      if (!cur || !!cur.agentExited === exited) return s
+      return {
+        sessions: s.sessions.map((x) => (x.id === id ? { ...x, agentExited: exited } : x))
+      }
+    }),
+
+  bumpAgentRestart: (id) =>
+    set((s) => ({
+      sessions: s.sessions.map((x) =>
+        x.id === id ? { ...x, agentRestartNonce: (x.agentRestartNonce ?? 0) + 1 } : x
+      )
+    })),
 
   setExitCode: (id, code) =>
     set((s) => {

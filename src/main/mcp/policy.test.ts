@@ -196,11 +196,13 @@ describe('Policy PRE-CHECK via rule matcher', () => {
     assert.match(v.reason ?? '', /denied by approval rule/)
   })
 
-  it('an ask rule falls through to the mode-based decision', async () => {
-    // ask → falls through to mode verdict (here: read_only blocks the destructive cmd)
-    const p = new Policy('read_only', async () => ({ outcome: 'ask' }))
-    const v = await p.evaluateCommandAsync('sess1', 'rm -rf /')
-    assert.strictEqual(v.allow, false)
+  it('an ask rule forces a confirmation even under full mode', async () => {
+    // ask → explicit operator confirmation, regardless of the host policy mode.
+    const p = new Policy('full', async () => ({ outcome: 'ask' }))
+    const v = await p.evaluateCommandAsync('sess1', 'ls')
+    assert.strictEqual(v.allow, true)
+    assert.strictEqual(v.needConfirm, true)
+    assert.match(v.reason ?? '', /approval rule/)
   })
 
   it('no rule (undefined matcher) → mode-based decision', async () => {

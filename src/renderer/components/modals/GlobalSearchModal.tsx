@@ -10,7 +10,7 @@ import { useSessions } from '../../store/sessions'
 interface Props {
   isOpen: boolean
   onClose: () => void
-  onJump: (sessionId: string, line: number) => void
+  onJump: (sessionId: string, line: number, totalLines?: number) => void
 }
 
 export const GlobalSearchModal: React.FC<Props> = ({ isOpen, onClose, onJump }) => {
@@ -18,6 +18,8 @@ export const GlobalSearchModal: React.FC<Props> = ({ isOpen, onClose, onJump }) 
   const [results, setResults] = useState<SearchResult[]>([])
   const [loading, setLoading] = useState(false)
   const [failed, setFailed] = useState(false)
+  const [sel, setSel] = useState(0)
+  const listRef = useRef<HTMLDivElement>(null)
   // Bumped on every search so a slower earlier query can't overwrite the
   // results of a newer one (same pattern as FileExplorer's loadGen).
   const searchGen = useRef(0)
@@ -34,8 +36,31 @@ export const GlobalSearchModal: React.FC<Props> = ({ isOpen, onClose, onJump }) 
       setQuery('')
       setResults([])
       setFailed(false)
+      setSel(0)
     }
   }, [isOpen])
+
+  // Reset the keyboard selection when a new result set arrives.
+  useEffect(() => {
+    setSel(0)
+  }, [results])
+
+  // Esc must close even after focus moves to a result (window-level listener).
+  useEffect(() => {
+    if (!isOpen) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [isOpen, onClose])
+
+  // Keep the selected row visible while arrowing through results.
+  useEffect(() => {
+    listRef.current
+      ?.querySelector<HTMLElement>('[data-selected="true"]')
+      ?.scrollIntoView({ block: 'nearest' })
+  }, [sel])
 
   const runSearch = async (q: string) => {
     const gen = ++searchGen.current
@@ -78,7 +103,19 @@ export const GlobalSearchModal: React.FC<Props> = ({ isOpen, onClose, onJump }) 
             placeholder="Search across all terminals..."
             className="palette-input"
             onKeyDown={(e) => {
-              if (e.key === 'Escape') onClose()
+              if (e.key === 'Escape') {
+                onClose()
+              } else if (e.key === 'ArrowDown') {
+                e.preventDefault()
+                setSel((s) => Math.min(results.length - 1, s + 1))
+              } else if (e.key === 'ArrowUp') {
+                e.preventDefault()
+                setSel((s) => Math.max(0, s - 1))
+              } else if (e.key === 'Enter' && results[sel]) {
+                e.preventDefault()
+                onJump(results[sel].sessionId, results[sel].lineNumber, results[sel].totalLines)
+                onClose()
+              }
             }}
           />
           <button onClick={onClose} className="gsearch-esc" title="Close">
@@ -86,7 +123,7 @@ export const GlobalSearchModal: React.FC<Props> = ({ isOpen, onClose, onJump }) 
           </button>
         </div>
 
-        <div className="gsearch-list">
+        <div className="gsearch-list" ref={listRef} role="listbox" aria-label="Search results">
           {loading && <div className="gsearch-state">Searching…</div>}
           {!loading && failed && <div className="gsearch-state">Search failed — try again.</div>}
           {!loading && !failed && results.length === 0 && query.trim() !== '' && (
@@ -95,11 +132,15 @@ export const GlobalSearchModal: React.FC<Props> = ({ isOpen, onClose, onJump }) 
           {results.map((r, idx) => (
             <button
               key={`${r.sessionId}:${r.lineNumber}:${idx}`}
+              role="option"
+              aria-selected={idx === sel}
+              data-selected={idx === sel}
+              onMouseEnter={() => setSel(idx)}
               onClick={() => {
-                onJump(r.sessionId, r.lineNumber)
+                onJump(r.sessionId, r.lineNumber, r.totalLines)
                 onClose()
               }}
-              className="gsearch-row"
+              className={`gsearch-row${idx === sel ? ' is-selected' : ''}`}
             >
               <div className="gsearch-row-meta">
                 <span>{rowTitle(r)}</span>

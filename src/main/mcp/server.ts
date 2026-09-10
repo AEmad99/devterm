@@ -154,13 +154,21 @@ export class McpBridge {
         const t0 = Date.now()
         try {
           const result = await cb(args, extra)
+          // Tools report expected failures as `isError` results instead of
+          // throwing (guardrail denials, timeouts, failed commands). Treat
+          // those as errors in the activity log so the Errors filter and the
+          // tab status actually reflect them.
+          const failed =
+            !!result &&
+            typeof result === 'object' &&
+            (result as { isError?: boolean }).isError === true
           recordBridgeActivity({
             sessionId: this.deps.sessionId,
             kind: 'tool_call',
             tool: name,
             detail: sanitizeDetail(flattenArgs(args)),
             durationMs: Date.now() - t0,
-            ok: true
+            ok: !failed
           })
           return result
         } catch (err) {
