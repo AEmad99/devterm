@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import type { GitScope } from './GitPanel'
 import ModalShell from '../common/ModalShell'
+import Button from '../common/Button'
+import ModalFooter from '../common/ModalFooter'
 
 /** Create a new tag at HEAD (or a specified ref). Annotated when a message is provided. */
 export default function NewTagModal({
@@ -48,15 +50,14 @@ export default function NewTagModal({
       title="New tag"
       size="md"
       footer={
-        <>
-          <span className="spacer" />
-          <button className="ghost" onClick={onClose} disabled={busy}>
+        <ModalFooter>
+          <Button variant="ghost" onClick={onClose} disabled={busy}>
             Cancel
-          </button>
-          <button className="primary" onClick={submit} disabled={busy}>
+          </Button>
+          <Button variant="primary" onClick={submit} busy={busy}>
             Create
-          </button>
-        </>
+          </Button>
+        </ModalFooter>
       }
     >
       <label className="git-field">

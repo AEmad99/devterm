@@ -13,6 +13,7 @@ import NewRemoteModal from './NewRemoteModal'
 import NewTagModal from './NewTagModal'
 import { IconBranch, IconCommit, IconHistory, IconPull, IconStash, IconTag } from './GitIcons'
 import { IconRefresh } from '../common/Icons'
+import Button from '../common/Button'
 
 /** A scope is the resolved target for git commands — either a local cwd or
  *  the cwd of an open remote SSH session. The panel never asks the user for
@@ -142,9 +143,9 @@ export default function GitPanel({ className = '' }: { className?: string }) {
           </span>
         )}
         <span className="spacer" />
-        <button className="git-icon-btn" title="Refresh" onClick={refresh} aria-label="Refresh">
+        <Button variant="icon" title="Refresh" onClick={refresh} aria-label="Refresh">
           <IconRefresh size={14} />
-        </button>
+        </Button>
       </div>
 
       {!status ? (
@@ -182,9 +183,9 @@ export default function GitPanel({ className = '' }: { className?: string }) {
           {error && (
             <div className="git-panel-error" role="alert">
               <pre>{error}</pre>
-              <button onClick={() => setError(null)} aria-label="Dismiss">
+              <Button variant="icon" size="xs" onClick={() => setError(null)} aria-label="Dismiss">
                 ×
-              </button>
+              </Button>
             </div>
           )}
 

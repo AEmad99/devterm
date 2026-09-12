@@ -5,6 +5,8 @@ import { useEditors } from '../../store/editors'
 import { localFsApi, remoteFsApi, type FsApi } from '../../lib/fsapi'
 import FileTree, { type FileTreeHandle, type Selection } from './FileTree'
 import FileMutationDialog, { type FileMutationKind } from './FileMutationDialog'
+import FileFilterSortBar, { useFileSortPrefs } from './FileFilterSortBar'
+import { filterFileEntries, sortFileEntries } from '../../lib/file-sort'
 import { useEscapeKey } from '../../lib/useEscapeKey'
 import {
   IconLocal,
@@ -16,9 +18,7 @@ import {
   IconPlus,
   IconEdit,
   IconTrash,
-  IconDiff,
-  IconSearch,
-  IconClose
+  IconDiff
 } from '../common/Icons'
 
 /** Strip a trailing path separator. */
@@ -80,8 +80,11 @@ export default function FileExplorer() {
   // non-repo". The state is per-session/per-path so navigating away clears it
   // and re-entering kicks off a fresh fetch.
   const [gitStatus, setGitStatus] = useState<GitStatus | null>(null)
-  // Fuzzy search state — opened by pressing `/` while the tree is focused.
-  const [search, setSearch] = useState<{ q: string; match: string | null } | null>(null)
+  // Filter-as-you-type query plus the persisted sort prefs (shared with the
+  // SFTP panes via localStorage). `/` focuses the filter input.
+  const [filter, setFilter] = useState('')
+  const [sort, setSort] = useFileSortPrefs()
+  const filterRef = useRef<HTMLInputElement>(null)
 
   const load = useCallback(
     async (path?: string) => {
@@ -219,30 +222,23 @@ export default function FileExplorer() {
   const closeDiff = useCallback(() => setDiffResult(null), [])
   useEscapeKey(closeDiff, diffResult !== null)
 
-  // Fuzzy match: open with `/` from the tree, type a substring, Enter focuses
-  // the match. Case-insensitive "every query char appears in order in the
-  // name" — tiny by design, no third-party fuzzer.
-  const fuzzyMatch = useCallback((name: string, q: string): boolean => {
-    if (!q) return true
-    const n = name.toLowerCase()
-    let i = 0
-    for (const ch of q.toLowerCase()) {
-      const found = n.indexOf(ch, i)
-      if (found === -1) return false
-      i = found + 1
-    }
-    return true
-  }, [])
+  // Root entries as the tree shows them (sorted + filtered) — drives the
+  // match count and Enter-to-open-first-match. FileTree applies the same
+  // transform itself at every level for rendering.
+  const visibleRoot = useMemo(
+    () => filterFileEntries(sortFileEntries(listing?.entries ?? [], sort), filter),
+    [listing?.entries, sort, filter]
+  )
 
-  // Recompute the highlighted match path whenever the query or the listing
-  // changes. We pick the first visible entry (top-down, dirs first) whose
-  // name matches; null means no hit.
-  const searchQuery = search?.q ?? null
-  useEffect(() => {
-    if (!searchQuery) return
-    const hit = listing?.entries.find((e) => fuzzyMatch(e.name, searchQuery))
-    setSearch((cur) => (cur ? { ...cur, match: hit ? hit.path : null } : cur))
-  }, [searchQuery, listing?.entries, fuzzyMatch])
+  const openFirstMatch = () => {
+    const match = visibleRoot[0]
+    if (!match) return
+    if (match.isDir) void treeRef.current?.openDir(match.path)
+    else {
+      setSel(match)
+      openEntryEditor(match)
+    }
+  }
 
   const refreshDir = async (dir: string) => {
     if (listing && samePath(dir, listing.path)) await load(listing.path)
@@ -281,38 +277,18 @@ export default function FileExplorer() {
     }
   }
 
-  // `/` opens the in-tree search, Esc cancels it. The handler is on the
-  // explorer's root container so it fires only when the explorer (or a
-  // descendant) has focus — never while typing into the editor or terminal.
+  // `/` focuses the filter input. The handler is on the explorer's root
+  // container so it fires only when the explorer (or a descendant) has
+  // focus — never while typing into the editor or terminal. (Enter/Esc
+  // inside the filter are handled by the filter input itself.)
   const onExplorerKey = (e: React.KeyboardEvent) => {
-    if (e.key === 'Escape' && search) {
-      e.preventDefault()
-      setSearch(null)
-      return
-    }
-    if (e.key === 'Enter' && search && search.match) {
-      e.preventDefault()
-      const match = listing?.entries.find((x) => x.path === search.match)
-      if (match) {
-        if (match.isDir) {
-          // Open the directory so the user can drill in.
-          void treeRef.current?.openDir(match.path)
-        } else {
-          // Focus the file: select it, then open in editor.
-          setSel(match)
-          openEntryEditor(match)
-        }
-      }
-      setSearch(null)
-      return
-    }
-    if (e.key === '/' && !search) {
-      // Don't hijack the slash when the user is typing into the path input.
-      const tag = (e.target as HTMLElement | null)?.tagName
-      if (tag === 'INPUT' || tag === 'TEXTAREA') return
-      e.preventDefault()
-      setSearch({ q: '', match: null })
-    }
+    if (e.key !== '/') return
+    // Don't hijack the slash when the user is typing into an input.
+    const tag = (e.target as HTMLElement | null)?.tagName
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
+    e.preventDefault()
+    filterRef.current?.focus()
+    filterRef.current?.select()
   }
 
   if (isPending || isBrowser) {
@@ -418,6 +394,16 @@ export default function FileExplorer() {
           />
         </form>
       </div>
+      <FileFilterSortBar
+        query={filter}
+        onQueryChange={setFilter}
+        sort={sort}
+        onSortChange={setSort}
+        total={listing?.entries.length ?? 0}
+        shown={visibleRoot.length}
+        inputRef={filterRef}
+        onEnterFirst={openFirstMatch}
+      />
       {err && <div className="explorer-error">{err}</div>}
       <div
         className={`explorer-list ${dropActive ? 'drop-target' : ''}`}
@@ -464,42 +450,12 @@ export default function FileExplorer() {
             onMultiSelect={setMultiSel}
             onActivateFile={openEntryEditor}
             onActivateDir={(e) => load(e.path)}
+            sort={sort}
+            filterQuery={filter}
           />
         )}
         {listing && listing.entries.length === 0 && <div className="explorer-empty">(empty)</div>}
         {!listing && !err && <div className="explorer-empty">loading…</div>}
-        {search && (
-          <div className="explorer-search">
-            <IconSearch size={12} />
-            <input
-              autoFocus
-              value={search.q}
-              placeholder="find file…"
-              onChange={(e) => setSearch({ ...search, q: e.target.value })}
-              onKeyDown={(e) => {
-                if (e.key === 'Escape') {
-                  e.preventDefault()
-                  setSearch(null)
-                } else if (e.key === 'Enter') {
-                  e.preventDefault()
-                  const match = listing?.entries.find((x) => x.path === search.match)
-                  if (match) {
-                    if (match.isDir) void treeRef.current?.openDir(match.path)
-                    else {
-                      setSel(match)
-                      openEntryEditor(match)
-                    }
-                  }
-                  setSearch(null)
-                }
-              }}
-            />
-            <span className="explorer-search-hint">{search.match ? '↵ to open' : 'no match'}</span>
-            <button className="icon-btn" title="Close search" onClick={() => setSearch(null)}>
-              <IconClose size={12} />
-            </button>
-          </div>
-        )}
       </div>
 
       {dialog && (

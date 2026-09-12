@@ -3,6 +3,7 @@ import { useMemo, useState } from 'react'
 import type { AgentKind, PolicyMode } from '@shared/types'
 import { useSettings } from './store/settings'
 import { applyTheme, getTheme } from './lib/themes'
+import { applyDensity } from './lib/density'
 import AgentPane from './components/agent/AgentPane'
 import ConfirmActionModal from './components/modals/ConfirmActionModal'
 import { agentKindLabel, setAgentUiMode, stopAgent } from './lib/agent-ui'
@@ -10,6 +11,7 @@ import './styles.css'
 import '@xterm/xterm/css/xterm.css'
 
 applyTheme(getTheme(useSettings.getState().themeId))
+applyDensity(useSettings.getState().density)
 
 function parseParams(): {
   sessionId: string

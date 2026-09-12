@@ -3,6 +3,8 @@
 // click. Hidden entirely when dictation is disabled in settings.
 
 import { IconMic } from '../common/Icons'
+import Button from '../common/Button'
+import Tooltip from '../common/Tooltip'
 import { useDictation } from '../../store/dictation'
 import { useSettings } from '../../store/settings'
 import { dictation } from '../../lib/stt/dictation'
@@ -21,34 +23,31 @@ export default function MicButton({ hotkey }: MicButtonProps) {
   const recording = status === 'recording'
   const busy = status === 'loading' || status === 'transcribing' || status === 'requesting-mic'
 
-  let title: string
+  let tip: string
   switch (status) {
     case 'recording':
-      title = 'Stop dictation and transcribe'
+      tip = 'Stop dictation and transcribe'
       break
     case 'loading':
-      title =
+      tip =
         progress != null
           ? `Downloading speech model… ${Math.round(progress * 100)}%`
           : 'Loading speech model…'
       break
     case 'transcribing':
-      title = 'Transcribing…'
+      tip = 'Transcribing…'
       break
     case 'requesting-mic':
-      title = 'Waiting for microphone…'
+      tip = 'Waiting for microphone…'
       break
     case 'error':
-      title = error ?? 'Dictation error'
+      tip = error ?? 'Dictation error'
       break
     default:
-      title =
-        (hotkey ? `Dictate (${hotkey})` : 'Dictate') +
-        (backend ? ` · ${backend === 'webgpu' ? 'GPU' : 'CPU'}` : '')
+      tip = 'Dictate' + (backend ? ` · ${backend === 'webgpu' ? 'GPU' : 'CPU'}` : '')
   }
 
   const cls = [
-    'settings-btn',
     'mic-btn',
     recording ? 'recording' : '',
     busy ? 'busy' : '',
@@ -58,14 +57,16 @@ export default function MicButton({ hotkey }: MicButtonProps) {
     .join(' ')
 
   return (
-    <button
-      className={cls}
-      title={title}
-      aria-pressed={recording}
-      aria-label="Voice dictation"
-      onClick={() => void dictation.toggle()}
-    >
-      <IconMic size={17} />
-    </button>
+    <Tooltip tip={tip} hotkey={status === 'idle' ? hotkey : undefined} pos="bottom">
+      <Button
+        variant="icon"
+        className={cls}
+        active={recording}
+        aria-label="Voice dictation"
+        onClick={() => void dictation.toggle()}
+      >
+        <IconMic size={17} />
+      </Button>
+    </Tooltip>
   )
 }

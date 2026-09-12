@@ -3,6 +3,7 @@ import type { GitBranch, GitBranches, GitCommandResult } from '@shared/types'
 import type { GitScope } from './GitPanel'
 import { IconPlus, IconTrash } from '../common/Icons'
 import { IconBranch, IconPull, IconPush } from './GitIcons'
+import Button from '../common/Button'
 import ConfirmDialog from '../common/ConfirmDialog'
 
 /**
@@ -126,10 +127,10 @@ export default function GitBranchesPanel({
           <span className="git-section-title">Local</span>
           <span className="git-section-count">{locals.length}</span>
           <span className="spacer" />
-          <button className="git-mini" onClick={onNewBranch} title="New branch">
+          <Button size="xs" onClick={onNewBranch} title="New branch">
             <IconPlus size={12} />
             <span>New</span>
-          </button>
+          </Button>
         </div>
         <div className="git-section-body">
           {locals.length === 0 && <div className="git-row-empty">no local branches</div>}
@@ -251,8 +252,9 @@ function BranchRow({
       {branch.behind > 0 && <span className="git-behind">↓{branch.behind}</span>}
       <span className="spacer" />
       {!branch.current && branch.behind > 0 && (
-        <button
-          className="git-icon-btn small"
+        <Button
+          variant="icon"
+          size="xs"
           disabled={busy}
           onClick={(e) => {
             e.stopPropagation()
@@ -262,11 +264,12 @@ function BranchRow({
           aria-label="Pull"
         >
           <IconPull size={12} />
-        </button>
+        </Button>
       )}
       {!branch.current && branch.ahead > 0 && (
-        <button
-          className="git-icon-btn small"
+        <Button
+          variant="icon"
+          size="xs"
           disabled={busy}
           onClick={(e) => {
             e.stopPropagation()
@@ -276,11 +279,13 @@ function BranchRow({
           aria-label="Push"
         >
           <IconPush size={12} />
-        </button>
+        </Button>
       )}
       {!branch.current && (
-        <button
-          className="git-icon-btn small danger"
+        <Button
+          variant="icon"
+          size="xs"
+          className="git-danger"
           disabled={busy}
           onClick={(e) => {
             e.stopPropagation()
@@ -290,7 +295,7 @@ function BranchRow({
           aria-label="Delete"
         >
           <IconTrash size={12} />
-        </button>
+        </Button>
       )}
     </div>
   )
@@ -326,33 +331,37 @@ function RemoteRow({
         {branch.name}
       </button>
       <span className="spacer" />
-      <button
-        className="git-icon-btn small"
+      <Button
+        variant="icon"
+        size="xs"
         onClick={onFetchRemote}
         disabled={busy}
         title={`Fetch ${remote}`}
         aria-label="Fetch"
       >
         <IconPull size={12} />
-      </button>
-      <button
-        className="git-icon-btn small"
+      </Button>
+      <Button
+        variant="icon"
+        size="xs"
         onClick={onMerge}
         disabled={busy}
         title={`Merge ${branch.name} into current branch`}
         aria-label="Merge"
       >
         <IconMergeIcon size={12} />
-      </button>
-      <button
-        className="git-icon-btn small danger"
+      </Button>
+      <Button
+        variant="icon"
+        size="xs"
+        className="git-danger"
         onClick={() => onDelete()}
         disabled={busy}
         title="Delete remote-tracking branch (local)"
         aria-label="Delete"
       >
         <IconTrash size={12} />
-      </button>
+      </Button>
     </div>
   )
 }

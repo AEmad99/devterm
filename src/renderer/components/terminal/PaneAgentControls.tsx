@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import type { AgentKind } from '@shared/types'
+import type { AgentKind, AgentUiMode } from '@shared/types'
 import type { Session } from '../../store/sessions'
 import { useSessions } from '../../store/sessions'
 import { useSettings } from '../../store/settings'
@@ -14,6 +14,7 @@ import {
 } from '../../lib/agent-ui'
 import { agentKindIcon } from '../../lib/agent-icons'
 import { useEscapeKey } from '../../lib/useEscapeKey'
+import Tooltip from '../common/Tooltip'
 import {
   IconAgent,
   IconAgentFloat,
@@ -21,6 +22,7 @@ import {
   IconAgentShow,
   IconAgentStop,
   IconChevron,
+  IconEye,
   IconRefresh
 } from '../common/Icons'
 
@@ -73,20 +75,36 @@ export default function PaneAgentControls({ session }: { session: Session }) {
     stopAgent(session.id)
   }, [session.id])
 
-  const onHide = useCallback(() => {
-    void setAgentUiMode(session.id, 'hidden', { kind })
-  }, [session.id, kind])
+  const label = agentKindLabel(kind)
+  const pending = !!session.agentPendingApproval
 
-  const onDock = useCallback(() => {
+  const onReview = useCallback(() => {
+    // Bring the agent into view (docked) and open the activity panel so the
+    // operator sees what the agent is waiting on. The approval modal itself
+    // renders globally when the request is not snoozed.
+    const settings = useSettings.getState()
+    settings.setTransfersPanelOpen(false)
+    settings.setAgentActivityCollapsed(false)
     void setAgentUiMode(session.id, 'docked', { kind, title: hostTitle })
   }, [session.id, kind, hostTitle])
 
-  const onFloat = useCallback(() => {
-    void setAgentUiMode(session.id, 'floating', { kind, title: hostTitle })
-  }, [session.id, kind, hostTitle])
+  const launchTip = !canStart
+    ? session.kind === 'remote'
+      ? 'Connect the SSH session first'
+      : 'This terminal is closed'
+    : `Open ${label}`
+  const statusTip =
+    agentUiMode === 'floating'
+      ? `${label} is in a floating window`
+      : agentUiMode === 'hidden'
+        ? `${label} is running hidden`
+        : `${label} is running`
 
-  const label = agentKindLabel(kind)
-  const pending = !!session.agentPendingApproval
+  const MODES: { id: AgentUiMode; tip: string; icon: typeof IconAgentShow }[] = [
+    { id: 'docked', tip: 'Dock the agent into this pane', icon: IconAgentShow },
+    { id: 'hidden', tip: 'Hide the agent; keep it running', icon: IconAgentHide },
+    { id: 'floating', tip: 'Pop the agent out into a floating window', icon: IconAgentFloat }
+  ]
 
   return (
     <div
@@ -96,107 +114,93 @@ export default function PaneAgentControls({ session }: { session: Session }) {
     >
       {!agentAlive ? (
         <div className="pane-agent-launch">
-          <button
-            type="button"
-            className="pane-agent-open"
-            disabled={!canStart}
-            title={
-              !canStart
-                ? session.kind === 'remote'
-                  ? 'Connect the SSH session first'
-                  : 'This terminal is closed'
-                : `Open ${label}`
-            }
-            aria-label={
-              !canStart
-                ? session.kind === 'remote'
-                  ? 'Connect the SSH session first'
-                  : 'This terminal is closed'
-                : `Open ${label}`
-            }
-            onClick={startDocked}
-          >
-            <IconAgent size={14} />
-          </button>
-          <button
-            ref={kindBtnRef}
-            type="button"
-            className="pane-agent-kind"
-            disabled={!canStart}
-            aria-haspopup="menu"
-            aria-expanded={menuOpen}
-            title={`${label} — click to switch agent`}
-            onClick={() => setMenuOpen((v) => !v)}
-          >
-            <KindMark kind={kind} />
-            <IconChevron size={10} />
-          </button>
+          <Tooltip tip={launchTip} pos="bottom">
+            <button
+              type="button"
+              className="pane-agent-open"
+              disabled={!canStart}
+              aria-label={launchTip}
+              onClick={startDocked}
+            >
+              <IconAgent size={14} />
+            </button>
+          </Tooltip>
+          <Tooltip tip={`${label} — click to switch agent`} pos="bottom">
+            <button
+              ref={kindBtnRef}
+              type="button"
+              className="pane-agent-kind"
+              disabled={!canStart}
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
+              aria-label={`${label} — click to switch agent`}
+              onClick={() => setMenuOpen((v) => !v)}
+            >
+              <KindMark kind={kind} />
+              <IconChevron size={10} />
+            </button>
+          </Tooltip>
         </div>
       ) : (
         <div className="pane-agent-live">
-          <span
-            className="pane-agent-status"
-            title={
-              agentUiMode === 'floating'
-                ? `${label} is in a floating window`
-                : agentUiMode === 'hidden'
-                  ? `${label} is running hidden`
-                  : `${label} is running`
-            }
-          >
-            <IconAgent size={14} />
-            <KindMark kind={kind} />
-          </span>
-          {agentUiMode === 'docked' ? (
-            <button
-              type="button"
-              className="pane-agent-btn"
-              title="Hide the agent; keep it running"
-              onClick={onHide}
-            >
-              <IconAgentHide size={14} />
-            </button>
-          ) : (
-            <button
-              type="button"
-              className="pane-agent-btn"
-              title={
-                agentUiMode === 'floating'
-                  ? 'Dock the agent back into this pane'
-                  : 'Show the agent in this pane'
-              }
-              onClick={onDock}
-            >
-              <IconAgentShow size={14} />
-            </button>
+          <Tooltip tip={statusTip} pos="bottom">
+            <span className="pane-agent-status">
+              <IconAgent size={14} />
+              <KindMark kind={kind} />
+            </span>
+          </Tooltip>
+          {pending && (
+            <Tooltip tip="Review the pending approval request" pos="bottom">
+              <button
+                type="button"
+                className="pane-agent-btn pane-agent-review"
+                aria-label="Review the pending approval request"
+                onClick={onReview}
+              >
+                <IconEye size={14} />
+              </button>
+            </Tooltip>
           )}
-          {agentUiMode !== 'floating' && (
+          <div className="pane-agent-seg" role="group" aria-label="Agent placement">
+            {MODES.map((m) => {
+              const Icon = m.icon
+              return (
+                <Tooltip key={m.id} tip={m.tip} pos="bottom">
+                  <button
+                    type="button"
+                    className={`pane-agent-btn seg${agentUiMode === m.id ? ' active' : ''}`}
+                    aria-label={m.tip}
+                    aria-pressed={agentUiMode === m.id}
+                    onClick={() =>
+                      void setAgentUiMode(session.id, m.id, { kind, title: hostTitle })
+                    }
+                  >
+                    <Icon size={13} />
+                  </button>
+                </Tooltip>
+              )
+            })}
+          </div>
+          <Tooltip tip={`Restart ${label} (fresh process + bridge)`} pos="bottom">
             <button
               type="button"
               className="pane-agent-btn"
-              title="Pop the agent out into a floating window"
-              onClick={onFloat}
+              aria-label={`Restart ${label}`}
+              onClick={() => restartAgent(session.id)}
             >
-              <IconAgentFloat size={14} />
+              <IconRefresh size={13} />
             </button>
-          )}
-          <button
-            type="button"
-            className="pane-agent-btn"
-            title={`Restart ${label} (fresh process + bridge)`}
-            onClick={() => restartAgent(session.id)}
-          >
-            <IconRefresh size={13} />
-          </button>
-          <button
-            type="button"
-            className="pane-agent-btn pane-agent-stop"
-            title={`Stop ${label}`}
-            onClick={onStop}
-          >
-            <IconAgentStop size={12} />
-            {pending && <span className="pane-agent-pending" />}
-          </button>
+          </Tooltip>
+          <Tooltip tip={`Stop ${label}`} pos="bottom">
+            <button
+              type="button"
+              className="pane-agent-btn pane-agent-stop"
+              aria-label={`Stop ${label}`}
+              onClick={onStop}
+            >
+              <IconAgentStop size={12} />
+            </button>
+          </Tooltip>
         </div>
       )}
       {menuOpen && (

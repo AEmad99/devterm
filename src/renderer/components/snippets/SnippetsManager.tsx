@@ -1,12 +1,14 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { Snippet } from '@shared/types'
 import { runInActive } from '../../lib/input'
 import { applyPlaceholders, extractPlaceholders } from '../../lib/snippets'
+import { useSettings } from '../../store/settings'
+import { toast } from '../../store/toasts'
 import SnippetForm from './SnippetForm'
-import ManagerList from '../common/ManagerList'
+import ManagerList, { ManagerSkeleton } from '../common/ManagerList'
 import ManagerRow from '../common/ManagerRow'
 import Button from '../common/Button'
-import { IconKeyboard, IconPlus, IconConnect, IconEdit, IconTrash } from '../common/Icons'
+import { IconKeyboard, IconPlus, IconConnect, IconEdit, IconTrash, IconPin } from '../common/Icons'
 
 /**
  * Full-pane manager for saved command snippets — its own top-level tab. Lists
@@ -15,7 +17,10 @@ import { IconKeyboard, IconPlus, IconConnect, IconEdit, IconTrash } from '../com
  * {{placeholders}}) pop a small prompt for their values, then run/insert.
  */
 export default function SnippetsManager({ onRun }: { onRun?: () => void }) {
+  const pinned = useSettings((s) => s.pinned.snippets)
+  const togglePin = useSettings((s) => s.togglePin)
   const [list, setList] = useState<Snippet[]>([])
+  const [loading, setLoading] = useState(true)
   const [editing, setEditing] = useState<Snippet | null>(null)
   const [creating, setCreating] = useState(false)
   // A parameterised snippet awaiting placeholder values before it runs/inserts.
@@ -23,13 +28,30 @@ export default function SnippetsManager({ onRun }: { onRun?: () => void }) {
   const [values, setValues] = useState<Record<string, string>>({})
   const [error, setError] = useState<string | null>(null)
 
-  const refresh = () => window.devterm.snippets.list().then(setList)
+  const refresh = async () => {
+    setList(await window.devterm.snippets.list())
+    setLoading(false)
+  }
   useEffect(() => {
-    refresh()
-    return window.devterm.settingsIo.onImported(refresh)
+    void refresh()
+    return window.devterm.settingsIo.onImported(() => void refresh())
   }, [])
 
-  const del = async (id: string) => setList(await window.devterm.snippets.delete(id))
+  const ordered = useMemo(() => {
+    const pinIndex = new Map(pinned.map((id, i) => [id, i]))
+    return [...list].sort((a, b) => {
+      const pa = pinIndex.has(a.id) ? 0 : 1
+      const pb = pinIndex.has(b.id) ? 0 : 1
+      if (pa !== pb) return pa - pb
+      if (pa === 0) return (pinIndex.get(a.id) ?? 0) - (pinIndex.get(b.id) ?? 0)
+      return a.name.localeCompare(b.name)
+    })
+  }, [list, pinned])
+
+  const del = async (s: Snippet) => {
+    setList(await window.devterm.snippets.delete(s.id))
+    toast(`Deleted “${s.name}”`, 'ok')
+  }
 
   // Send a fully-resolved command to the active terminal, or warn if there's none.
   const dispatch = (command: string, execute: boolean) => {
@@ -71,48 +93,72 @@ export default function SnippetsManager({ onRun }: { onRun?: () => void }) {
         </div>
       )}
 
-      {list.length === 0 ? (
+      {loading ? (
+        <ManagerSkeleton />
+      ) : list.length === 0 ? (
         <div className="manager-empty">
-          No snippets yet. Click “＋ New snippet” to add one. Press <kbd>Ctrl/Cmd+K</kbd> anywhere
-          to run a snippet or pick from your recent commands.
+          No snippets yet. Press <kbd>Ctrl/Cmd+K</kbd> anywhere to run a snippet or pick from your
+          recent commands.
+          <div className="manager-empty-actions">
+            <Button variant="primary" onClick={() => setCreating(true)}>
+              <IconPlus size={15} />
+              New snippet
+            </Button>
+          </div>
         </div>
       ) : (
         <ManagerList>
-          {list.map((s) => (
-            <ManagerRow
-              key={s.id}
-              icon={<IconKeyboard size={19} />}
-              title={s.name}
-              subtitle={
-                <>
-                  <span className="sn-mono">{s.command}</span>
-                  {s.description && (
-                    <>
-                      <br />
-                      {s.description}
-                    </>
-                  )}
-                </>
-              }
-              actions={
-                <>
+          {ordered.map((s) => {
+            const isPinned = pinned.includes(s.id)
+            return (
+              <ManagerRow
+                key={s.id}
+                className={isPinned ? 'is-pinned' : ''}
+                icon={<IconKeyboard size={19} />}
+                title={s.name}
+                subtitle={
+                  <>
+                    <span className="sn-mono">{s.command}</span>
+                    {s.description && (
+                      <>
+                        <br />
+                        {s.description}
+                      </>
+                    )}
+                  </>
+                }
+                onDoubleClick={() => run(s, true)}
+                actions={
                   <Button variant="primary" onClick={() => run(s, true)}>
                     <IconConnect size={14} />
                     Run
                   </Button>
-                  <Button onClick={() => run(s, false)}>Insert</Button>
-                  <Button onClick={() => setEditing(s)}>
-                    <IconEdit size={14} />
-                    Edit
-                  </Button>
-                  <Button variant="danger" onClick={() => del(s.id)}>
-                    <IconTrash size={14} />
-                    Delete
-                  </Button>
-                </>
-              }
-            />
-          ))}
+                }
+                secondaryActions={
+                  <>
+                    <Button
+                      variant="icon"
+                      active={isPinned}
+                      onClick={() => togglePin('snippets', s.id)}
+                      title={isPinned ? 'Unpin from top' : 'Pin to top'}
+                      aria-label={isPinned ? `Unpin ${s.name}` : `Pin ${s.name}`}
+                    >
+                      <IconPin size={14} />
+                    </Button>
+                    <Button onClick={() => run(s, false)}>Insert</Button>
+                    <Button onClick={() => setEditing(s)}>
+                      <IconEdit size={14} />
+                      Edit
+                    </Button>
+                    <Button variant="danger" onClick={() => del(s)}>
+                      <IconTrash size={14} />
+                      Delete
+                    </Button>
+                  </>
+                }
+              />
+            )
+          })}
         </ManagerList>
       )}
 
@@ -142,13 +188,15 @@ export default function SnippetsManager({ onRun }: { onRun?: () => void }) {
             </div>
             <div className="actions">
               <span className="spacer" />
-              <button type="button" className="ghost" onClick={() => setParams(null)}>
+              <Button variant="ghost" onClick={() => setParams(null)}>
                 Cancel
-              </button>
-              <button type="button" onClick={() => submitParams(false)}>
+              </Button>
+              <Button variant="ghost" onClick={() => submitParams(false)}>
                 Insert
-              </button>
-              <button type="submit">Run</button>
+              </Button>
+              <Button variant="primary" type="submit">
+                Run
+              </Button>
             </div>
           </form>
         </div>
@@ -157,7 +205,10 @@ export default function SnippetsManager({ onRun }: { onRun?: () => void }) {
       {(creating || editing) && (
         <SnippetForm
           initial={editing ?? undefined}
-          onSaved={setList}
+          onSaved={(next) => {
+            setList(next)
+            toast(editing ? 'Snippet saved' : 'Snippet created', 'ok')
+          }}
           onClose={() => {
             setCreating(false)
             setEditing(null)

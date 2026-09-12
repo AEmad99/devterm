@@ -117,6 +117,10 @@ export async function prepareOpencodeLaunch(
   if (model) args.push('--model', model)
   const prompt = extras?.initialPrompt?.replace(/\s+$/u, '')
   let promptDelivered = false
+  // Resume the last session for this project so an agent restart or a provider
+  // auth/config refresh does not silently start a blank conversation. Skip when
+  // a first message is present: that is a delegated fresh task, not a resume.
+  if (extras?.resumeSessions && !prompt) args.push('--continue')
   if (prompt) {
     if (prompt.length <= OPENCODE_PROMPT_ARG_LIMIT) {
       args.push('--prompt', prompt)

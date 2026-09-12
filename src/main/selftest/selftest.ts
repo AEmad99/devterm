@@ -690,6 +690,24 @@ async function testBridge(): Promise<void> {
     )
     check('mcp read_file returns content', fileTxt.includes('hi from remote'))
 
+    // Reconnect: a fresh client must be able to initialize a second session
+    // while the first is still open. The old single-transport bridge rejected
+    // this with 400 "Server already initialized" — the loop that made
+    // opencode (which re-initializes after a provider/config change) flap.
+    const client2 = new Client({ name: 'devterm-selftest-2', version: '0.1.0' })
+    await client2.connect(
+      new StreamableHTTPClientTransport(new URL(info.url), {
+        requestInit: { headers: { Authorization: `Bearer ${info.token}` } }
+      })
+    )
+    const tools2 = await client2.listTools()
+    check(
+      'mcp bridge accepts a reconnected client session',
+      tools2.tools.some((t) => t.name === 'run_command'),
+      tools2.tools.map((t) => t.name).join(',')
+    )
+    await withTimeout(client2.close(), 3000)
+
     // Guardrail at the boundary: read-only bridge refuses a destructive command.
     const roBridge = new McpBridge({
       sessionId,

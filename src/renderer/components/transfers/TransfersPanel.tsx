@@ -1,7 +1,17 @@
+import { useEffect, useMemo, useRef } from 'react'
 import { IconArrowDown, IconArrowUp, IconClose } from '../common/Icons'
+import Button from '../common/Button'
 import { useTransfers, selectVisible } from '../../store/transfers'
 import { useSettings } from '../../store/settings'
+import { toast } from '../../store/toasts'
 import { useShallow } from 'zustand/react/shallow'
+import {
+  computeStats,
+  pushSample,
+  formatRate,
+  formatEta,
+  type RateSample
+} from '../../lib/transfer-stats'
 import type { TransferItemV2 } from '@shared/types'
 
 /**
@@ -28,7 +38,8 @@ export default function TransfersPanel() {
         <span className="transfers-title">Transfers</span>
         <span className="transfers-count">{items.length}</span>
         <span className="spacer" />
-        <button
+        <Button
+          size="xs"
           className="transfers-action"
           onClick={async () => {
             // `clearFinished` returns the post-clear list from main; sync the
@@ -40,15 +51,17 @@ export default function TransfersPanel() {
           disabled={items.every((it) => !it.done)}
         >
           Clear finished
-        </button>
-        <button
+        </Button>
+        <Button
+          variant="icon"
+          size="xs"
           className="transfers-close"
           onClick={() => setOpen(false)}
           aria-label="Hide panel"
           title="Hide panel"
         >
           <IconClose size={14} />
-        </button>
+        </Button>
       </div>
       {items.length === 0 ? (
         <div className="transfers-empty">
@@ -103,8 +116,35 @@ function TransferRow({
   const percent = pct(transferred, total)
   const status = statusOf(item)
   const name = basename(item.direction === 'upload' ? item.remotePath : item.localPath)
+
+  // Rate/ETA sampling: each progress tick appends a (time, bytes) sample;
+  // stats lag by one tick (250ms), which is invisible at this throttle.
+  const samplesRef = useRef<RateSample[]>([])
+  useEffect(() => {
+    if (status !== 'running') {
+      samplesRef.current = []
+      return
+    }
+    pushSample(samplesRef.current, { t: Date.now(), bytes: transferred })
+  }, [status, transferred])
+  const stats = useMemo(
+    () => computeStats(samplesRef.current, total, transferred),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [status, transferred, total]
+  )
+
+  const reveal = () => {
+    void window.devterm.shell
+      .reveal(item.localPath)
+      .catch((e) => toast(`Couldn't reveal file: ${(e as Error).message || e}`, 'err'))
+  }
+
   return (
-    <li className={`transfers-row status-${status}`}>
+    <li
+      className={`transfers-row status-${status}${status === 'done' ? ' is-done' : ''}`}
+      onDoubleClick={status === 'done' ? reveal : undefined}
+      title={status === 'done' ? 'Double-click to reveal in file manager' : undefined}
+    >
       <span className="transfers-dir" title={item.direction}>
         {item.direction === 'upload' ? <IconArrowUp size={12} /> : <IconArrowDown size={12} />}
       </span>
@@ -123,19 +163,41 @@ function TransferRow({
       <span className="transfers-status" title={status === 'error' ? item.error : undefined}>
         {status === 'running' ? `${percent}%` : status}
       </span>
+      {status === 'running' && (
+        <span
+          className="transfers-meta"
+          title={`Rate ${formatRate(stats.rateBps)} · ETA ${formatEta(stats.etaSec)}`}
+        >
+          {formatRate(stats.rateBps)} · {formatEta(stats.etaSec)}
+        </span>
+      )}
       {status === 'error' && item.error && (
         <span className="transfers-err" title={item.error}>
           {item.error}
         </span>
       )}
       {status === 'running' ? (
-        <button className="transfers-row-action" onClick={onCancel}>
+        <Button size="xs" className="transfers-row-action" onClick={onCancel}>
           Cancel
-        </button>
+        </Button>
       ) : status === 'error' || status === 'canceled' || status === 'interrupted' ? (
-        <button className="transfers-row-action transfers-row-retry" onClick={onRetry}>
+        <Button
+          size="xs"
+          variant="primary"
+          className="transfers-row-action transfers-row-retry"
+          onClick={onRetry}
+        >
           Retry
-        </button>
+        </Button>
+      ) : status === 'done' ? (
+        <Button
+          size="xs"
+          className="transfers-row-action"
+          onClick={reveal}
+          title="Reveal in file manager"
+        >
+          Reveal
+        </Button>
       ) : (
         <span className="transfers-spacer" />
       )}

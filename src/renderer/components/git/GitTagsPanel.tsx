@@ -3,6 +3,7 @@ import type { GitCommandResult, GitTag } from '@shared/types'
 import type { GitScope } from './GitPanel'
 import { IconPlus, IconTrash } from '../common/Icons'
 import ConfirmDialog from '../common/ConfirmDialog'
+import Button from '../common/Button'
 
 /**
  * The Tags tab — list of local tags with their target OID and (for annotated
@@ -44,9 +45,9 @@ export default function GitTagsPanel({
     return (
       <div className="git-empty">
         no tags
-        <button className="git-mini" onClick={onNewTag} style={{ marginLeft: 8 }}>
+        <Button size="xs" onClick={onNewTag} style={{ marginLeft: 8 }}>
           <IconPlus size={12} /> <span>Create</span>
-        </button>
+        </Button>
       </div>
     )
 
@@ -56,10 +57,10 @@ export default function GitTagsPanel({
         <span className="git-section-title">Tags</span>
         <span className="git-section-count">{tags.length}</span>
         <span className="spacer" />
-        <button className="git-mini" onClick={onNewTag}>
+        <Button size="xs" onClick={onNewTag}>
           <IconPlus size={12} />
           <span>New</span>
-        </button>
+        </Button>
       </div>
       <div className="git-section-body">
         {tags.map((t) => (
@@ -71,15 +72,17 @@ export default function GitTagsPanel({
             {t.annotated && <span className="git-pill">annotated</span>}
             {t.date && <span className="git-meta">{t.date.slice(0, 10)}</span>}
             <span className="spacer" />
-            <button
-              className="git-icon-btn small danger"
+            <Button
+              variant="icon"
+              size="xs"
+              className="git-danger"
               disabled={busy}
               onClick={() => setConfirmDelete(t.name)}
               title="Delete tag"
               aria-label="Delete"
             >
               <IconTrash size={12} />
-            </button>
+            </Button>
           </div>
         ))}
       </div>

@@ -9,6 +9,7 @@ import type {
 } from '@shared/types'
 import type { HotkeyId } from '../lib/hotkeys'
 import { applyTheme, getTheme } from '../lib/themes'
+import { applyDensity } from '../lib/density'
 
 /**
  * User-facing settings for terminals. Persisted to localStorage (renderer-only,
@@ -122,7 +123,15 @@ export interface AppSettings {
    * payloads without the field default to false so the hint shows once.
    */
   welcomeHintSeen: boolean
+  /** Chrome density: comfortable (default) or compact manager/modal spacing. */
+  density: 'comfortable' | 'compact'
+  /** Pinned manager rows (connections / snippets / workspaces), shown first. */
+  pinned: { connections: string[]; snippets: string[]; workspaces: string[] }
+  /** Saved-connection id → last successful connect timestamp (ms). */
+  lastConnectedAt: Record<string, number>
 }
+
+export type PinKind = 'connections' | 'snippets' | 'workspaces'
 
 /**
  * User-facing knobs for the SSH auto-reconnect loop. Matches the main-process
@@ -228,7 +237,10 @@ const DEFAULTS: AppSettings = {
     showFloatingStatus: true
   },
   searchPersist: false,
-  welcomeHintSeen: false
+  welcomeHintSeen: false,
+  density: 'comfortable',
+  pinned: { connections: [], snippets: [], workspaces: [] },
+  lastConnectedAt: {}
 }
 
 const STORAGE_KEY = 'devterm.settings.v1'
@@ -300,7 +312,10 @@ function load(): AppSettings {
       welcomeHintSeen:
         typeof parsed?.welcomeHintSeen === 'boolean'
           ? parsed.welcomeHintSeen
-          : DEFAULTS.welcomeHintSeen
+          : DEFAULTS.welcomeHintSeen,
+      density: parsed?.density === 'compact' ? 'compact' : DEFAULTS.density,
+      pinned: normalizePinned(parsed?.pinned),
+      lastConnectedAt: normalizeLastConnected(parsed?.lastConnectedAt)
     }
   } catch {
     return DEFAULTS
@@ -312,6 +327,28 @@ function load(): AppSettings {
  * saves (or hand-edited localStorage) with an unknown `kind` quietly fall back
  * to `auto` so the renderer never hands the main process garbage.
  */
+function normalizePinned(raw: unknown): AppSettings['pinned'] {
+  const empty = { connections: [], snippets: [], workspaces: [] }
+  if (!raw || typeof raw !== 'object') return empty
+  const pick = (v: unknown): string[] =>
+    Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string').slice(0, 200) : []
+  const r = raw as Record<string, unknown>
+  return {
+    connections: pick(r.connections),
+    snippets: pick(r.snippets),
+    workspaces: pick(r.workspaces)
+  }
+}
+
+function normalizeLastConnected(raw: unknown): Record<string, number> {
+  if (!raw || typeof raw !== 'object') return {}
+  const out: Record<string, number> = {}
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof v === 'number' && Number.isFinite(v)) out[k.slice(0, 120)] = v
+  }
+  return out
+}
+
 function normalizeDefaultShell(raw: unknown): DefaultShellPref {
   if (raw && typeof raw === 'object') {
     const r = raw as { kind?: unknown; path?: unknown }
@@ -456,6 +493,11 @@ interface SettingsState extends AppSettings {
   setSearchPersist: (v: boolean) => void
   /** Dismiss the one-time first-run welcome hint. */
   setWelcomeHintSeen: (v: boolean) => void
+  setDensity: (v: AppSettings['density']) => void
+  /** Pin/unpin a manager row (connections / snippets / workspaces). */
+  togglePin: (kind: PinKind, id: string) => void
+  /** Record a successful connect for "last connected" display. */
+  recordConnected: (id: string) => void
   /**
    * Apply an imported settings snapshot (received from `settings:imported`)
    * to the live store and localStorage. Unknown/missing fields fall back to
@@ -491,7 +533,10 @@ function persist(state: AppSettings): void {
     keybindings: state.keybindings,
     stt: state.stt,
     searchPersist: state.searchPersist,
-    welcomeHintSeen: state.welcomeHintSeen
+    welcomeHintSeen: state.welcomeHintSeen,
+    density: state.density,
+    pinned: state.pinned,
+    lastConnectedAt: state.lastConnectedAt
   }
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(payload))
@@ -637,6 +682,23 @@ export const useSettings = create<SettingsState>((set, get) => ({
     persist(snapshot(get()))
   },
 
+  setDensity: (v) => {
+    set({ density: v })
+    persist(snapshot(get()))
+  },
+
+  togglePin: (kind, id) => {
+    const cur = get().pinned[kind]
+    const next = cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]
+    set({ pinned: { ...get().pinned, [kind]: next } })
+    persist(snapshot(get()))
+  },
+
+  recordConnected: (id) => {
+    set({ lastConnectedAt: { ...get().lastConnectedAt, [id]: Date.now() } })
+    persist(snapshot(get()))
+  },
+
   applyImported: (s) => {
     if (!s || typeof s !== 'object') return
     // Merge over current state so a partial snapshot (older bundle) doesn't
@@ -682,7 +744,12 @@ export const useSettings = create<SettingsState>((set, get) => ({
       searchPersist: typeof s.searchPersist === 'boolean' ? s.searchPersist : cur.searchPersist,
       // Local-only UI flag (not part of the export bundle): importing settings
       // must not resurrect the dismissed welcome hint.
-      welcomeHintSeen: cur.welcomeHintSeen
+      welcomeHintSeen: cur.welcomeHintSeen,
+      density: s.density === 'compact' || s.density === 'comfortable' ? s.density : cur.density,
+      pinned: s.pinned ? normalizePinned(s.pinned) : cur.pinned,
+      lastConnectedAt: s.lastConnectedAt
+        ? normalizeLastConnected(s.lastConnectedAt)
+        : cur.lastConnectedAt
     }
     set(next)
     persist(next)
@@ -690,6 +757,7 @@ export const useSettings = create<SettingsState>((set, get) => ({
     //  • repaint chrome for an imported theme (terminals already update live)
     //  • push the imported reconnect policy to the SSH manager
     applyTheme(getTheme(next.themeId))
+    applyDensity(next.density)
     void window.devterm.ssh.setReconnectPolicy?.(next.autoReconnect).catch(() => undefined)
   },
 
@@ -716,7 +784,10 @@ export const useSettings = create<SettingsState>((set, get) => ({
       keybindings: DEFAULTS.keybindings,
       stt: DEFAULTS.stt,
       searchPersist: DEFAULTS.searchPersist,
-      welcomeHintSeen: DEFAULTS.welcomeHintSeen
+      welcomeHintSeen: DEFAULTS.welcomeHintSeen,
+      density: DEFAULTS.density,
+      pinned: DEFAULTS.pinned,
+      lastConnectedAt: DEFAULTS.lastConnectedAt
     })
     persist(DEFAULTS)
     void window.devterm.ssh.setReconnectPolicy?.(DEFAULTS.autoReconnect).catch(() => undefined)
@@ -760,6 +831,9 @@ function snapshot(s: SettingsState): AppSettings {
     keybindings: s.keybindings,
     stt: s.stt,
     searchPersist: s.searchPersist,
-    welcomeHintSeen: s.welcomeHintSeen
+    welcomeHintSeen: s.welcomeHintSeen,
+    density: s.density,
+    pinned: s.pinned,
+    lastConnectedAt: s.lastConnectedAt
   }
 }

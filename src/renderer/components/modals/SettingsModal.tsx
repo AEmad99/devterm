@@ -18,11 +18,13 @@ import type {
   PerformanceSnapshot
 } from '@shared/types'
 import { THEMES, getTheme, applyTheme, type Theme } from '../../lib/themes'
+import { applyDensity } from '../../lib/density'
 import {
   HOTKEYS,
   comboLabel,
   captureCombo,
   resolveHotkeys,
+  setHotkeyCaptureActive,
   type HotkeyId
 } from '../../lib/hotkeys'
 import { chime } from '../../lib/attention'
@@ -136,6 +138,7 @@ function ThemeSwatch({
       className={`theme-swatch ${active ? 'active' : ''} ${theme.glass ? 'is-glass' : ''}`}
       onClick={onPick}
       title={theme.name}
+      aria-pressed={active}
     >
       <span
         className="theme-swatch-preview"
@@ -217,6 +220,8 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
   const setRemoteDetachedSessions = useSettings((s) => s.setRemoteDetachedSessions)
   const sessionRestore = useSettings((s) => s.sessionRestore)
   const setSessionRestore = useSettings((s) => s.setSessionRestore)
+  const density = useSettings((s) => s.density)
+  const setDensity = useSettings((s) => s.setDensity)
 
   // Destructive-setting confirmation (factory reset, keybinding reset, import,
   // rule/skill/model deletion) — mirrors the git panel's ConfirmDialog usage.
@@ -436,29 +441,39 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
   }
 
   useEffect(() => {
-    if (!capturing) return
+    if (!capturing) {
+      setHotkeyCaptureActive(false)
+      return
+    }
+    setHotkeyCaptureActive(true)
     const onKey = (e: KeyboardEvent) => {
       e.preventDefault()
       e.stopPropagation()
+      e.stopImmediatePropagation()
       if (e.key === 'Escape') {
         setCapturing(null)
         return
       }
       const combo = captureCombo(e)
-      if (combo) {
-        // Shift-only combos would swallow normal capital-letter typing in the
-        // terminal (TerminalView consumes any matched hotkey before the shell).
-        if (!combo.mod && !combo.alt) {
-          setKbWarning('Shift-only shortcuts intercept normal typing — use Ctrl/Cmd or Alt.')
-        } else {
-          setKbWarning(null)
-          setKeybinding(capturing, combo)
-        }
+      // Modifier keydowns arrive before the final key in a chord. Keep the
+      // capture mode alive until a complete combo is available, otherwise
+      // Ctrl+Shift+T would release capture on Ctrl and open a new terminal.
+      if (!combo) return
+      // Shift-only combos would swallow normal capital-letter typing in the
+      // terminal (TerminalView consumes any matched hotkey before the shell).
+      if (!combo.mod && !combo.alt) {
+        setKbWarning('Shift-only shortcuts intercept normal typing — use Ctrl/Cmd or Alt.')
+      } else {
+        setKbWarning(null)
+        setKeybinding(capturing, combo)
       }
       setCapturing(null)
     }
     window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
+    return () => {
+      window.removeEventListener('keydown', onKey, true)
+      setHotkeyCaptureActive(false)
+    }
   }, [capturing, setKeybinding])
 
   const copyText = async (text: string) => {
@@ -771,6 +786,42 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                           active={t.id === themeId}
                           onPick={() => pickTheme(t.id)}
                         />
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="settings-card">
+                  <div className="settings-card-header">
+                    <h4>Density</h4>
+                    <p className="settings-card-subtitle">
+                      Spacing for managers, modals, and lists. Terminal panes are unaffected.
+                    </p>
+                  </div>
+                  <div className="settings-card-body">
+                    <div
+                      className="bottom-panel-toggle settings-density"
+                      role="group"
+                      aria-label="Interface density"
+                    >
+                      {(
+                        [
+                          { id: 'comfortable', label: 'Comfortable' },
+                          { id: 'compact', label: 'Compact' }
+                        ] as const
+                      ).map((d) => (
+                        <button
+                          key={d.id}
+                          type="button"
+                          aria-pressed={density === d.id}
+                          className={`seg ${density === d.id ? 'active' : ''}`}
+                          onClick={() => {
+                            setDensity(d.id)
+                            applyDensity(d.id)
+                          }}
+                        >
+                          <span>{d.label}</span>
+                        </button>
                       ))}
                     </div>
                   </div>
@@ -1118,9 +1169,9 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                       </span>
                     </label>
                     <p className="settings-hint">
-                      Reopens local shells and saved SSH connections with their split layout.
-                      Workspace auto-launch still takes priority when enabled. Ad-hoc SSH (not
-                      saved) is skipped.
+                      Reopens local shells, saved SSH connections, browser panes, editors, and
+                      agents with their split layout. Workspace auto-launch still takes priority
+                      when enabled. Ad-hoc SSH (not saved) is skipped.
                     </p>
                   </div>
                 </div>
@@ -1230,9 +1281,7 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                         <select
                           className="settings-select"
                           value={agentKind}
-                          onChange={(e) =>
-                            setAgentKind(e.target.value as typeof agentKind)
-                          }
+                          onChange={(e) => setAgentKind(e.target.value as typeof agentKind)}
                         >
                           {AGENT_KIND_MENU.map((group) => (
                             <optgroup key={group.group} label={group.group}>
@@ -1547,14 +1596,22 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                   </div>
                   <div className="settings-card-body">
                     {hotkeyConflicts.length > 0 && (
-                      <div className="settings-hint" role="alert" style={{ color: 'var(--danger)' }}>
+                      <div
+                        className="settings-hint"
+                        role="alert"
+                        style={{ color: 'var(--danger)' }}
+                      >
                         ⚠ Conflicting shortcuts:{' '}
                         {hotkeyConflicts.map((labels) => labels.join(' / ')).join('; ')} — only the
                         first match fires.
                       </div>
                     )}
                     {kbWarning && (
-                      <div className="settings-hint" role="alert" style={{ color: 'var(--danger)' }}>
+                      <div
+                        className="settings-hint"
+                        role="alert"
+                        style={{ color: 'var(--danger)' }}
+                      >
                         {kbWarning}
                       </div>
                     )}
@@ -1583,7 +1640,10 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                               <button
                                 type="button"
                                 className="ghost small"
-                                onClick={() => setCapturing(h.id)}
+                                onClick={() => {
+                                  setKbWarning(null)
+                                  setCapturing(h.id)
+                                }}
                                 disabled={isCapturing}
                               >
                                 Edit
@@ -1739,7 +1799,9 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                               run: async () => {
                                 try {
                                   const keys = await caches.keys()
-                                  const targets = keys.filter((k) => /transformers|onnx|hf/i.test(k))
+                                  const targets = keys.filter((k) =>
+                                    /transformers|onnx|hf/i.test(k)
+                                  )
                                   await Promise.all(targets.map((k) => caches.delete(k)))
                                   setSttHint(
                                     targets.length

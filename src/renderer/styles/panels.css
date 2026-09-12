@@ -926,6 +926,36 @@
   color: var(--danger);
   font-size: 12px;
 }
+/* Preview strip: full detail for the selected row (rows truncate; this wraps). */
+.palette-preview {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  padding: 8px 16px;
+  border-top: 1px solid var(--border);
+  background: color-mix(in srgb, var(--accent) 5%, var(--panel));
+  font-size: 12px;
+  max-height: 64px;
+  overflow: hidden;
+}
+.palette-preview-label {
+  flex: 0 0 auto;
+  font-weight: 700;
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--accent);
+}
+.palette-preview-body {
+  flex: 1;
+  min-width: 0;
+  color: var(--muted);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
 .palette-foot {
   display: flex;
   gap: 14px;
@@ -1621,6 +1651,12 @@
   font-weight: 600;
   font-size: 14px;
 }
+/* Quiet inline recency note inside a row title ("· last connected 2h ago"). */
+.mr-when {
+  font-weight: 400;
+  font-size: 12px;
+  color: var(--muted);
+}
 .mr-sub {
   font-size: 12px;
   color: var(--muted);
@@ -1646,9 +1682,156 @@
   margin-top: 2px;
   opacity: 0.85;
 }
+/* Auto-launch checkbox rendered as a small switch. */
+.ws-auto-launch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  vertical-align: middle;
+}
+.ws-auto-launch input[type='checkbox'] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 26px;
+  height: 15px;
+  margin: 0;
+  padding: 0;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  cursor: pointer;
+  position: relative;
+  flex: 0 0 auto;
+}
+.ws-auto-launch input[type='checkbox']::after {
+  content: '';
+  position: absolute;
+  top: 1.5px;
+  left: 2px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+.ws-auto-launch input[type='checkbox']:checked {
+  background: color-mix(in srgb, var(--accent) 35%, var(--panel-2));
+  border-color: var(--accent);
+}
+.ws-auto-launch input[type='checkbox']:checked::after {
+  left: 12px;
+  background: var(--accent);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .ws-auto-launch input[type='checkbox']::after {
+    transition: left var(--dur-fast) ease;
+  }
+}
 .mr-actions {
   display: flex;
+  align-items: center;
   gap: 6px;
+}
+/* Secondary row actions stay hidden until the row is hovered or keyboard-
+   focused, so lists read quietly and primary actions stand out. */
+.mr-secondary {
+  opacity: 0;
+}
+.manager-row:hover .mr-secondary,
+.manager-row:focus-within .mr-secondary {
+  opacity: 1;
+}
+/* Row secondary actions are quiet until hovered. A filled default button
+   (Edit) here looked permanently highlighted next to the icon/danger siblings. */
+.mr-secondary .btn--default {
+  background: transparent;
+  border-color: transparent;
+  color: var(--muted);
+  box-shadow: none;
+}
+.mr-secondary .btn--default:hover:not(:disabled) {
+  color: var(--fg);
+  background: var(--hover);
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+}
+@media (prefers-reduced-motion: no-preference) {
+  .mr-secondary {
+    transition: opacity var(--dur-fast) ease;
+  }
+}
+/* Pinned rows get a quiet accent edge. */
+.manager-row.is-pinned {
+  border-left: 2px solid var(--accent);
+}
+/* Empty states with a call to action. */
+.manager-empty-actions {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 12px;
+}
+/* Compact density: tighter manager/modal/palette spacing. Tab-strip and
+   titlebar heights are untouched (layout math depends on them). */
+:root[data-density='compact'] .manager-row {
+  padding: 7px 12px;
+  gap: 10px;
+}
+:root[data-density='compact'] .manager-list {
+  gap: 6px;
+}
+:root[data-density='compact'] .modal {
+  padding: 12px 14px 14px;
+  gap: 7px;
+}
+:root[data-density='compact'] .palette-row {
+  padding: 6px 16px;
+  gap: 9px;
+}
+:root[data-density='compact'] .transfers-row {
+  padding: 2px 10px;
+}
+:root[data-density='compact'] .mr-name {
+  font-size: 13px;
+}
+/* Skeleton shimmer rows shown while a manager loads. */
+.skeleton-row {
+  pointer-events: none;
+}
+.sk {
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+}
+.sk-icon {
+  width: 26px;
+  height: 26px;
+}
+.sk-line {
+  height: 10px;
+  margin: 4px 0;
+}
+.sk-w40 {
+  width: 40%;
+}
+.sk-w70 {
+  width: 70%;
+}
+.sk-btn {
+  width: 86px;
+  height: 26px;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .sk {
+    animation: sk-shimmer 1.3s ease-in-out infinite;
+  }
+}
+@keyframes sk-shimmer {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
 }
 
 /* shared button styling within managers + workspace builder */
@@ -3248,6 +3431,21 @@
   color: var(--muted);
   text-transform: capitalize;
 }
+/* Live rate + ETA for in-flight rows ("1.2 MB/s · 0:42"). */
+.transfers-meta {
+  flex: 0 0 auto;
+  min-width: 118px;
+  text-align: right;
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.transfers-row.is-done {
+  cursor: default;
+}
+.transfers-row.is-done:hover .transfers-name {
+  color: var(--accent);
+}
 /* Failure reason shown next to the "error" status — truncated, full text in
    the title tooltip. */
 .transfers-err {
@@ -3868,6 +4066,12 @@
 .git-icon-btn.danger:hover:not(:disabled) {
   color: var(--status-error);
   border-color: var(--status-error);
+}
+/* Danger-tinted hover for icon Buttons used as git row actions. */
+.btn--icon.git-danger:hover:not(:disabled) {
+  color: var(--status-error);
+  border-color: color-mix(in srgb, var(--status-error) 55%, transparent);
+  background: color-mix(in srgb, var(--status-error) 10%, transparent);
 }
 .git-icon-btn:disabled {
   opacity: 0.4;

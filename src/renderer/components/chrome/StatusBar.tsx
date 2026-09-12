@@ -3,8 +3,11 @@ import { useSessions } from '../../store/sessions'
 import { useSettings } from '../../store/settings'
 import { IconLocal, IconRemote, IconBrowser } from '../common/Icons'
 import { IconBranch } from '../git/GitIcons'
-import { agentKindLabel } from '../../lib/agent-ui'
-import type { GitStatus, HostContext } from '@shared/types'
+import { agentKindLabel, setAgentUiMode } from '../../lib/agent-ui'
+import { useActiveGitStatus } from '../../lib/use-git-status'
+import { useTransfers } from '../../store/transfers'
+import { useShallow } from 'zustand/react/shallow'
+import type { HostContext } from '@shared/types'
 
 function osLabel(os?: string): string {
   switch (os) {
@@ -60,6 +63,18 @@ function statusTone(status?: string): string {
   return ''
 }
 
+/** Byte-weighted overall percent across in-flight transfers (0–100). */
+function transferAggregate(items: { transferred: number; total: number }[]): number {
+  let done = 0
+  let total = 0
+  for (const it of items) {
+    done += Math.max(0, it.transferred)
+    total += Math.max(0, it.total)
+  }
+  if (total <= 0) return 0
+  return Math.min(100, Math.round((done / total) * 100))
+}
+
 const SSH_PING_INITIAL_MS = 30_000
 const SSH_PING_MAX_MS = 5 * 60_000
 
@@ -67,43 +82,19 @@ export default function StatusBar() {
   const active = useSessions((s) => s.sessions.find((x) => x.id === s.activeId))
   const showStatusBar = useSettings((s) => s.showStatusBar)
   const zenMode = useSettings((s) => s.zenMode)
-  const [git, setGit] = useState<GitStatus | null>(null)
+  const git = useActiveGitStatus(showStatusBar)
   const [latency, setLatency] = useState<{ ms: number | null; err?: string } | null>(null)
+  // Bumped when the operator clicks the SSH pill to force an immediate sample.
+  const [probeNonce, setProbeNonce] = useState(0)
+  // useShallow: the filter returns a fresh array per snapshot; without it
+  // the store looks "changed" on every render (same React #185 trap as the
+  // transfers panel).
+  const runningTransfers = useTransfers(useShallow((s) => s.items.filter((it) => !it.done)))
 
   const activeId = active?.id
   const activeKind = active?.kind
   const activeCwd = active?.cwd
   const activeClosed = active?.closed
-
-  useEffect(() => {
-    if (!showStatusBar) return
-    if ((activeKind !== 'local' && activeKind !== 'remote') || !activeCwd) {
-      setGit(null)
-      return
-    }
-    let cancelled = false
-    setGit(null)
-    const args =
-      activeKind === 'remote' && activeId
-        ? { sessionId: activeId, path: activeCwd }
-        : { path: activeCwd }
-    void window.devterm.git
-      .status(args)
-      .then((s) => {
-        if (!cancelled) setGit(s)
-      })
-      .catch(() => {
-        if (!cancelled) setGit(null)
-      })
-    const off = window.devterm.git.onChange(args, (s) => {
-      if (!cancelled) setGit(s)
-    })
-    window.devterm.git.watch(args)
-    return () => {
-      cancelled = true
-      off()
-    }
-  }, [showStatusBar, activeKind, activeCwd, activeId])
 
   const backoffRef = useRef(SSH_PING_INITIAL_MS)
   useEffect(() => {
@@ -141,7 +132,7 @@ export default function StatusBar() {
       cancelled = true
       if (timer) clearTimeout(timer)
     }
-  }, [showStatusBar, activeKind, activeId, activeCwd, activeClosed])
+  }, [showStatusBar, activeKind, activeId, activeCwd, activeClosed, probeNonce])
 
   if (!showStatusBar || zenMode) return null
   if (!active) {
@@ -193,27 +184,59 @@ export default function StatusBar() {
           </button>
         )}
         {active.kind === 'remote' && latency !== null && (
-          <span
-            className={`status-cell status-ssh ${latency.err ? 'err' : ''}`}
-            title={latency.err ?? `Round-trip latency: ${latency.ms} ms`}
+          <button
+            type="button"
+            className={`status-cell status-ssh status-link ${latency.err ? 'err' : ''}`}
+            title={`${latency.err ?? `Round-trip latency: ${latency.ms} ms`} — click to probe now`}
+            onClick={() => {
+              backoffRef.current = SSH_PING_INITIAL_MS
+              setLatency(null)
+              setProbeNonce((n) => n + 1)
+            }}
           >
             {latency.err ? 'SSH error' : `SSH ~${latency.ms ?? '—'} ms`}
-          </span>
+          </button>
         )}
       </span>
 
       <span className="spacer" />
 
       <span className="statusbar-right">
+        {runningTransfers.length > 0 && (
+          <button
+            type="button"
+            className="status-cell status-link status-transfers"
+            title={`${runningTransfers.length} transfer(s) in flight — click to open the transfers panel`}
+            onClick={() => {
+              const s = useSettings.getState()
+              s.setTransfersPanelOpen(true)
+              s.setAgentActivityCollapsed(true)
+            }}
+          >
+            ⇅ {runningTransfers.length} · {transferAggregate(runningTransfers)}%
+          </button>
+        )}
         {agentText && (
-          <span
-            className={`status-cell status-agent ${agentTone}`}
+          <button
+            type="button"
+            className={`status-cell status-link status-agent ${agentTone}`}
             title={`${agentKindLabel(active.agentKind ?? 'devterm')}: ${
               active.agentExited ? 'exited' : (active.agentBridgeState ?? 'starting')
-            }${active.agentPendingApproval ? ' — awaiting approval' : ''}`}
+            }${active.agentPendingApproval ? ' — awaiting approval' : ''} — click to show`}
+            onClick={() => {
+              // Hidden/floating agents come back into view; a visible agent's
+              // activity panel opens instead.
+              if (active.agentUiMode === 'hidden' || active.agentUiMode === 'floating') {
+                void setAgentUiMode(active.id, 'docked', { kind: active.agentKind ?? 'devterm' })
+              } else {
+                const s = useSettings.getState()
+                s.setTransfersPanelOpen(false)
+                s.setAgentActivityCollapsed(false)
+              }
+            }}
           >
             {active.agentPendingApproval ? 'Approval needed' : agentText}
-          </span>
+          </button>
         )}
       </span>
     </div>

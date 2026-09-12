@@ -4,6 +4,7 @@ import type { GitScope } from './GitPanel'
 import { IconPlus, IconTrash } from '../common/Icons'
 import { IconFetch, IconPull, IconPush } from './GitIcons'
 import ConfirmDialog from '../common/ConfirmDialog'
+import Button from '../common/Button'
 
 /**
  * The Remotes tab — list of git remotes with their URLs and per-row
@@ -45,18 +46,18 @@ export default function GitRemotesPanel({
         <span className="git-section-title">Remotes</span>
         <span className="git-section-count">{remotes.length}</span>
         <span className="spacer" />
-        <button className="git-mini" onClick={onNewRemote}>
+        <Button size="xs" onClick={onNewRemote}>
           <IconPlus size={12} />
           <span>Add</span>
-        </button>
+        </Button>
       </div>
       <div className="git-section-body">
         {remotes.length === 0 && (
           <div className="git-row-empty">
             no remotes
-            <button className="git-mini" onClick={onNewRemote} style={{ marginLeft: 8 }}>
+            <Button size="xs" onClick={onNewRemote} style={{ marginLeft: 8 }}>
               <IconPlus size={12} /> <span>Add remote</span>
-            </button>
+            </Button>
           </div>
         )}
         {remotes.map((r) => (
@@ -66,8 +67,9 @@ export default function GitRemotesPanel({
               {r.fetchUrl || r.pushUrl}
             </span>
             <span className="spacer" />
-            <button
-              className="git-icon-btn small"
+            <Button
+              variant="icon"
+              size="xs"
               disabled={busy}
               onClick={async () => {
                 setBusy(true)
@@ -79,9 +81,10 @@ export default function GitRemotesPanel({
               aria-label="Fetch"
             >
               <IconFetch size={12} />
-            </button>
-            <button
-              className="git-icon-btn small"
+            </Button>
+            <Button
+              variant="icon"
+              size="xs"
               disabled={busy}
               onClick={async () => {
                 setBusy(true)
@@ -93,9 +96,10 @@ export default function GitRemotesPanel({
               aria-label="Pull"
             >
               <IconPull size={12} />
-            </button>
-            <button
-              className="git-icon-btn small"
+            </Button>
+            <Button
+              variant="icon"
+              size="xs"
               disabled={busy}
               onClick={async () => {
                 setBusy(true)
@@ -107,16 +111,18 @@ export default function GitRemotesPanel({
               aria-label="Push"
             >
               <IconPush size={12} />
-            </button>
-            <button
-              className="git-icon-btn small danger"
+            </Button>
+            <Button
+              variant="icon"
+              size="xs"
+              className="git-danger"
               disabled={busy}
               onClick={() => setConfirmRemove(r.name)}
               title="Remove remote"
               aria-label="Remove"
             >
               <IconTrash size={12} />
-            </button>
+            </Button>
           </div>
         ))}
       </div>

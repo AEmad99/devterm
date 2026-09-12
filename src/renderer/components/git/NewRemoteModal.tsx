@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import type { GitScope } from './GitPanel'
 import ModalShell from '../common/ModalShell'
+import Button from '../common/Button'
+import ModalFooter from '../common/ModalFooter'
 
 /** Add a remote: name + URL. Defaults the name to "origin" and suggests
  *  SSH/HTTPS URL conventions based on a hostname the user starts typing. */
@@ -48,15 +50,14 @@ export default function NewRemoteModal({
       title="Add remote"
       size="md"
       footer={
-        <>
-          <span className="spacer" />
-          <button className="ghost" onClick={onClose} disabled={busy}>
+        <ModalFooter>
+          <Button variant="ghost" onClick={onClose} disabled={busy}>
             Cancel
-          </button>
-          <button className="primary" onClick={submit} disabled={busy}>
+          </Button>
+          <Button variant="primary" onClick={submit} busy={busy}>
             Add
-          </button>
-        </>
+          </Button>
+        </ModalFooter>
       }
     >
       <label className="git-field">

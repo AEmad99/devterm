@@ -10,7 +10,7 @@ import {
 } from 'react'
 import { useSessions, type Session } from '../../store/sessions'
 import { useSettings } from '../../store/settings'
-import { matchHotkey, resolveHotkeys } from '../../lib/hotkeys'
+import { isHotkeyCaptureActive, matchHotkey, resolveHotkeys } from '../../lib/hotkeys'
 import { registerBrowserGuest } from '../../lib/browserTabs'
 import {
   registerPaneOpener,
@@ -35,6 +35,7 @@ import {
   IconPlus,
   IconRefresh
 } from '../common/Icons'
+import Button from '../common/Button'
 
 /** Default landing page and search engine. */
 const HOME_URL = 'https://www.google.com'
@@ -358,6 +359,10 @@ const BrowserTab = memo(
       // shortcuts as a synthetic keydown and swallow the original so e.g.
       // Ctrl+Shift+T / Ctrl+K / Ctrl+Alt+F keep working while browsing.
       const onBeforeInput = (e: Event) => {
+        if (isHotkeyCaptureActive()) {
+          e.preventDefault()
+          return
+        }
         const input = (
           e as unknown as {
             input?: {
@@ -380,10 +385,7 @@ const BrowserTab = memo(
           bubbles: true,
           cancelable: true
         })
-        const matched = matchHotkey(
-          synthetic,
-          resolveHotkeys(useSettings.getState().keybindings)
-        )
+        const matched = matchHotkey(synthetic, resolveHotkeys(useSettings.getState().keybindings))
         if (!matched) return
         e.preventDefault()
         window.dispatchEvent(synthetic)
@@ -461,7 +463,8 @@ const BrowserToolbar = memo(function BrowserToolbar({
 }: BrowserToolbarProps) {
   return (
     <div className="browser-toolbar">
-      <button
+      <Button
+        variant="icon"
         className="browser-btn"
         title="Back"
         aria-label="Back"
@@ -469,8 +472,9 @@ const BrowserToolbar = memo(function BrowserToolbar({
         onClick={() => getHandle()?.back()}
       >
         <IconArrowLeft size={14} />
-      </button>
-      <button
+      </Button>
+      <Button
+        variant="icon"
         className="browser-btn"
         title="Forward"
         aria-label="Forward"
@@ -478,18 +482,25 @@ const BrowserToolbar = memo(function BrowserToolbar({
         onClick={() => getHandle()?.forward()}
       >
         <IconArrowRight size={14} />
-      </button>
-      <button
+      </Button>
+      <Button
+        variant="icon"
         className="browser-btn"
         title={loading ? 'Stop' : 'Reload'}
         aria-label={loading ? 'Stop' : 'Reload'}
         onClick={() => getHandle()?.reloadOrStop()}
       >
         {loading ? <IconClose size={14} /> : <IconRefresh size={14} />}
-      </button>
-      <button className="browser-btn" title="Home" aria-label="Home" onClick={() => onGo(HOME_URL)}>
+      </Button>
+      <Button
+        variant="icon"
+        className="browser-btn"
+        title="Home"
+        aria-label="Home"
+        onClick={() => onGo(HOME_URL)}
+      >
         <IconHome size={14} />
-      </button>
+      </Button>
       <form
         className="browser-addr-form"
         onSubmit={(e) => {
@@ -506,15 +517,16 @@ const BrowserToolbar = memo(function BrowserToolbar({
           onFocus={(e) => e.currentTarget.select()}
         />
       </form>
-      <button
+      <Button
+        variant="icon"
         className="browser-btn"
         title="Zoom out (Ctrl/Cmd+-)"
         aria-label="Zoom out"
         onClick={() => getHandle()?.zoomOut()}
       >
         −
-      </button>
-      <button
+      </Button>
+      <Button
         type="button"
         className="browser-zoom-label"
         title="Reset zoom (Ctrl/Cmd+0)"
@@ -522,16 +534,18 @@ const BrowserToolbar = memo(function BrowserToolbar({
         onClick={() => getHandle()?.zoomReset()}
       >
         {Math.round(zoom * 100)}%
-      </button>
-      <button
+      </Button>
+      <Button
+        variant="icon"
         className="browser-btn"
         title="Zoom in (Ctrl/Cmd++)"
         aria-label="Zoom in"
         onClick={() => getHandle()?.zoomIn()}
       >
         +
-      </button>
-      <button
+      </Button>
+      <Button
+        variant="icon"
         className={`browser-btn browser-dl-btn ${dlCount > 0 ? 'has-active' : ''}`}
         title={dlCount > 0 ? `${dlCount} active download${dlCount === 1 ? '' : 's'}` : 'Downloads'}
         aria-label="Downloads"
@@ -539,23 +553,25 @@ const BrowserToolbar = memo(function BrowserToolbar({
       >
         <IconDownload size={14} />
         {dlCount > 0 && <span className="browser-dl-count">{dlCount}</span>}
-      </button>
-      <button
+      </Button>
+      <Button
+        variant="icon"
         className="browser-btn"
         title="Open DevTools for this tab (detached)"
         aria-label="Open DevTools"
         onClick={() => getHandle()?.openDevtools()}
       >
         <IconInspect size={14} />
-      </button>
-      <button
+      </Button>
+      <Button
+        variant="icon"
         className="browser-btn"
         title="Open in system browser"
         aria-label="Open in system browser"
         onClick={() => void window.devterm.openExternal(address || HOME_URL)}
       >
         <IconExternal size={14} />
-      </button>
+      </Button>
     </div>
   )
 })
@@ -615,33 +631,36 @@ const BrowserFindBar = memo(function BrowserFindBar({
       >
         {!text ? '' : findMatches === 0 ? 'No results' : `${findActive} / ${findMatches}`}
       </span>
-      <button
+      <Button
         type="button"
+        variant="icon"
         className="browser-btn"
         title="Previous match (Shift+Enter)"
         disabled={findMatches === 0}
         onClick={() => getHandle()?.findNext(false)}
       >
         <IconArrowUp size={12} />
-      </button>
-      <button
+      </Button>
+      <Button
         type="button"
+        variant="icon"
         className="browser-btn"
         title="Next match (Enter)"
         disabled={findMatches === 0}
         onClick={() => getHandle()?.findNext(true)}
       >
         <IconArrowDown size={12} />
-      </button>
-      <button
+      </Button>
+      <Button
         type="button"
+        variant="icon"
         className="browser-btn"
         title="Close find bar"
         aria-label="Close find bar"
         onClick={onClose}
       >
         <IconClose size={12} />
-      </button>
+      </Button>
     </form>
   )
 })
@@ -823,7 +842,7 @@ function BrowserPane({ session }: { session: Session }) {
           >
             <span className="browser-tab-title">{t.title}</span>
             {t.muted && (
-              <button
+              <Button
                 className="browser-tab-mute"
                 title="Unmute tab"
                 aria-label="Unmute tab"
@@ -833,9 +852,9 @@ function BrowserPane({ session }: { session: Session }) {
                 }}
               >
                 muted
-              </button>
+              </Button>
             )}
-            <button
+            <Button
               className="browser-tab-close"
               title="Close tab"
               aria-label="Close tab"
@@ -845,17 +864,17 @@ function BrowserPane({ session }: { session: Session }) {
               }}
             >
               <IconClose size={11} />
-            </button>
+            </Button>
           </div>
         ))}
-        <button
+        <Button
           className="browser-tab-new"
           title="New tab"
           aria-label="New tab"
           onClick={() => addTab()}
         >
           <IconPlus size={14} />
-        </button>
+        </Button>
       </div>
       <BrowserToolbar
         address={address}
@@ -913,13 +932,13 @@ function BrowserPane({ session }: { session: Session }) {
           <div className="browser-dl-head">
             <span>Downloads</span>
             <span className="spacer" />
-            <button
+            <Button
               className="ghost small"
               onClick={() => setDlDrawerOpen(false)}
               aria-label="Close downloads"
             >
               <IconClose size={12} />
-            </button>
+            </Button>
           </div>
           {downloads.length === 0 ? (
             <div className="browser-dl-empty">No downloads yet.</div>
@@ -943,12 +962,12 @@ function BrowserPane({ session }: { session: Session }) {
                       ? `${Math.round((d.received / d.total) * 100)}%`
                       : `${formatBytes(d.received)}`}
                   </span>
-                  <button
+                  <Button
                     className="ghost small"
                     onClick={() => void window.devterm.browserDownloads.cancel(d.id)}
                   >
                     Cancel
-                  </button>
+                  </Button>
                 </li>
               ))}
               {finishedDownloads.map((d) => (

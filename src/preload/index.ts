@@ -218,6 +218,9 @@ const api: DevTermApi = {
     readText: (): Promise<string> => ipcRenderer.invoke(IPC.clipboardRead),
     saveImage: (): Promise<string | null> => ipcRenderer.invoke(IPC.clipboardSaveImage)
   },
+  shell: {
+    reveal: (localPath: string): Promise<void> => ipcRenderer.invoke(IPC.shellReveal, localPath)
+  },
   browser: {
     onOpenTab: (cb) => subscribe<{ sourceId: number; url: string }>(IPC.browserOpenTab, cb)
   },
@@ -246,8 +249,7 @@ const api: DevTermApi = {
         IPC.windowAgentAttention,
         ({ sessionId, notice }) => cb(sessionId, notice)
       ),
-    setCloseGuard: (hasUnsaved: boolean) =>
-      ipcRenderer.send(IPC.appCloseGuard, hasUnsaved)
+    setCloseGuard: (hasUnsaved: boolean) => ipcRenderer.send(IPC.appCloseGuard, hasUnsaved)
   },
   localContext: (): Promise<HostContext> => ipcRenderer.invoke(IPC.localContext),
   platform: process.platform,

@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { DirListing, FileEntry } from '@shared/types'
 import type { FsApi } from '../../lib/fsapi'
 import FileTree, { type FileTreeHandle, type Selection } from './FileTree'
 import FileMutationDialog, { type FileMutationKind } from './FileMutationDialog'
+import FileFilterSortBar, { useFileSortPrefs } from './FileFilterSortBar'
+import { filterFileEntries, sortFileEntries } from '../../lib/file-sort'
 import { IconArrowUp, IconHome, IconPlus, IconFile, IconEdit } from '../common/Icons'
 
 // Re-exported for existing importers (e.g. SftpBrowser).
@@ -70,6 +72,10 @@ export default function FilePane({
   // Ignore stale list results when home load races followPath / manual nav.
   const loadGen = useRef(0)
   const treeRef = useRef<FileTreeHandle>(null)
+  // Per-pane filter query plus the persisted sort prefs shared with the
+  // sidebar explorer.
+  const [filter, setFilter] = useState('')
+  const [sort, setSort] = useFileSortPrefs()
 
   const load = useCallback(
     async (path?: string) => {
@@ -197,6 +203,21 @@ export default function FilePane({
   const doRename = () => sel && setDialog({ kind: 'rename' })
   const doDelete = () => sel && setDialog({ kind: 'delete' })
 
+  // Root entries as the tree shows them (sorted + filtered) — drives the
+  // match count and Enter-to-open-first-match.
+  const visibleRoot = useMemo(
+    () => filterFileEntries(sortFileEntries(listing?.entries ?? [], sort), filter),
+    [listing?.entries, sort, filter]
+  )
+
+  // Enter in the filter mirrors double-click: folders navigate, files transfer.
+  const openFirstMatch = () => {
+    const match = visibleRoot[0]
+    if (!match) return
+    if (match.isDir) load(match.path)
+    else onTransfer(match)
+  }
+
   return (
     <div className="filepane">
       <div className="filepane-head">
@@ -279,6 +300,15 @@ export default function FilePane({
             : transferLabel}
         </button>
       </div>
+      <FileFilterSortBar
+        query={filter}
+        onQueryChange={setFilter}
+        sort={sort}
+        onSortChange={setSort}
+        total={listing?.entries.length ?? 0}
+        shown={visibleRoot.length}
+        onEnterFirst={openFirstMatch}
+      />
       {err && <div className="fp-error">{err}</div>}
       <div
         className={`filelist ${dropActive ? 'drop-target' : ''}`}
@@ -315,6 +345,8 @@ export default function FilePane({
             onMultiSelect={setMultiSel}
             onActivateFile={onTransfer}
             onActivateDir={(e) => load(e.path)}
+            sort={sort}
+            filterQuery={filter}
           />
         )}
         {listing && listing.entries.length === 0 && <div className="fp-empty">(empty)</div>}

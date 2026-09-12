@@ -869,6 +869,9 @@ export const IPC = {
   clipboardRead: 'clipboard:read',
   clipboardSaveImage: 'clipboard:saveImage',
 
+  // OS shell integration (file manager reveal)
+  shellReveal: 'shell:reveal',
+
   // in-app browser: a guest page asked to open a new window → open it as a tab
   browserOpenTab: 'browser:open-tab',
 
@@ -1196,6 +1199,11 @@ export interface DevTermApi {
      */
     saveImage(): Promise<string | null>
   }
+  /** OS shell integration. */
+  shell: {
+    /** Reveal a local file in the OS file manager (Explorer / Finder / Files). */
+    reveal(localPath: string): Promise<void>
+  }
   /** In-app browser pane plumbing. */
   browser: {
     /**
@@ -1252,7 +1260,9 @@ export interface DevTermApi {
      */
     agentAttention(sessionId: string, notice: { title: string; body?: string }): void
     /** Main window: another surface reported attention for a session (badge only). */
-    onAgentAttention(cb: (sessionId: string, notice: { title: string; body?: string }) => void): () => void
+    onAgentAttention(
+      cb: (sessionId: string, notice: { title: string; body?: string }) => void
+    ): () => void
     /**
      * Renderer → main: whether unsaved editor buffers exist. The main process
      * uses this for the window-close confirmation (alongside running agents).
@@ -1729,6 +1739,9 @@ export interface SettingsSnapshot {
   stt?: STTSettings
   /** Optional persistent global-search tail (off by default). */
   searchPersist?: boolean
+  density?: 'comfortable' | 'compact'
+  pinned?: { connections: string[]; snippets: string[]; workspaces: string[] }
+  lastConnectedAt?: Record<string, number>
 }
 
 // ---------------------------------------------------------------------------

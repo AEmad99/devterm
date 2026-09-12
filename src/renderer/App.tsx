@@ -25,7 +25,14 @@ import { useSessions } from './store/sessions'
 import { useEditors } from './store/editors'
 import { useLayout, DEFAULT_GROUP, groupActiveSession, allLeaves } from './store/layout'
 import { useSettings } from './store/settings'
-import { matchHotkey, resolveHotkeys, comboLabel, HOTKEYS, type HotkeyId } from './lib/hotkeys'
+import {
+  matchHotkey,
+  resolveHotkeys,
+  comboLabel,
+  HOTKEYS,
+  isHotkeyCaptureActive,
+  type HotkeyId
+} from './lib/hotkeys'
 import {
   focusTerminal,
   clearTerminal,
@@ -39,6 +46,7 @@ import { sessionCloseGuard, hasUnsavedEditors } from './lib/close-guard'
 import { dictation } from './lib/stt/dictation'
 import { useDictation } from './store/dictation'
 import DictationStatus from './components/dictation/DictationStatus'
+import Toasts from './components/common/Toasts'
 import GitPanel from './components/git/GitPanel'
 import { initBrowserControl } from './lib/browser-control'
 import { initAgentHandoff } from './lib/agent-handoff'
@@ -307,6 +315,11 @@ export default function App() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (isHotkeyCaptureActive()) {
+        e.preventDefault()
+        e.stopPropagation()
+        return
+      }
       const keybindings = useSettings.getState().keybindings
       const id = matchHotkey(e, resolveHotkeys(keybindings))
       if (id) {
@@ -512,6 +525,7 @@ export default function App() {
     }
 
     const onKeyDown = (e: KeyboardEvent) => {
+      if (isHotkeyCaptureActive()) return
       if (!useSettings.getState().stt.enabled) return
       if (e.repeat) return
       const hotkeys = resolveHotkeys(useSettings.getState().keybindings)
@@ -700,18 +714,23 @@ export default function App() {
   const dictateHotkeyLabel = dictateHotkey ? comboLabel(dictateHotkey, !!isMac) : undefined
 
   // First-run hint: show the user's actual (possibly overridden) combos.
-  const welcomeHintKeys = useMemo(() => {
+  // The same resolver feeds the toolbar tooltips so they stay in sync with
+  // user keybinding overrides.
+  const hotkeyLabel = useMemo(() => {
     const hs = resolveHotkeys(keybindings)
-    const combo = (id: HotkeyId) => {
+    return (id: HotkeyId) => {
       const h = hs.find((x) => x.id === id)
       return h ? comboLabel(h, !!isMac) : ''
     }
-    return {
-      palette: combo('palette'),
-      newTerminal: combo('newTerminal'),
-      settings: combo('settings')
-    }
   }, [keybindings, isMac])
+  const welcomeHintKeys = useMemo(
+    () => ({
+      palette: hotkeyLabel('palette'),
+      newTerminal: hotkeyLabel('newTerminal'),
+      settings: hotkeyLabel('settings')
+    }),
+    [hotkeyLabel]
+  )
 
   return (
     <div className="app" data-zen={zenMode ? 'on' : undefined}>
@@ -729,6 +748,7 @@ export default function App() {
           onSettings={() => setShowSettings(true)}
           onShortcuts={() => setShowShortcuts(true)}
           dictateHotkey={dictateHotkeyLabel}
+          hotkeyLabel={hotkeyLabel}
         />
       )}
 
@@ -874,7 +894,9 @@ export default function App() {
         onClose={() => setShowGrid(false)}
         onCreated={(result) => {
           if (result.errors.length) {
-            setRestoreNotice(`Grid opened ${result.created}/${result.requested}: ${result.errors[0]}`)
+            setRestoreNotice(
+              `Grid opened ${result.created}/${result.requested}: ${result.errors[0]}`
+            )
           }
         }}
         onSettled={(result) => {
@@ -960,6 +982,7 @@ export default function App() {
           {restoreNotice}
         </div>
       )}
+      <Toasts />
     </div>
   )
 }

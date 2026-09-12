@@ -125,7 +125,10 @@ export function defaultSettingsSnapshot(): SettingsSnapshot {
       appendSpace: true,
       showFloatingStatus: true
     } as STTSettings,
-    searchPersist: false
+    searchPersist: false,
+    density: 'comfortable',
+    pinned: { connections: [], snippets: [], workspaces: [] },
+    lastConnectedAt: {}
   }
 }
 
@@ -196,6 +199,23 @@ export function mergeSnapshotWithDefaults(
   if (isObj(raw.keybindings)) out.keybindings = raw.keybindings as SettingsSnapshot['keybindings']
   if (isObj(raw.stt)) out.stt = { ...(defaults.stt ?? {}), ...raw.stt } as STTSettings
   if (typeof raw.searchPersist === 'boolean') out.searchPersist = raw.searchPersist
+  if (raw.density === 'compact' || raw.density === 'comfortable') out.density = raw.density
+  if (isObj(raw.pinned)) {
+    const pick = (v: unknown): string[] =>
+      Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string').slice(0, 200) : []
+    out.pinned = {
+      connections: pick(raw.pinned.connections),
+      snippets: pick(raw.pinned.snippets),
+      workspaces: pick(raw.pinned.workspaces)
+    }
+  }
+  if (isObj(raw.lastConnectedAt)) {
+    const next: Record<string, number> = {}
+    for (const [k, v] of Object.entries(raw.lastConnectedAt)) {
+      if (typeof v === 'number' && Number.isFinite(v)) next[k.slice(0, 120)] = v
+    }
+    out.lastConnectedAt = next
+  }
   return out
 }
 

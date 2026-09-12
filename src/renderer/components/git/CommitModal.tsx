@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import type { GitScope } from './GitPanel'
 import ModalShell from '../common/ModalShell'
+import Button from '../common/Button'
+import ModalFooter from '../common/ModalFooter'
 
 /**
  * The Commit modal — a textarea for the commit message and a footer with
@@ -53,27 +55,35 @@ export default function CommitModal({
       title="Commit"
       size="md"
       footer={
-        <>
-          <label className="git-check">
-            <input type="checkbox" checked={amend} onChange={(e) => setAmend(e.target.checked)} />
-            Amend
-          </label>
-          <label className="git-check">
-            <input
-              type="checkbox"
-              checked={signOff}
-              onChange={(e) => setSignOff(e.target.checked)}
-            />
-            Sign-off
-          </label>
-          <span className="spacer" />
-          <button className="ghost" onClick={onClose} disabled={busy}>
+        <ModalFooter
+          start={
+            <>
+              <label className="git-check">
+                <input
+                  type="checkbox"
+                  checked={amend}
+                  onChange={(e) => setAmend(e.target.checked)}
+                />
+                Amend
+              </label>
+              <label className="git-check">
+                <input
+                  type="checkbox"
+                  checked={signOff}
+                  onChange={(e) => setSignOff(e.target.checked)}
+                />
+                Sign-off
+              </label>
+            </>
+          }
+        >
+          <Button variant="ghost" onClick={onClose} disabled={busy}>
             Cancel
-          </button>
-          <button className="primary" onClick={submit} disabled={busy}>
+          </Button>
+          <Button variant="primary" onClick={submit} busy={busy}>
             Commit
-          </button>
-        </>
+          </Button>
+        </ModalFooter>
       }
     >
       <textarea

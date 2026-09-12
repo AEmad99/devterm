@@ -1,6 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { SavedConnection, SSHProfile } from '@shared/types'
 import { useSessions } from '../../store/sessions'
+import Button from '../common/Button'
+import ModalFooter from '../common/ModalFooter'
+import ConfirmDialog from '../common/ConfirmDialog'
+import { useDirtyGuard } from '../../lib/use-dirty-guard'
 
 type FormState = {
   name: string
@@ -93,6 +97,12 @@ export default function ConnectionForm({
   // QuickConnect: recent host:port:user for the host-input datalist.
   const [recent, setRecent] = useState<{ host: string; port: number; username: string }[]>([])
 
+  // Dirty-guard: don't silently drop a half-filled form on backdrop click.
+  const base = useMemo(() => (initial ? fromSaved(initial) : EMPTY), [initial])
+  const dirty = useMemo(() => JSON.stringify(f) !== JSON.stringify(base), [f, base])
+  const guard = useDirtyGuard(dirty)
+  const tryClose = guard.requestClose(onClose)
+
   useEffect(() => {
     window.devterm.connections.list().then(setSaved)
     window.devterm.quickConnect
@@ -151,7 +161,7 @@ export default function ConnectionForm({
   const modalSize = f.useJump ? 'modal--lg' : undefined
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
+    <div className="modal-backdrop" onClick={tryClose}>
       <form
         className={`modal conn-modal ${modalSize ?? ''}`}
         onClick={(e) => e.stopPropagation()}
@@ -176,9 +186,9 @@ export default function ConnectionForm({
                     {c.port && c.port !== 22 ? `:${c.port}` : ''}
                   </span>
                   <span className="saved-actions">
-                    <button
-                      type="button"
-                      className="saved-connect"
+                    <Button
+                      size="xs"
+                      variant="primary"
                       title="Connect now"
                       onClick={(e) => {
                         e.stopPropagation()
@@ -186,15 +196,16 @@ export default function ConnectionForm({
                       }}
                     >
                       Connect
-                    </button>
-                    <button
-                      type="button"
-                      className="saved-del"
+                    </Button>
+                    <Button
+                      size="xs"
+                      variant="icon"
                       title="Delete saved connection"
+                      aria-label="Delete saved connection"
                       onClick={(e) => deleteSaved(c.id, e)}
                     >
                       ×
-                    </button>
+                    </Button>
                   </span>
                 </div>
               ))}
@@ -302,26 +313,41 @@ export default function ConnectionForm({
         )}
 
         <div className="actions">
-          {editingId && (
-            <button
-              type="button"
-              className="ghost"
-              onClick={() => {
-                setF(EMPTY)
-                setEditingId(null)
-                setDoSave(false)
-              }}
-            >
-              New
-            </button>
-          )}
-          <span className="spacer" />
-          <button type="button" className="ghost" onClick={onClose}>
-            Cancel
-          </button>
-          <button type="submit">{editingId ? 'Save & Connect' : 'Connect'}</button>
+          <ModalFooter
+            start={
+              editingId ? (
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    setF(EMPTY)
+                    setEditingId(null)
+                    setDoSave(false)
+                  }}
+                >
+                  New
+                </Button>
+              ) : undefined
+            }
+          >
+            <Button variant="ghost" onClick={tryClose}>
+              Cancel
+            </Button>
+            <Button variant="primary" type="submit">
+              {editingId ? 'Save & Connect' : 'Connect'}
+            </Button>
+          </ModalFooter>
         </div>
       </form>
+      {guard.confirming && (
+        <ConfirmDialog
+          open
+          title="Discard changes?"
+          message="Close without connecting? Your edits will be lost."
+          confirmLabel="Discard"
+          onConfirm={guard.confirm}
+          onClose={guard.cancel}
+        />
+      )}
     </div>
   )
 }

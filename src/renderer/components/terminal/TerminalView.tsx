@@ -12,7 +12,7 @@ import { parseOsc7 } from '../../lib/osc7'
 import { createIdleChime, isAgentCommand, AGENT_ATTENTION_BODY } from '../../lib/attention'
 import { fitNow, fitSoon } from '../../lib/fit'
 import { attachRenderer, attachClipboard } from '../../lib/renderer'
-import { matchHotkey, resolveHotkeys } from '../../lib/hotkeys'
+import { isHotkeyCaptureActive, matchHotkey, resolveHotkeys } from '../../lib/hotkeys'
 import {
   registerFindOpener,
   registerTerminal,
@@ -266,6 +266,7 @@ function TerminalView({ session }: { session: Session }) {
     // control bytes (e.g. `^K`) — the DOM event still bubbles to App's listener.
     term.attachCustomKeyEventHandler((e) => {
       if (e.type !== 'keydown') return true
+      if (isHotkeyCaptureActive()) return false
       // The autocomplete popup gets first crack at Tab/→/Esc while it's open.
       if (suggest.handleKey(e)) return false
       const k = e.key.toLowerCase()

@@ -1,5 +1,9 @@
 import { useMemo, useState } from 'react'
 import type { Snippet } from '@shared/types'
+import Button from '../common/Button'
+import ModalFooter from '../common/ModalFooter'
+import ConfirmDialog from '../common/ConfirmDialog'
+import { useDirtyGuard } from '../../lib/use-dirty-guard'
 
 interface FormState {
   name: string
@@ -55,6 +59,11 @@ export default function SnippetForm({
 }) {
   const [f, setF] = useState<FormState>(initial ? fromSnippet(initial) : EMPTY)
 
+  const base = useMemo(() => (initial ? fromSnippet(initial) : EMPTY), [initial])
+  const dirty = useMemo(() => JSON.stringify(f) !== JSON.stringify(base), [f, base])
+  const guard = useDirtyGuard(dirty)
+  const tryClose = guard.requestClose(onClose)
+
   const set =
     (k: keyof FormState) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
       setF((p) => ({ ...p, [k]: e.target.value }))
@@ -87,7 +96,7 @@ export default function SnippetForm({
   const previewName = f.name.trim() || (f.command.trim() ? f.command.trim().split(/\s+/, 1)[0] : '')
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
+    <div className="modal-backdrop" onClick={tryClose}>
       <form className="modal" onClick={(e) => e.stopPropagation()} onSubmit={submit}>
         <h3>{initial ? 'Edit snippet' : 'New snippet'}</h3>
 
@@ -133,13 +142,26 @@ export default function SnippetForm({
         </label>
 
         <div className="actions">
-          <span className="spacer" />
-          <button type="button" className="ghost" onClick={onClose}>
-            Cancel
-          </button>
-          <button type="submit">Save</button>
+          <ModalFooter>
+            <Button variant="ghost" onClick={tryClose}>
+              Cancel
+            </Button>
+            <Button variant="primary" type="submit">
+              Save
+            </Button>
+          </ModalFooter>
         </div>
       </form>
+      {guard.confirming && (
+        <ConfirmDialog
+          open
+          title="Discard changes?"
+          message="Close without saving? Your edits will be lost."
+          confirmLabel="Discard"
+          onConfirm={guard.confirm}
+          onClose={guard.cancel}
+        />
+      )}
     </div>
   )
 }

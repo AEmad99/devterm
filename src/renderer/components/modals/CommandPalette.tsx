@@ -29,6 +29,8 @@ import { useLayout, DEFAULT_GROUP } from '../../store/layout'
 import { useSettings } from '../../store/settings'
 import { toLiveSnapshot } from '../../lib/workspace'
 import { IconGroup, IconGrid, IconPalette, IconRemote, IconTerminals } from '../common/Icons'
+import Button from '../common/Button'
+import { toast } from '../../store/toasts'
 
 type Category = 'all' | 'actions' | 'snippets' | 'connections' | 'workspaces' | 'history'
 
@@ -62,6 +64,49 @@ function workspaceItemLabel(it: WorkspaceItem, connName: (id?: string) => string
 
 function workspaceTarget(ws: Workspace, connName: (id?: string) => string): string {
   return `${ws.name} ${ws.description ?? ''} ${ws.items.map((it) => workspaceItemLabel(it, connName)).join(' ')}`
+}
+
+/** Full (untruncated) detail for the preview strip under the palette list. */
+function previewContent(
+  item: PaletteItem,
+  connections: SavedConnection[]
+): { label: string; body: string; mono: boolean } {
+  switch (item.kind) {
+    case 'snippet':
+      return {
+        label: 'Command',
+        body:
+          item.snippet.command + (item.snippet.description ? ` — ${item.snippet.description}` : ''),
+        mono: true
+      }
+    case 'history':
+      return {
+        label: item.count > 1 ? `Run ${item.count}×` : 'Command',
+        body: item.command,
+        mono: true
+      }
+    case 'connection': {
+      const c = item.conn
+      return {
+        label: 'Connect',
+        body:
+          `${c.username}@${c.host}${c.port && c.port !== 22 ? `:${c.port}` : ''}` +
+          (c.jump ? ` via ${c.jump.username}@${c.jump.host}` : ''),
+        mono: false
+      }
+    }
+    case 'workspace': {
+      const names = new Map(connections.map((c) => [c.id, c.name] as const))
+      const connName = (id?: string) => (id && names.get(id)) || '(deleted connection)'
+      return {
+        label: `${item.ws.items.length} terminal${item.ws.items.length === 1 ? '' : 's'}`,
+        body: item.ws.items.map((it) => workspaceItemLabel(it, connName)).join(' · '),
+        mono: false
+      }
+    }
+    case 'action':
+      return { label: 'Action', body: item.subtitle, mono: false }
+  }
 }
 
 export default function CommandPalette({
@@ -625,6 +670,7 @@ export default function CommandPalette({
     })
     setSnippets(list)
     setSaved((s) => new Set(s).add(command))
+    toast('Saved as snippet', 'ok')
   }
 
   const submitParams = (execute: boolean) => {
@@ -790,6 +836,11 @@ export default function CommandPalette({
     )
   }
 
+  // Full detail for the selected row, shown in the preview strip under the
+  // list (rows truncate; the preview doesn't).
+  const previewItem = flatItems[Math.min(sel, flatItems.length - 1)]
+  const previewText = previewItem ? previewContent(previewItem, connections) : null
+
   const isEmpty = flatItems.length === 0
   const emptyMessage = !asyncReady
     ? 'Loading connections and workspaces…'
@@ -856,6 +907,14 @@ export default function CommandPalette({
               )}
             </div>
             {error && <div className="palette-error">{error}</div>}
+            {previewText && !isEmpty && (
+              <div className="palette-preview" aria-live="polite">
+                <span className="palette-preview-label">{previewText.label}</span>
+                <span className={`palette-preview-body${previewText.mono ? ' sn-mono' : ''}`}>
+                  {previewText.body}
+                </span>
+              </div>
+            )}
             <div className="palette-foot">
               <span>
                 <kbd>↵</kbd> Run
@@ -904,25 +963,24 @@ export default function CommandPalette({
             </div>
             {error && <div className="palette-error">{error}</div>}
             <div className="palette-actions">
-              <button
-                type="button"
-                className="ghost"
+              <Button
+                variant="ghost"
                 onClick={clearRecentValues}
                 disabled={!canClearCache}
                 title="Erase the cached placeholder values for this palette session"
               >
                 Clear recent values
-              </button>
+              </Button>
               <span className="spacer" />
-              <button type="button" className="ghost" onClick={() => setChosen(null)}>
+              <Button variant="ghost" onClick={() => setChosen(null)}>
                 Back
-              </button>
-              <button type="button" className="ghost" onClick={() => submitParams(false)}>
+              </Button>
+              <Button variant="ghost" onClick={() => submitParams(false)}>
                 Insert
-              </button>
-              <button type="button" className="primary" onClick={() => submitParams(true)}>
+              </Button>
+              <Button variant="primary" onClick={() => submitParams(true)}>
                 Run
-              </button>
+              </Button>
             </div>
           </div>
         )}

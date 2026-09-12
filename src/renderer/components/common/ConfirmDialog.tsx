@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import type { ReactNode } from 'react'
 import ModalShell from './ModalShell'
 import Button from './Button'
+import ModalFooter from './ModalFooter'
 
 export interface ConfirmDialogProps {
   open: boolean
@@ -43,14 +44,14 @@ export default function ConfirmDialog({
       title={title}
       size="sm"
       footer={
-        <>
+        <ModalFooter>
           <Button ref={cancelRef} variant="ghost" onClick={onClose}>
             Cancel
           </Button>
           <Button ref={confirmRef} variant={danger ? 'danger' : 'primary'} onClick={onConfirm}>
             {confirmLabel}
           </Button>
-        </>
+        </ModalFooter>
       }
     >
       {message}

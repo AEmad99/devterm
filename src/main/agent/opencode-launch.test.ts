@@ -47,6 +47,35 @@ describe('OpenCode CLI launch', () => {
     }
   })
 
+  it('resumes the last session on relaunch when resume is enabled', async () => {
+    const spec = await prepareOpencodeLaunch('host briefing', BRIDGE, {
+      nativeLocal: true,
+      spawnCwd: 'C:\\projects\\demo',
+      resumeSessions: true
+    })
+    try {
+      assert.equal(spec.args[0], 'C:\\projects\\demo')
+      assert.equal(spec.args.includes('--continue'), true)
+    } finally {
+      spec.cleanup()
+    }
+  })
+
+  it('does not resume a delegated fresh task (prompt present)', async () => {
+    const spec = await prepareOpencodeLaunch('host briefing', BRIDGE, {
+      nativeLocal: true,
+      spawnCwd: 'C:\\projects\\demo',
+      resumeSessions: true,
+      initialPrompt: 'implement the plan'
+    })
+    try {
+      assert.equal(spec.args.includes('--continue'), false)
+      assert.equal(spec.args[spec.args.indexOf('--prompt') + 1], 'implement the plan')
+    } finally {
+      spec.cleanup()
+    }
+  })
+
   it('writes the bridge MCP config and disables built-in host tools remotely', async () => {
     const spec = await prepareOpencodeLaunch('host briefing', BRIDGE)
     try {

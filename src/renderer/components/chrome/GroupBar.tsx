@@ -1,5 +1,6 @@
 import type { Dispatch, SetStateAction } from 'react'
 import { IconTerminals, IconGroup, IconSave, IconClose, IconPlus } from '../common/Icons'
+import Button from '../common/Button'
 import { DEFAULT_GROUP, type Group } from '../../store/layout'
 import type { Session } from '../../store/sessions'
 
@@ -84,8 +85,9 @@ export default function GroupBar({
             <span className="group-name">{g.name}</span>
             <span className="group-count">{groupCount(g.id)}</span>
             {g.id !== DEFAULT_GROUP && (
-              <button
-                type="button"
+              <Button
+                variant="icon"
+                size="xs"
                 className="group-close"
                 title="Close group (closes its terminals)"
                 aria-label={`Close group ${g.name}`}
@@ -95,13 +97,13 @@ export default function GroupBar({
                 }}
               >
                 <IconClose size={12} />
-              </button>
+              </Button>
             )}
           </div>
         )
       })}
-      <button
-        type="button"
+      <Button
+        variant="icon"
         className={`group-new ${dragOverGroup === '__new__' ? 'drop-target' : ''}`}
         title="New group with a local terminal (or drop a terminal here to group it)"
         aria-label="New group"
@@ -119,10 +121,12 @@ export default function GroupBar({
         }}
       >
         <IconPlus size={14} />
-      </button>
+      </Button>
       <span className="spacer" />
       {launchedFromId ? (
-        <button
+        <Button
+          size="sm"
+          variant="ghost"
           className="group-save group-save-back"
           title="Save changes back to the workspace this group was launched from"
           disabled={capturable.length === 0}
@@ -130,9 +134,11 @@ export default function GroupBar({
         >
           <IconSave size={14} />
           <span>Save back</span>
-        </button>
+        </Button>
       ) : null}
-      <button
+      <Button
+        size="sm"
+        variant="ghost"
         className="group-save"
         title="Save this group's terminals as a new workspace"
         aria-label={launchedFromId ? 'Save as new workspace' : 'Save group as workspace'}
@@ -141,7 +147,7 @@ export default function GroupBar({
       >
         <IconSave size={14} />
         <span>{launchedFromId ? 'Save as new' : 'Save'}</span>
-      </button>
+      </Button>
     </div>
   )
 }

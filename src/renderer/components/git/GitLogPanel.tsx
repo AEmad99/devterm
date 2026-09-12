@@ -3,6 +3,7 @@ import type { GitLogEntry, GitShowResult } from '@shared/types'
 import type { GitScope } from './GitPanel'
 import GitGraphView from './GitGraphView'
 import { IconGraph, IconList } from './GitIcons'
+import Button from '../common/Button'
 
 /**
  * The Log tab — newest-first commit history. Each row shows the short SHA,
@@ -91,9 +92,9 @@ export default function GitLogPanel({ scope }: { scope: GitScope }) {
             spellCheck={false}
             title="Ref to start from (e.g. origin/main, v1.0.0, abc1234) — press Enter to apply"
           />
-          <button type="submit" className="git-mini" disabled={busy}>
+          <Button type="submit" size="xs" busy={busy}>
             Refresh
-          </button>
+          </Button>
         </form>
         <span className="git-log-toolbar-spacer" />
         <div className="git-log-view-toggle" role="group" aria-label="Log view">
@@ -122,9 +123,9 @@ export default function GitLogPanel({ scope }: { scope: GitScope }) {
       {error && (
         <div className="git-panel-error" role="alert">
           <pre>{error}</pre>
-          <button onClick={() => setError(null)} aria-label="Dismiss">
+          <Button variant="icon" size="xs" onClick={() => setError(null)} aria-label="Dismiss">
             ×
-          </button>
+          </Button>
         </div>
       )}
       {entries === null && <div className="git-loading">loading…</div>}

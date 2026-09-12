@@ -2,6 +2,7 @@ import { useCallback, useMemo, useState } from 'react'
 import type { GitCommandResult, GitFileStatus, GitStatus } from '@shared/types'
 import type { GitScope } from './GitPanel'
 import { IconStage, IconUnstage, IconRevert, IconCommit } from './GitIcons'
+import Button from '../common/Button'
 import ConfirmDialog from '../common/ConfirmDialog'
 import { useEscapeKey } from '../../lib/useEscapeKey'
 
@@ -95,10 +96,10 @@ export default function GitChangesPanel({
           title="Changes"
           count={rows.unstaged.length}
           action={
-            <button className="git-mini" onClick={stageAll} title="Stage all changes">
+            <Button size="xs" onClick={() => void stageAll()} title="Stage all changes">
               <IconStage size={12} />
               <span>Stage all</span>
-            </button>
+            </Button>
           }
         >
           {rows.unstaged.map((r) => (
@@ -121,10 +122,10 @@ export default function GitChangesPanel({
           title="Staged"
           count={rows.staged.length}
           action={
-            <button className="git-mini" onClick={unstageAll} title="Unstage all">
+            <Button size="xs" onClick={() => void unstageAll()} title="Unstage all">
               <IconUnstage size={12} />
               <span>Unstage all</span>
-            </button>
+            </Button>
           }
         >
           {rows.staged.map((r) => (
@@ -158,10 +159,16 @@ export default function GitChangesPanel({
       )}
 
       <div className="git-changes-actions">
-        <button className="git-primary" disabled={!hasStaged} onClick={onCommit}>
+        <Button
+          variant="primary"
+          size="sm"
+          disabled={!hasStaged}
+          onClick={onCommit}
+          title={hasStaged ? `Commit ${rows.staged.length} staged file(s)` : 'Stage files first'}
+        >
           <IconCommit size={13} />
           <span>Commit {hasStaged ? `${rows.staged.length}` : ''}</span>
-        </button>
+        </Button>
       </div>
 
       {diff && (
@@ -172,7 +179,7 @@ export default function GitChangesPanel({
             </h3>
             <pre className="git-diff-pre">{diff.text}</pre>
             <div className="actions">
-              <button onClick={() => setDiff(null)}>Close</button>
+              <Button onClick={() => setDiff(null)}>Close</Button>
             </div>
           </div>
         </div>
@@ -280,23 +287,25 @@ function FileRow({
         {row.path}
       </button>
       {onDiscard && (
-        <button
-          className="git-icon-btn small"
+        <Button
+          variant="icon"
+          size="xs"
           onClick={onDiscard}
           title="Discard working-tree changes"
           aria-label="Discard"
         >
           <IconRevert size={12} />
-        </button>
+        </Button>
       )}
-      <button
-        className="git-icon-btn small"
+      <Button
+        variant="icon"
+        size="xs"
         onClick={onAction}
         title={actionLabel}
         aria-label={actionLabel}
       >
         {actionIcon}
-      </button>
+      </Button>
     </div>
   )
 }

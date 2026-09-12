@@ -1,10 +1,12 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { SavedConnection, Workspace, WorkspaceItem } from '@shared/types'
 import { launchWorkspaceIntoGroup } from '../../lib/workspace'
-import ManagerList from '../common/ManagerList'
+import { useSettings } from '../../store/settings'
+import { toast } from '../../store/toasts'
+import ManagerList, { ManagerSkeleton } from '../common/ManagerList'
 import ManagerRow from '../common/ManagerRow'
 import Button from '../common/Button'
-import { IconGroup, IconConnect, IconTrash, IconEdit, IconCopy } from '../common/Icons'
+import { IconGroup, IconConnect, IconTrash, IconEdit, IconCopy, IconPin } from '../common/Icons'
 
 /**
  * Full-pane list of saved terminal workspaces — its own top-level tab.
@@ -21,7 +23,10 @@ import { IconGroup, IconConnect, IconTrash, IconEdit, IconCopy } from '../common
  * "Save as workspace" button).
  */
 export default function WorkspacesManager({ onLaunch }: { onLaunch: () => void }) {
+  const pinned = useSettings((s) => s.pinned.workspaces)
+  const togglePin = useSettings((s) => s.togglePin)
   const [list, setList] = useState<Workspace[]>([])
+  const [loading, setLoading] = useState(true)
   const [conns, setConns] = useState<SavedConnection[]>([])
   // Inline editor state. `null` = closed. `id` picks the row, `name` + `description`
   // are the editable fields; the original is preserved for cancel.
@@ -31,15 +36,29 @@ export default function WorkspacesManager({ onLaunch }: { onLaunch: () => void }
     description: string
   } | null>(null)
 
-  const refresh = () => window.devterm.workspaces.list().then(setList)
+  const refresh = async () => {
+    setList(await window.devterm.workspaces.list())
+    setLoading(false)
+  }
   useEffect(() => {
-    refresh()
+    void refresh()
     window.devterm.connections.list().then(setConns)
     return window.devterm.settingsIo.onImported(() => {
-      refresh()
+      void refresh()
       window.devterm.connections.list().then(setConns)
     })
   }, [])
+
+  const ordered = useMemo(() => {
+    const pinIndex = new Map(pinned.map((id, i) => [id, i]))
+    return [...list].sort((a, b) => {
+      const pa = pinIndex.has(a.id) ? 0 : 1
+      const pb = pinIndex.has(b.id) ? 0 : 1
+      if (pa !== pb) return pa - pb
+      if (pa === 0) return (pinIndex.get(a.id) ?? 0) - (pinIndex.get(b.id) ?? 0)
+      return (b.lastLaunchedAt ?? 0) - (a.lastLaunchedAt ?? 0)
+    })
+  }, [list, pinned])
 
   const connName = (id?: string) =>
     (id && conns.find((c) => c.id === id)?.name) || '(deleted connection)'
@@ -47,7 +66,10 @@ export default function WorkspacesManager({ onLaunch }: { onLaunch: () => void }
   const itemLabel = (it: WorkspaceItem) =>
     it.kind === 'local' ? (it.title ?? 'Local') : connName(it.connectionId)
 
-  const del = async (id: string) => setList(await window.devterm.workspaces.delete(id))
+  const del = async (ws: Workspace) => {
+    setList(await window.devterm.workspaces.delete(ws.id))
+    toast(`Deleted “${ws.name}”`, 'ok')
+  }
 
   const startEdit = (ws: Workspace) =>
     setEditing({ id: ws.id, name: ws.name, description: ws.description ?? '' })
@@ -75,9 +97,13 @@ export default function WorkspacesManager({ onLaunch }: { onLaunch: () => void }
       setList(list2)
     }
     setEditing(null)
+    toast('Workspace updated', 'ok')
   }
 
-  const duplicate = async (id: string) => setList(await window.devterm.workspaces.duplicate(id))
+  const duplicate = async (ws: Workspace) => {
+    setList(await window.devterm.workspaces.duplicate(ws.id))
+    toast(`Duplicated “${ws.name}”`, 'ok')
+  }
 
   const launch = async (ws: Workspace) => {
     onLaunch()
@@ -88,7 +114,7 @@ export default function WorkspacesManager({ onLaunch }: { onLaunch: () => void }
     // operator-initiated launches).
     await launchWorkspaceIntoGroup(ws, conns, { recordLaunch: true })
     // Refresh the list to pick up the new lastLaunchedAt / launchCount.
-    refresh()
+    void refresh()
   }
 
   const toggleAutoLaunch = async (ws: Workspace, value: boolean) => {
@@ -131,20 +157,31 @@ export default function WorkspacesManager({ onLaunch }: { onLaunch: () => void }
         view with “Save as workspace”.
       </p>
 
-      {list.length === 0 ? (
+      {loading ? (
+        <ManagerSkeleton />
+      ) : list.length === 0 ? (
         <div className="manager-empty">
           No workspaces yet. Arrange some terminals in the Terminals view, then use “Save as
           workspace”.
+          <div className="manager-empty-actions">
+            <Button variant="primary" onClick={onLaunch}>
+              <IconConnect size={14} />
+              Go to Terminals
+            </Button>
+          </div>
         </div>
       ) : (
         <ManagerList>
-          {list.map((ws) => {
+          {ordered.map((ws) => {
             const isEditing = editing?.id === ws.id
             const launched = formatLaunched(ws.lastLaunchedAt)
+            const isPinned = pinned.includes(ws.id)
             return (
               <ManagerRow
                 key={ws.id}
+                className={isPinned ? 'is-pinned' : ''}
                 icon={<IconGroup size={20} />}
+                onDoubleClick={isEditing ? undefined : () => launch(ws)}
                 meta={
                   isEditing ? (
                     <div className="ws-edit">
@@ -210,23 +247,33 @@ export default function WorkspacesManager({ onLaunch }: { onLaunch: () => void }
                       </Button>
                     </>
                   ) : (
+                    <Button variant="primary" onClick={() => launch(ws)}>
+                      <IconConnect size={14} />
+                      Launch
+                    </Button>
+                  )
+                }
+                secondaryActions={
+                  isEditing ? undefined : (
                     <>
-                      <Button variant="primary" onClick={() => launch(ws)}>
-                        <IconConnect size={14} />
-                        Launch
+                      <Button
+                        variant="icon"
+                        active={isPinned}
+                        onClick={() => togglePin('workspaces', ws.id)}
+                        title={isPinned ? 'Unpin from top' : 'Pin to top'}
+                        aria-label={isPinned ? `Unpin ${ws.name}` : `Pin ${ws.name}`}
+                      >
+                        <IconPin size={14} />
                       </Button>
                       <Button onClick={() => startEdit(ws)} title="Rename / edit description">
                         <IconEdit size={14} />
                         Update
                       </Button>
-                      <Button
-                        onClick={() => duplicate(ws.id)}
-                        title="Create a copy of this workspace"
-                      >
+                      <Button onClick={() => duplicate(ws)} title="Create a copy of this workspace">
                         <IconCopy size={14} />
                         Duplicate
                       </Button>
-                      <Button variant="danger" onClick={() => del(ws.id)}>
+                      <Button variant="danger" onClick={() => del(ws)}>
                         <IconTrash size={14} />
                         Delete
                       </Button>

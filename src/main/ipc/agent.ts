@@ -652,19 +652,33 @@ export function registerAgentIpc(
     // Serialize against reconnect auto-restart for the same session id.
     return enqueueLaunch(opts.sessionId, async () => {
       const existing = sessions.get(opts.sessionId)
-      // Reattach path: UI mode changes (dock / float / hide / ask-strip) must
-      // not kill a healthy agent. Restart only when explicitly requested or
-      // when the previous agent process has already exited.
+      // Reattach path: UI mode changes (dock / float / hide) must not kill a
+      // healthy agent. But only reuse the running process when it actually
+      // matches the request — a different agent kind/provider, a switch between
+      // the local and SSH surfaces, or a dead bridge must fall through to a
+      // fresh launch. Reusing in those cases left the pane showing the old (or
+      // a crashed) process while the UI believed the new config had applied.
       if (existing && !opts.forceRestart && !existing.agentExited) {
         const bridge = existing.bridge.getStatus()
-        return {
-          ptyId: existing.ptyId,
-          mcpUrl: bridge.mcpUrl ?? '',
-          reused: true
+        const runningKind = existing.lastOpts?.kind
+        const runningSurface = existing.lastOpts?.sessionKind ?? 'remote'
+        const requestedSurface = opts.sessionKind ?? 'remote'
+        const bridgeDead = bridge.state === 'stopped' || bridge.state === 'error'
+        const sameProcess =
+          !bridgeDead &&
+          (runningKind === undefined || runningKind === opts.kind) &&
+          runningSurface === requestedSurface
+        if (sameProcess) {
+          return {
+            ptyId: existing.ptyId,
+            mcpUrl: bridge.mcpUrl ?? '',
+            reused: true
+          }
         }
       }
-      // Close any previous session for the same id (Restart button path). Await
-      // so the old bridge / temp dir are fully gone before we allocate new ones.
+      // Close any previous session for the same id (Restart button, kind switch,
+      // or dead-bridge recovery). Await so the old bridge / temp dir are fully
+      // gone before we allocate new ones.
       if (sessions.has(opts.sessionId)) await closeOne(opts.sessionId)
       return launchAgent(opts)
     })
@@ -730,6 +744,7 @@ export function registerAgentIpc(
       model: opts.model,
       effort: opts.effort,
       initialPrompt: opts.initialPrompt,
+      resumeSessions: opts.preferences?.resumeSessions !== false,
       ...(isLocal
         ? {
             nativeLocal: true,

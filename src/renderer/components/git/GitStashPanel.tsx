@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { GitCommandResult, GitStashEntry } from '@shared/types'
 import type { GitScope } from './GitPanel'
+import Button from '../common/Button'
 import ConfirmDialog from '../common/ConfirmDialog'
 
 /**
@@ -24,6 +25,9 @@ export default function GitStashPanel({
 }) {
   const [items, setItems] = useState<GitStashEntry[] | null>(null)
   const [busy, setBusy] = useState(false)
+  // Which row-op is in flight (`apply:<ref>` / `pop:<ref>`) — drives the
+  // per-button spinner while `busy` disables the rest of the panel.
+  const [busyOp, setBusyOp] = useState<string | null>(null)
   const [tick, setTick] = useState(0)
   // Stash ref awaiting a drop confirmation.
   const [confirmDrop, setConfirmDrop] = useState<string | null>(null)
@@ -62,37 +66,44 @@ export default function GitStashPanel({
                 {s.branch && <span className="git-meta">on {s.branch}</span>}
               </div>
               <div className="git-stash-actions">
-                <button
-                  className="git-mini"
+                <Button
+                  size="xs"
+                  busy={busyOp === `apply:${s.ref}`}
                   disabled={busy}
                   onClick={async () => {
                     setBusy(true)
+                    setBusyOp(`apply:${s.ref}`)
                     await run(() => window.devterm.git.stashApply({ ...scope, ref: s.ref }))
                     setBusy(false)
+                    setBusyOp(null)
                     setTick((t) => t + 1)
                   }}
                 >
                   Apply
-                </button>
-                <button
-                  className="git-mini"
+                </Button>
+                <Button
+                  size="xs"
+                  busy={busyOp === `pop:${s.ref}`}
                   disabled={busy}
                   onClick={async () => {
                     setBusy(true)
+                    setBusyOp(`pop:${s.ref}`)
                     await run(() => window.devterm.git.stashPop({ ...scope, ref: s.ref }))
                     setBusy(false)
+                    setBusyOp(null)
                     setTick((t) => t + 1)
                   }}
                 >
                   Pop
-                </button>
-                <button
-                  className="git-mini danger"
+                </Button>
+                <Button
+                  size="xs"
+                  variant="danger"
                   disabled={busy}
                   onClick={() => setConfirmDrop(s.ref)}
                 >
                   Drop
-                </button>
+                </Button>
               </div>
             </div>
           ))}

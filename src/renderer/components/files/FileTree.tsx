@@ -1,6 +1,12 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import type { FileEntry, GitFileStatus, GitStatus } from '@shared/types'
 import type { FsApi } from '../../lib/fsapi'
+import {
+  DEFAULT_FILE_SORT,
+  filterFileEntries,
+  sortFileEntries,
+  type FileSortPrefs
+} from '../../lib/file-sort'
 import { useEscapeKey } from '../../lib/useEscapeKey'
 import { formatBytes } from '../../lib/format'
 import { IconChevron } from '../common/Icons'
@@ -84,6 +90,8 @@ function FileTreeImpl(
     onMultiSelect,
     onActivateFile,
     onActivateDir,
+    sort = DEFAULT_FILE_SORT,
+    filterQuery = '',
     gitStatus,
     onRequestDiff
   }: {
@@ -105,6 +113,16 @@ function FileTreeImpl(
     onMultiSelect?: (next: Selection, ev: React.MouseEvent) => void
     onActivateFile: (entry: FileEntry) => void
     onActivateDir: (entry: FileEntry) => void
+    /**
+     * Sort order applied at every tree level (root and expanded folders).
+     * Defaults to dirs-first name-ascending, matching the backend listings.
+     */
+    sort?: FileSortPrefs
+    /**
+     * Case-insensitive substring filter on entry names, applied at every
+     * tree level. Blank means no filtering.
+     */
+    filterQuery?: string
     /**
      * Optional live git status. When provided (and `isRepo`), we render a
      * small letter badge next to each filename and light up a right-click
@@ -247,7 +265,9 @@ function FileTreeImpl(
   )
 
   const renderRows = (entries: FileEntry[], depth: number, acc: React.ReactNode[]): void => {
-    for (const e of entries) {
+    // Sort + filter at every level so expanded folders behave like the root.
+    const visible = filterFileEntries(sortFileEntries(entries, sort), filterQuery)
+    for (const e of visible) {
       const expanded = e.isDir && open.has(e.path)
       const pad = BASE_PAD + depth * INDENT
       // Map an entry's absolute path to a repo-relative key for the badge.
@@ -276,7 +296,7 @@ function FileTreeImpl(
       const onRowClick = (ev: React.MouseEvent) => {
         if (onMultiSelect && (ev.shiftKey || ev.ctrlKey || ev.metaKey)) {
           ev.preventDefault()
-          onMultiSelect(extendSelection(selectedPaths ?? new Set(), entries, e, ev), ev)
+          onMultiSelect(extendSelection(selectedPaths ?? new Set(), visible, e, ev), ev)
           return
         }
         onSelect(e)
@@ -373,8 +393,12 @@ function FileTreeImpl(
 
   const rows: React.ReactNode[] = []
   renderRows(rootEntries, 0, rows)
+  // The parent owns the true-empty "(empty)" note; we only report a filter
+  // that hides everything while the folder itself is non-empty.
+  const filteredOut = rows.length === 0 && filterQuery.trim() !== '' && rootEntries.length > 0
   return (
     <div className="file-tree">
+      {filteredOut && <div className="tree-note">(no matches)</div>}
       {rows}
       {diffModal && (
         <div className="modal-backdrop" onClick={() => setDiffModal(null)}>

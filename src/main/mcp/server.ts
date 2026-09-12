@@ -3,11 +3,13 @@ import { randomBytes, randomUUID, timingSafeEqual } from 'crypto'
 import type { AddressInfo, Socket } from 'net'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
+import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js'
 import type { AgentBridgeState, AgentBridgeStatus } from '@shared/types'
 import { registerTools, type ToolDeps } from './tools'
 import { recordBridgeActivity } from '../ipc/foundation'
 
 const BRIDGE_HEARTBEAT_MS = 25000
+const MAX_REQUEST_BYTES = 8 * 1024 * 1024
 
 export interface BridgeInfo {
   url: string
@@ -19,11 +21,21 @@ export interface BridgeInfo {
  * In-process MCP server bound to a single remote session. Streamable HTTP on
  * 127.0.0.1 only, gated by a random per-session bearer token (§7.1). Runs in
  * the main process so its tools call the shared ssh2 client directly.
+ *
+ * One transport (and its own McpServer) is created per MCP session, keyed by
+ * the `mcp-session-id` the SDK issues at `initialize`. A client that drops and
+ * reconnects — or a CLI that re-initializes after a config/provider change —
+ * gets a fresh session instead of the hard 400 "Server already initialized"
+ * that a single shared transport produced. (opencode re-initializes on
+ * reconnect; the old design flapped connected→error forever.) The bridge URL,
+ * bearer token, tools, and heartbeat are unchanged.
  */
 export class McpBridge {
   private http?: Server
-  private transport?: StreamableHTTPServerTransport
-  private mcp?: McpServer
+  /** One transport per live MCP session (keyed by SDK session id). */
+  private transports = new Map<string, StreamableHTTPServerTransport>()
+  /** The server bound to each transport, kept so stop() can close it. */
+  private servers = new Map<string, McpServer>()
   private state: AgentBridgeState = 'starting'
   private message: string | undefined
   private activeStreams = 0
@@ -70,40 +82,24 @@ export class McpBridge {
     }
   }
 
-  async start(): Promise<BridgeInfo> {
-    this.emit('starting', 'Starting MCP bridge')
-    this.mcp = new McpServer(
+  /** Build a fresh MCP server with the DevTerm tool set (one per session). */
+  private createServer(): McpServer {
+    const mcp = new McpServer(
       { name: 'devterm', version: '0.1.0' },
       { capabilities: { logging: {} } }
     )
-    this.wrapRegisterTool(this.mcp)
-    registerTools(this.mcp, this.deps)
+    this.wrapRegisterTool(mcp)
+    registerTools(mcp, this.deps)
+    return mcp
+  }
 
-    // One long-lived client (the agent) per bridge: a single stateful transport
-    // keeps the session across initialize → listTools → callTool. JSON responses.
-    this.transport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: () => randomUUID(),
-      enableJsonResponse: true
-    })
-    this.transport.onerror = (error) => {
-      this.emit('error', error.message)
-      console.error('[mcp] transport error:', error)
-    }
-    // Transport close is recoverable: the HTTP server is still listening and a
-    // restarted agent can reconnect through `initialize` again. Surface as
-    // 'disconnected' so the renderer's Restart button can drive a reconnect
-    // without the bridge having torn itself down. (Explicit `stop()` emits
-    // 'stopped' separately.)
-    this.transport.onclose = () => {
-      if (this.stopped) return
-      this.emit('disconnected', 'MCP transport closed')
-    }
-    await this.mcp.connect(this.transport)
+  async start(): Promise<BridgeInfo> {
+    this.emit('starting', 'Starting MCP bridge')
 
     this.http = createServer((req, res) => void this.handle(req, res))
 
     // This is a localhost-only bridge with exactly ONE trusted client: the
-    // interactive `pi` CLI we spawn. Node's http.Server ships protective
+    // interactive agent CLI we spawn. Node's http.Server ships protective
     // idle timeouts meant for public servers (slowloris / idle-socket
     // exhaustion); here they only cause harm. The CLI holds a long-lived
     // standalone GET SSE stream open for server→client messages, and the MCP
@@ -195,29 +191,32 @@ export class McpBridge {
   }
 
   private async sendHeartbeat(): Promise<void> {
-    if (this.stopped || !this.transport || this.activeStreams < 1) return
-    try {
-      await this.transport.send({
-        jsonrpc: '2.0',
-        method: 'notifications/message',
-        params: {
-          level: 'debug',
-          logger: 'devterm.bridge',
-          data: {
-            type: 'heartbeat',
-            seq: ++this.heartbeatSeq,
-            at: Date.now()
-          }
+    if (this.stopped || this.transports.size === 0 || this.activeStreams < 1) return
+    const frame = {
+      jsonrpc: '2.0' as const,
+      method: 'notifications/message',
+      params: {
+        level: 'debug' as const,
+        logger: 'devterm.bridge',
+        data: {
+          type: 'heartbeat',
+          seq: ++this.heartbeatSeq,
+          at: Date.now()
         }
-      })
+      }
+    }
+    let delivered = false
+    for (const transport of this.transports.values()) {
+      try {
+        await transport.send(frame)
+        delivered = true
+      } catch {
+        /* a single dead session must not stop the others */
+      }
+    }
+    if (delivered) {
       this.lastActivityAt = Date.now()
       this.lastHeartbeatAt = this.lastActivityAt
-    } catch (err) {
-      if (!this.stopped) {
-        const message = err instanceof Error ? err.message : String(err)
-        this.emit('disconnected', `Bridge heartbeat failed: ${message}`)
-        console.error('[mcp] heartbeat failed:', err)
-      }
     }
   }
 
@@ -246,15 +245,18 @@ export class McpBridge {
       return
     }
     this.lastActivityAt = Date.now()
-    const isStandaloneStream = req.method === 'GET'
-    let trackedStream = false
-    if (isStandaloneStream) {
-      trackedStream = true
+    const sessionId = firstHeader(req.headers['mcp-session-id'])
+
+    // Standalone SSE stream: the client must already own a session.
+    if (req.method === 'GET') {
+      const transport = sessionId ? this.transports.get(sessionId) : undefined
+      if (!transport) {
+        res.writeHead(400, { 'content-type': 'text/plain' }).end('missing or invalid session')
+        return
+      }
       this.activeStreams += 1
       this.emit('connected', 'Agent MCP stream connected')
       res.once('close', () => {
-        if (!trackedStream) return
-        trackedStream = false
         this.activeStreams = Math.max(0, this.activeStreams - 1)
         if (!this.stopped && this.state !== 'error') {
           this.emit(
@@ -263,7 +265,102 @@ export class McpBridge {
           )
         }
       })
-    } else if (
+      try {
+        await transport.handleRequest(req, res)
+      } catch (err) {
+        this.emit('error', err instanceof Error ? err.message : String(err))
+        if (!res.headersSent) res.writeHead(500, { 'content-type': 'text/plain' }).end('bridge error')
+        console.error('[mcp] handleRequest error:', err)
+      }
+      return
+    }
+
+    if (req.method === 'DELETE') {
+      const transport = sessionId ? this.transports.get(sessionId) : undefined
+      if (!transport) {
+        res.writeHead(400, { 'content-type': 'text/plain' }).end('missing or invalid session')
+        return
+      }
+      try {
+        await transport.handleRequest(req, res)
+      } catch (err) {
+        this.emit('error', err instanceof Error ? err.message : String(err))
+        if (!res.headersSent) res.writeHead(500, { 'content-type': 'text/plain' }).end('bridge error')
+      }
+      return
+    }
+
+    if (req.method !== 'POST') {
+      res.writeHead(405, { 'content-type': 'text/plain' }).end('method not allowed')
+      return
+    }
+
+    // Read the JSON-RPC body up front so we can tell an `initialize` (which
+    // starts a new session) from a normal request that must carry its session
+    // id. The transport accepts the pre-parsed body, so it is not read twice.
+    const body = await readJsonBody(req)
+    if (body === undefined) {
+      res.writeHead(400, { 'content-type': 'text/plain' }).end('invalid json body')
+      return
+    }
+
+    let transport = sessionId ? this.transports.get(sessionId) : undefined
+    if (!transport) {
+      if (sessionId || !isInitializeRequest(body)) {
+        // Unknown session (the bridge was restarted) or a non-initialize
+        // request with no session id. A well-behaved client re-initializes.
+        res.writeHead(400, { 'content-type': 'text/plain' }).end('missing or invalid session')
+        return
+      }
+      // New session: its own transport + server so a reconnecting client can
+      // initialize again instead of hitting "Server already initialized".
+      const mcp = this.createServer()
+      const created = new StreamableHTTPServerTransport({
+        sessionIdGenerator: () => randomUUID(),
+        enableJsonResponse: true,
+        onsessioninitialized: (sid) => {
+          this.transports.set(sid, created)
+          this.servers.set(sid, mcp)
+        }
+      })
+      created.onerror = (error) => {
+        this.emit('error', error.message)
+        console.error('[mcp] transport error:', error)
+      }
+      created.onclose = () => {
+        const sid = created.sessionId
+        if (sid) {
+          this.transports.delete(sid)
+          this.servers.delete(sid)
+        }
+        // Do NOT call mcp.close() here: the transport invokes onclose from
+        // inside its own close(), and mcp.close() closes the transport again —
+        // which would recurse. The orphaned server is garbage collected.
+        if (this.stopped) return
+        if (this.transports.size === 0) this.emit('disconnected', 'MCP transport closed')
+      }
+      try {
+        await mcp.connect(created)
+      } catch (err) {
+        // Never leave a half-wired transport behind if the handshake setup fails.
+        try {
+          await created.close()
+        } catch {
+          /* already closed */
+        }
+        try {
+          await mcp.close()
+        } catch {
+          /* already closed */
+        }
+        this.emit('error', err instanceof Error ? err.message : String(err))
+        if (!res.headersSent) res.writeHead(500, { 'content-type': 'text/plain' }).end('bridge error')
+        return
+      }
+      transport = created
+    }
+
+    if (
       this.state === 'starting' ||
       this.state === 'listening' ||
       this.state === 'disconnected' ||
@@ -273,9 +370,9 @@ export class McpBridge {
     ) {
       this.emit('connected', 'Agent MCP request received')
     }
-    // Let the transport consume the request body stream itself (don't pre-read).
+
     try {
-      await this.transport!.handleRequest(req, res)
+      await transport.handleRequest(req, res, body)
     } catch (err) {
       this.emit('error', err instanceof Error ? err.message : String(err))
       if (!res.headersSent) res.writeHead(500, { 'content-type': 'text/plain' }).end('bridge error')
@@ -290,16 +387,23 @@ export class McpBridge {
       this.heartbeat = undefined
     }
     this.emit('stopped', 'MCP bridge stopped')
-    try {
-      await this.transport?.close()
-    } catch {
-      /* ignore */
+    for (const [sid, transport] of [...this.transports]) {
+      // Capture the server before closing the transport: onclose deletes it
+      // from the map, so a lookup afterwards would miss it.
+      const server = this.servers.get(sid)
+      try {
+        await transport.close()
+      } catch {
+        /* already gone */
+      }
+      try {
+        await server?.close()
+      } catch {
+        /* already gone */
+      }
     }
-    try {
-      await this.mcp?.close()
-    } catch {
-      /* ignore */
-    }
+    this.transports.clear()
+    this.servers.clear()
     // http.close() only resolves once every open connection drains — and the
     // agent's long-lived SSE GET stream never does on its own. Destroy the
     // tracked sockets first, then await the close with a bounded timeout so
@@ -314,6 +418,43 @@ export class McpBridge {
       ])
     }
   }
+}
+
+/** First value of a possibly-arrayed request header. */
+function firstHeader(value: string | string[] | undefined): string | undefined {
+  if (Array.isArray(value)) return value[0]
+  return value
+}
+
+/**
+ * Read and JSON-parse a request body with a hard size cap. Returns `undefined`
+ * for a malformed/oversized body so the caller can answer 400 without throwing.
+ */
+function readJsonBody(req: IncomingMessage): Promise<unknown | undefined> {
+  return new Promise((resolve) => {
+    let data = ''
+    let settled = false
+    const done = (value: unknown | undefined) => {
+      if (settled) return
+      settled = true
+      resolve(value)
+    }
+    req.on('data', (chunk: Buffer) => {
+      data += chunk.toString('utf8')
+      if (data.length > MAX_REQUEST_BYTES) {
+        req.destroy()
+        done(undefined)
+      }
+    })
+    req.on('end', () => {
+      try {
+        done(data.length > 0 ? JSON.parse(data) : undefined)
+      } catch {
+        done(undefined)
+      }
+    })
+    req.on('error', () => done(undefined))
+  })
 }
 
 /**

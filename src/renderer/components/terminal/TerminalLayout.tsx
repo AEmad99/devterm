@@ -23,7 +23,8 @@ import {
   IconTmux,
   IconChevronLeft,
   IconChevronRight,
-  IconMore
+  IconMore,
+  IconSplit
 } from '../common/Icons'
 import PaneAgentControls from './PaneAgentControls'
 import { focusTerminal, openTmuxPicker } from '../../lib/terms'
@@ -217,7 +218,9 @@ export default function TerminalLayout({
     const newId = addLocal({ groupId: gid })
     useLayout
       .getState()
-      .sync([...sessions, { id: newId, groupId: gid }].map((x) => ({ id: x.id, groupId: x.groupId })))
+      .sync(
+        [...sessions, { id: newId, groupId: gid }].map((x) => ({ id: x.id, groupId: x.groupId }))
+      )
     useLayout.getState().splitBeside(sid, newId, zone)
     useSessions.getState().setActive(newId)
     focusTerminal(newId)
@@ -632,6 +635,11 @@ function PaneChrome({
               >
                 <TabStatusDot sessionId={sid} />
                 {s.agentOwnedBy && <span className="tab-agent-chip">AGT</span>}
+                {s.exitCode != null && s.exitCode !== 0 && (
+                  <span className="tab-exit-badge" title={`Exited with code ${s.exitCode}`}>
+                    {s.exitCode}
+                  </span>
+                )}
                 {editing?.id === sid ? (
                   <input
                     className="tab-rename"
@@ -662,6 +670,28 @@ function PaneChrome({
                     {label.context && <span className="tab-title-context"> — {label.context}</span>}
                   </span>
                 )}
+                <button
+                  className="tab-quick"
+                  aria-label="Split right with a new terminal"
+                  title="Split right with a new terminal"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onSplit(sid, 'right')
+                  }}
+                >
+                  <IconSplit size={11} />
+                </button>
+                <button
+                  className="tab-quick split-down"
+                  aria-label="Split down with a new terminal"
+                  title="Split down with a new terminal"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onSplit(sid, 'bottom')
+                  }}
+                >
+                  <IconSplit size={11} />
+                </button>
                 <button
                   className="tab-close"
                   aria-label="Close tab"

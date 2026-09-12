@@ -37,6 +37,12 @@ export interface AgentLaunchExtras {
   effort?: AgentEffort
   /** First user message for launchers that accept a trailing prompt. */
   initialPrompt?: string
+  /**
+   * Resume the previous conversation on relaunch (Settings → DevTerm Agent).
+   * The bundled Pi launcher consumes this through its own `preferences`; the
+   * external CLIs read it here so a restart/config refresh keeps progress.
+   */
+  resumeSessions?: boolean
 }
 
 const execFileAsync = promisify(execFile)

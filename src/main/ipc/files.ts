@@ -1,4 +1,4 @@
-import { ipcMain, BrowserWindow } from 'electron'
+import { ipcMain, shell, BrowserWindow } from 'electron'
 import { IPC } from '@shared/types'
 import {
   listLocal,
@@ -39,6 +39,12 @@ export function registerFileIpc(
   }
 
   // Local filesystem
+  ipcMain.handle(IPC.shellReveal, (_e, localPath: string): void => {
+    if (typeof localPath !== 'string' || localPath.length === 0) {
+      throw new Error('shell:reveal requires a local path')
+    }
+    shell.showItemInFolder(localPath)
+  })
   ipcMain.handle(IPC.fsList, (_e, path?: string) => listLocal(path))
   ipcMain.handle(IPC.fsHome, () => localHome())
   ipcMain.handle(IPC.fsMkdir, (_e, p: string) => mkdirLocal(p))

@@ -44,6 +44,19 @@ export type HotkeyId =
   | 'agents'
   | 'toggleGit'
 
+// Keybinding capture is a modal input mode. Keep the state outside React so
+// terminal, browser, and window-level handlers can all honor it before they
+// dispatch an application shortcut or write the chord to a PTY.
+let hotkeyCaptureActive = false
+
+export function setHotkeyCaptureActive(active: boolean): void {
+  hotkeyCaptureActive = active
+}
+
+export function isHotkeyCaptureActive(): boolean {
+  return hotkeyCaptureActive
+}
+
 export interface Hotkey {
   id: HotkeyId
   mod?: boolean

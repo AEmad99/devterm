@@ -403,6 +403,21 @@ export const IconInspect = (p: IconProps) => (
   </Svg>
 )
 
+/** Review — an eye, used for the agent approval-review affordance. */
+export const IconEye = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z" />
+    <circle cx="12" cy="12" r="2.6" />
+  </Svg>
+)
+
+/** Pin — keeps a manager row pinned to the top of its list. */
+export const IconPin = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M9 4h6l-1 6 3 3v2h-4.5V20l-1 1-1-1v-5H6v-2l3-3-1-6Z" />
+  </Svg>
+)
+
 /** Empty-state illustration for "no terminals / empty group". */
 export function EmptyTerminalArt({ size = 76 }: { size?: number }) {
   return (
