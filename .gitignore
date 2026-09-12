@@ -3,6 +3,12 @@ node_modules/
 out/
 dist/
 *.tsbuildinfo
+/.electron-builder-cache/
+/.electron-smoke-tmp/
+/.localappdata/
+/.npm-cache-tmp/
+/.tmp-build/
+/.tmp-test/
 
 # logs & os cruft
 *.log
@@ -24,8 +30,13 @@ dist/
 .agents/
 .codex/
 .doc-build/
+.muse/
 docs/
 devterm-commercial/
+
+# local packaging and shell probes
+/.probe-filter.cjs
+/Microsoft/Windows/PowerShell/ModuleAnalysisCache
 
 # local runtime terminal session state
 terminals/
