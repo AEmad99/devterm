@@ -3,6 +3,13 @@
 All notable changes to DevTerm are documented here. The most recent section is
 at the top. Dates are ISO `YYYY-MM-DD`.
 
+## Unreleased
+
+### Added
+
+- **Windows OpenSSH agent host tools.** Remote `run_command` on Windows now runs in PowerShell at the operator cwd, and file tools resolve `C:\\Users\\...` against Win32-OpenSSH SFTP (`/C/Users/...`). Interactive Windows remotes open PowerShell with OSC 7/133. Saved connections can also launch **RDP** via Microsoft Remote Desktop.
+- **Legacy SSH host keys.** `ssh-rsa` / `ssh-dss` remain offered so older Windows OpenSSH servers can connect.
+
 ## 1.3.22 — 2026-09-12
 
 File explorer sorting + search, toast notifications, transfer ETA, and a UI

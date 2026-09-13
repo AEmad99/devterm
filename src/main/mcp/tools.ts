@@ -9,6 +9,12 @@ import { sanitizeDetail } from './server'
 import { registerBrowserTools, type BrowserToolsDeps } from './tools-browser'
 import { registerAgentHandoffTools, type AgentHandoffDeps } from './tools-agent'
 import type { HostBackend } from '../agent/host-backend'
+import {
+  isWindowsRemotePath,
+  resolveWindowsRelative,
+  toWindowsSftpPath,
+  wrapWindowsRemoteCommand
+} from '../ssh/windows-host'
 
 /** Why a guarded action did/didn't proceed — distinct so the agent can report the real cause. */
 export type ConfirmOutcome = 'approved' | 'denied' | 'timeout'
@@ -79,16 +85,17 @@ const hostDownMessage = () =>
  * remote agents only get it when it is a POSIX path (`/...`). SSH exec channels
  * always start in the login default ($HOME) and `cd` does not persist between
  * calls, so for those we prefix a `cd` and resolve relative paths against this
- * value. We deliberately keep Windows-remote cwds out: a `C:\...` cwd would
- * build a broken command for cmd.exe/PowerShell on the remote, so those hosts
- * keep today's $HOME behaviour and the agent uses absolute paths (it is still
- * told the cwd in its briefing).
+ * value. Windows remotes report `C:\Users\...` via OSC 7; we keep those
+ * so run_command can Set-Location and relative file paths resolve against SFTP
+ * `/C/Users/...` form.
  */
 function activeCwd(host: HostBackend, getCwd?: () => string | undefined): string | undefined {
   const cwd = getCwd?.()
   if (!cwd) return undefined
   if (host.kind === 'local') return cwd
-  return cwd.startsWith('/') ? cwd : undefined
+  if (cwd.startsWith('/')) return cwd
+  if (isWindowsRemotePath(cwd)) return cwd
+  return undefined
 }
 
 /** Single-quote a path for a POSIX shell: close, escaped literal quote, reopen. */
@@ -109,8 +116,14 @@ function resolveHostPath(
   p: string
 ): string {
   const cwd = activeCwd(host, getCwd)
+  if (host.kind === 'local') {
+    if (!cwd) return p
+    return resolveNodePath(cwd, p)
+  }
+  if (isWindowsRemotePath(cwd ?? '') || isWindowsRemotePath(p)) {
+    return toWindowsSftpPath(resolveWindowsRelative(cwd, p))
+  }
   if (!cwd) return p
-  if (host.kind === 'local') return resolveNodePath(cwd, p)
   return resolvePosix(cwd, p)
 }
 
@@ -222,7 +235,8 @@ export function registerTools(mcp: McpServer, deps: ToolDeps): void {
     {
       description:
         'Run a shell command on the host (the SSH remote, or this workstation for a local agent) and return stdout/stderr/exit code. ' +
-        "It runs in the operator's current terminal directory (their live `cd`); pass absolute paths to act elsewhere.",
+        "It runs in the operator's current terminal directory (their live `cd`); pass absolute paths to act elsewhere. " +
+        'On Windows remotes the command is executed in PowerShell (not bash).',
       inputSchema: {
         command: z.string().describe('The command line to execute on the host.'),
         timeout_ms: z
@@ -263,7 +277,15 @@ export function registerTools(mcp: McpServer, deps: ToolDeps): void {
         // evaluates the agent's original `command`, never our prefix.
         const cwd = activeCwd(host, getCwd)
         const local = host.kind === 'local'
-        const toRun = local ? command : cwd ? `cd ${shQuote(cwd)} && ${command}` : command
+        const windowsRemote =
+          !local && (getContext().os === 'windows' || isWindowsRemotePath(cwd ?? ''))
+        const toRun = local
+          ? command
+          : windowsRemote
+            ? wrapWindowsRemoteCommand(command, cwd)
+            : cwd
+              ? `cd ${shQuote(cwd)} && ${command}`
+              : command
         const execCwd = local ? cwd : undefined
         const { stdout, stderr, code, timedOut } = await host.exec(toRun, ms, execCwd)
         // A timeout is reported as a normal (non-error) result with explicit wording:

@@ -10,6 +10,7 @@ import { resolveBundledAgentCli, resolveBundledNodeBin } from '../agent/launch'
 import { SSHManager, DEFAULT_RECONNECT_POLICY, type ReconnectPolicy } from '../ssh/manager'
 import { listRemote, mkdirRemote, renameRemote, deleteRemote } from '../ssh/sftp'
 import { remove as removeKnownHost } from '../ssh/knownHosts'
+import { powershellCommand } from '../ssh/windows-host'
 import { TransferManager } from '../transfers/transfer'
 import { startSftpServer } from './selftest-sftp'
 import { McpBridge } from '../mcp/server'
@@ -221,7 +222,13 @@ function startMockServer(scenario: Scenario): Promise<{ port: number; close: () 
       client.on('session', (acceptSession) => {
         const session = acceptSession()
         session.on('pty', (accept) => accept && accept())
-        session.on('shell', (accept) => {
+        session.on('shell', (accept, reject) => {
+          // Mirror Win32-OpenSSH configurations that reject interactive SSH
+          // shell requests and require callers to use an exec channel instead.
+          if (scenario === 'windows') {
+            reject()
+            return
+          }
           const stream = accept()
           stream.write('mock-shell-ready\r\n')
           // Echo input back, like a real shell would render typed chars.
@@ -230,6 +237,14 @@ function startMockServer(scenario: Scenario): Promise<{ port: number; close: () 
         session.on('exec', (accept, _reject, info) => {
           const stream = accept()
           const cmd = info.command
+          if (scenario === 'windows' && /^(?:powershell\.exe|cmd\.exe)/i.test(cmd)) {
+            // The Windows interactive fallback is a long-lived PTY-backed
+            // exec channel. Keep it open and echo input until the manager
+            // disconnects, just like the real OpenSSH server.
+            stream.write('mock-shell-ready\r\n')
+            stream.on('data', (d: Buffer) => stream.write(d))
+            return
+          }
           if (scenario === 'linux') {
             if (cmd.startsWith('uname')) stream.write('Linux mockhost 5.15.0 x86_64 GNU/Linux\n')
             else if (cmd.startsWith('hostname')) stream.write('mockhost\n')
@@ -293,6 +308,96 @@ async function testSshScenario(scenario: Scenario): Promise<void> {
   } finally {
     srv.close()
     await removeKnownHost(`127.0.0.1:${srv.port}`).catch(() => {})
+  }
+}
+
+/** Optional live acceptance check used only when explicitly enabled by env. */
+async function testLiveWindowsHost(): Promise<void> {
+  const host = process.env.DEVTERM_LIVE_WINDOWS_HOST
+  const password = process.env.DEVTERM_LIVE_WINDOWS_PASSWORD
+  if (!host || !password) return
+
+  const port = Number(process.env.DEVTERM_LIVE_WINDOWS_PORT || 22)
+  const username = process.env.DEVTERM_LIVE_WINDOWS_USER || 'Administrator'
+  let shellData = ''
+  const mgr = new SSHManager({
+    onData: (_id, data) => (shellData += data),
+    onExit: () => {},
+    onStatus: () => {}
+  })
+  let sessionId: string | undefined
+  let bridge: McpBridge | undefined
+  let mcpClient: Client | undefined
+
+  try {
+    const connected = await mgr.connect({ host, port, username, password })
+    sessionId = connected.sessionId
+    check('live Windows host OS detection', connected.context.os === 'windows', connected.context.detail)
+
+    await mgr.openShell(sessionId, 100, 30)
+    const promptDeadline = Date.now() + 8000
+    while (!shellData.includes('PS ') && Date.now() < promptDeadline) {
+      await new Promise((r) => setTimeout(r, 100))
+    }
+    check('live Windows PowerShell exec channel stays open', shellData.includes('PS '), shellData.slice(-160))
+    check(
+      'live Windows prompt setup is not echoed into the terminal',
+      !shellData.includes('function prompt {')
+    )
+    check('live Windows interactive startup has no CLIXML marker', !shellData.includes('#< CLIXML'))
+
+    mgr.input(sessionId, 'Write-Output DEVTERM_LIVE_SHELL_OK\r')
+    const shellCommandDeadline = Date.now() + 8000
+    while (!shellData.includes('DEVTERM_LIVE_SHELL_OK') && Date.now() < shellCommandDeadline) {
+      await new Promise((r) => setTimeout(r, 100))
+    }
+    check('live Windows interactive command executes', shellData.includes('DEVTERM_LIVE_SHELL_OK'))
+
+    const execResult = await mgr.exec(
+      sessionId,
+      powershellCommand('Write-Output DEVTERM_LIVE_EXEC_OK'),
+      10000
+    )
+    check(
+      'live Windows one-shot PowerShell exec executes',
+      execResult.code === 0 && execResult.stdout.includes('DEVTERM_LIVE_EXEC_OK'),
+      JSON.stringify({ code: execResult.code, stdout: execResult.stdout.trim(), stderr: execResult.stderr.trim() })
+    )
+    check(
+      'live Windows one-shot output has no CLIXML marker',
+      !execResult.stderr.includes('#< CLIXML')
+    )
+
+    const listing = await listRemote(await mgr.getSftp(sessionId), '/C/Users/Administrator')
+    check('live Windows SFTP path works', listing.path === '/C/Users/Administrator' && listing.entries.length > 0)
+
+    const context = mgr.getContext(sessionId)!
+    bridge = new McpBridge({
+      sessionId,
+      host: new SshHostBackend(mgr, sessionId),
+      getContext: () => mgr.getContext(sessionId!) ?? context,
+      hostDown: () => false,
+      airGapped: false,
+      policy: new Policy('full'),
+      confirm: async () => 'approved' as const
+    })
+    const info = await bridge.start()
+    mcpClient = new Client({ name: 'devterm-live-selftest', version: '0.1.0' })
+    await mcpClient.connect(
+      new StreamableHTTPClientTransport(new URL(info.url), {
+        requestInit: { headers: { Authorization: `Bearer ${info.token}` } }
+      })
+    )
+    const hostResult = textOf(
+      await mcpClient.callTool({ name: 'run_command', arguments: { command: 'hostname' } })
+    )
+    check('live Windows MCP run_command reaches host', hostResult.includes('exit_code: 0'))
+  } catch (e) {
+    check('live Windows host acceptance', false, String((e as Error).message || e))
+  } finally {
+    await withTimeout(mcpClient?.close() ?? Promise.resolve(), 3000)
+    await withTimeout(bridge?.stop() ?? Promise.resolve(), 3000)
+    if (sessionId) mgr.disconnect(sessionId)
   }
 }
 
@@ -764,6 +869,7 @@ export async function runSelfTest(): Promise<boolean> {
   await testBundledAgentRuntime()
   await testSshScenario('linux')
   await testSshScenario('windows')
+  await testLiveWindowsHost()
   await testSftp()
   testPolicy()
   await testReconnect()

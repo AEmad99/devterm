@@ -14,7 +14,7 @@ const statusDisposers = new Map<string, () => void>()
 
 export interface Session {
   id: string
-  kind: 'local' | 'remote' | 'browser'
+  kind: 'local' | 'remote' | 'browser' | 'rdp'
   title: string
   context?: HostContext
   /** Transient status line (connecting, host-key warnings, errors, closed). */
@@ -135,6 +135,10 @@ interface SessionState {
     agentOwnedBy?: string
     firstTabKey?: string
   }) => string
+  connectRdp: (
+    profile: SSHProfile,
+    meta?: { connectionId?: string; groupId?: string }
+  ) => Promise<string | null>
   setActive: (id: string) => void
   /** Move a session into another terminal group (the layout sync reconciles trees). */
   setGroup: (id: string, groupId: string) => void
@@ -349,6 +353,59 @@ export const useSessions = create<SessionState>((set, get) => ({
     // active leaf (same path as addLocal); no pty/ssh is created for it.
     set((s) => ({ sessions: [...s.sessions, session], activeId: id }))
     return id
+  },
+
+  connectRdp: async (profile, meta) => {
+    const tempId = `pending-rdp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
+    set((s) => ({
+      sessions: [
+        ...s.sessions,
+        {
+          id: tempId,
+          kind: 'rdp',
+          title: `${profile.username}@${profile.host}`,
+          status: 'connecting…',
+          connectionId: meta?.connectionId,
+          groupId: meta?.groupId ?? useLayout.getState().activeGroupId,
+          context: { kind: 'remote', os: 'windows', hostname: profile.host, detail: 'RDP' }
+        }
+      ],
+      activeId: tempId
+    }))
+    try {
+      const { sessionId } = await window.devterm.rdp.connect({ ...profile, protocol: 'rdp' })
+      const dispose = window.devterm.rdp.onStatus(sessionId, (st) => {
+        if (st.type === 'error') get().setStatus(sessionId, `error: ${st.message}`)
+        else if (st.type === 'closed') get().markClosed(sessionId)
+        else if (st.type === 'connected') get().setStatus(sessionId, 'connected · rdp')
+        else if (st.type === 'connecting') get().setStatus(sessionId, 'connecting…')
+      })
+      statusDisposers.set(sessionId, dispose)
+      set((s) => {
+        const stillPending = s.sessions.some((x) => x.id === tempId)
+        if (!stillPending) {
+          dispose()
+          statusDisposers.delete(sessionId)
+          window.devterm.rdp.disconnect(sessionId)
+        }
+        return {
+          sessions: s.sessions.map((x) =>
+            x.id === tempId
+              ? { ...x, id: sessionId, status: 'connected · rdp' }
+              : x
+          ),
+          activeId: s.activeId === tempId ? sessionId : s.activeId
+        }
+      })
+      return sessionId
+    } catch (e) {
+      set((s) => ({
+        sessions: s.sessions.map((x) =>
+          x.id === tempId ? { ...x, status: `failed: ${(e as Error).message}`, closed: true } : x
+        )
+      }))
+      return null
+    }
   },
 
   cancelSshReconnect: (sessionId) => {
@@ -615,6 +672,11 @@ export const useSessions = create<SessionState>((set, get) => ({
     }
     if (s?.kind === 'remote' && !id.startsWith('pending-')) {
       window.devterm.ssh.disconnect(id)
+    }
+    if (s?.kind === 'rdp') {
+      statusDisposers.get(id)?.()
+      statusDisposers.delete(id)
+      window.devterm.rdp.disconnect(id)
     }
     set((st) => {
       const remaining = st.sessions.filter((x) => x.id !== id)

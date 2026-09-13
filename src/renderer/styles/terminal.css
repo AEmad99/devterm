@@ -813,17 +813,20 @@ body.agent-float-body,
   height: 100%;
 }
 
-/* History autocomplete popup (Autosuggest.tsx), floated at the caret. */
+/* History autocomplete popup (Autosuggest.tsx), floated above/below the prompt
+   line (never over it) so it can't cover what you're typing. */
 .autosuggest {
   position: absolute;
   z-index: 30;
   width: 340px;
   max-width: calc(100% - 8px);
+  max-height: 240px;
+  overflow-y: auto;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 8px;
   box-shadow: var(--shadow-2);
-  overflow: hidden;
+  overflow-x: hidden;
   font-size: 12px;
 }
 .as-row {

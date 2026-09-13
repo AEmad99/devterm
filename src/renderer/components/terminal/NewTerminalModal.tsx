@@ -49,8 +49,8 @@ export default function NewTerminalModal({
               <IconRemote size={18} />
             </span>
             <span className="nt-text">
-              <span className="nt-label">Remote (SSH)</span>
-              <span className="nt-desc">Connect to a saved server</span>
+              <span className="nt-label">Remote (SSH / RDP)</span>
+              <span className="nt-desc">OpenSSH shell + agent, or Windows desktop</span>
             </span>
             <span className="nt-go" aria-hidden="true">
               ›

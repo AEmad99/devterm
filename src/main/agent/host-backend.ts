@@ -66,7 +66,7 @@ function mapListing(l: DirListing): HostListing {
   return { path: l.path, entries: l.entries.map(pick) }
 }
 
-/** Remote backend over one SSH session's channels (same client as the shell). */
+/** Remote backend over the SSH session's managed shell/operation channels. */
 export class SshHostBackend implements HostBackend {
   readonly kind = 'remote' as const
   constructor(

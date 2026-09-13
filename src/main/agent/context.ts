@@ -21,6 +21,22 @@ tracks their \`cd\` live — they don't need to spell out a path for "here". ${w
 `
 }
 
+function windowsRemoteSection(context: HostContext): string {
+  if (context.kind !== 'remote' || context.os !== 'windows') return ''
+  const q = (s: string) => '`' + s + '`'
+  return [
+    '## Windows host',
+    'This is a **Windows** machine. Host tools run through **PowerShell**, not bash.',
+    '- Use PowerShell in ' + q('run_command') + ' (' + q('Get-ChildItem') + ', ' + q('Get-Content') + ', ' + q('Set-Content') + ').',
+    '- Windows PowerShell 5.x does not accept ' + q('&&') + ' — chain with ' + q(';') + ' instead.',
+    '- ' + q('run_command') + " already Set-Locations into the operator's current directory.",
+    '- Relative ' + q('read_file') + ' / ' + q('write_file') + ' / ' + q('list_dir') + ' paths resolve against that directory.',
+    '- Absolute paths may be ' + q('C:\\Users\\...') + ' or OpenSSH SFTP form ' + q('/C/Users/...') + ' — both work.',
+    '- Do not assume GNU coreutils unless they are installed.',
+    ''
+  ].join('\n')
+}
+
 /**
  * Shared browser-tools paragraph for every per-CLI briefing. Tool name
  * prefixes differ per CLI, so it speaks generically about the `browser_*`
@@ -174,7 +190,7 @@ The DevTerm MCP bridge is a real HTTP server on localhost; its bearer token is
 in the \`DEVTERM_BRIDGE_TOKEN\` env var. Permission prompts come from this agent, not a DevTerm session policy.
 DevTerm Settings approval rules may still allow or deny a tool before it runs.
 
-${workingDirSection(cwd)}
+${workingDirSection(cwd)}${windowsRemoteSection(context)}
 ## Built-in tools are disabled in this session
 Read, write, edit, bash, grep, find, and ls are intentionally **off** — there
 is no local checkout here. If you need a file on this host, use
@@ -233,7 +249,7 @@ connection. Do not \`ssh\` elsewhere.
 - \`mcp__devterm__read_file\` / \`mcp__devterm__write_file\` / \`mcp__devterm__list_dir\` — files on this host.
 - \`mcp__devterm__get_host_context\` — re-read these facts.
 
-${workingDirSection(cwd)}
+${workingDirSection(cwd)}${windowsRemoteSection(context)}
 ## Your built-in file tools act locally, not on the host
 Your Read/Write/Edit tools operate on **this agent's own scratch directory**,
 not on the remote host — there is no host checkout here. Anything that looks
@@ -304,7 +320,7 @@ The DevTerm MCP bridge is a real HTTP server on localhost; its bearer token is
 in the bridge config OpenCode loaded. Permission prompts come from this agent, not a DevTerm session policy.
 DevTerm Settings approval rules may still allow or deny a tool before it runs.
 
-${workingDirSection(cwd)}
+${workingDirSection(cwd)}${windowsRemoteSection(context)}
 ## Your working directory is a throwaway
 The path you see on launch is a temp dir DevTerm uses only to hold the
 \`opencode.json\` config and this briefing — it is **not** a checkout of the
@@ -372,7 +388,7 @@ The DevTerm MCP bridge is a real HTTP server on localhost; the \`mcp.json\` it
 loaded contains the bearer token. Permission prompts come from this agent, not a DevTerm session policy.
 DevTerm Settings approval rules may still allow or deny a tool before it runs.
 
-${workingDirSection(cwd)}
+${workingDirSection(cwd)}${windowsRemoteSection(context)}
 ## Your working directory is a throwaway
 The path you see on launch is a temp dir DevTerm uses only to hold the
 \`.kimi-code/mcp.json\` config and this briefing — it is **not** a checkout of
@@ -440,7 +456,7 @@ The DevTerm MCP bridge is a real HTTP server on localhost; its bearer token is
 in the \`.grok/config.toml\` Grok loaded. Permission prompts come from this agent, not a DevTerm session policy.
 DevTerm Settings approval rules may still allow or deny a tool before it runs.
 
-${workingDirSection(cwd)}
+${workingDirSection(cwd)}${windowsRemoteSection(context)}
 ## Your working directory is a throwaway
 The path you see on launch is a temp dir DevTerm uses only to hold the Grok
 config and this briefing — it is **not** a checkout of the remote host. Anything
@@ -508,7 +524,7 @@ The DevTerm MCP bridge is a real HTTP server on localhost; its bearer token is
 in the Codex config this session loaded. Permission prompts come from this agent, not a DevTerm session policy.
 DevTerm Settings approval rules may still allow or deny a tool before it runs.
 
-${workingDirSection(cwd)}
+${workingDirSection(cwd)}${windowsRemoteSection(context)}
 ## Your working directory is a throwaway
 The path you see on launch is a temp dir DevTerm uses only to hold the Codex
 config and this briefing — it is **not** a checkout of the remote host. Anything
@@ -574,7 +590,7 @@ The DevTerm MCP bridge is a real HTTP server on localhost; its bearer token is
 in the Antigravity MCP config this session loaded. Permission prompts come from this agent, not a DevTerm session policy.
 DevTerm Settings approval rules may still allow or deny a tool before it runs.
 
-${workingDirSection(cwd)}
+${workingDirSection(cwd)}${windowsRemoteSection(context)}
 ## Your working directory is a throwaway
 The path you see on launch is a temp dir DevTerm uses only to hold the Antigravity
 config and this briefing — it is **not** a checkout of the remote host. Anything

@@ -30,8 +30,20 @@ function attrsFromStats(st: Stats) {
     mtime: Math.floor(st.mtimeMs / 1000)
   }
 }
+
+/** Map Win32-OpenSSH's `/C/...` SFTP spelling back to the test server's
+ * native filesystem. The production client sends this form for Windows
+ * remotes, while this mock server runs in the local test process. */
+function fsPath(p: string): string {
+  if (process.platform !== 'win32') return p
+  const m = p.match(/^\/([A-Za-z])(?:\/(.*))?$/)
+  if (!m) return p
+  const rest = (m[2] ?? '').replace(/\//g, '\\')
+  return normalize(rest ? `${m[1]}:\\${rest}` : `${m[1]}:\\`)
+}
+
 function attrsOf(p: string) {
-  return attrsFromStats(statSync(p))
+  return attrsFromStats(statSync(fsPath(p)))
 }
 
 /**
@@ -77,14 +89,15 @@ export function startSftpServer(root: string): Promise<{ port: number; close: ()
           const idOf = (h: Buffer) => h.readUInt32LE(0)
 
           sftp.on('REALPATH', (reqid: number, p: string) => {
-            const resolved = !p || p === '.' ? root : normalize(p)
+            const resolved = !p || p === '.' ? root : normalize(fsPath(p))
             sftp.name(reqid, [{ filename: resolved, longname: resolved, attrs: attrsOf(resolved) }])
           })
           sftp.on('OPENDIR', (reqid: number, p: string) => {
             try {
-              statSync(p)
+              const nativePath = fsPath(p)
+              statSync(nativePath)
               const h = mkHandle()
-              dirHandles.set(h.id, { path: p, done: false })
+              dirHandles.set(h.id, { path: nativePath, done: false })
               sftp.handle(reqid, h.buf)
             } catch {
               sftp.status(reqid, STATUS_CODE.NO_SUCH_FILE)
@@ -104,8 +117,9 @@ export function startSftpServer(root: string): Promise<{ port: number; close: ()
           sftp.on('STAT', (reqid: number, p: string) => respondStat(reqid, p))
           function respondStat(reqid: number, p: string) {
             try {
-              lstatSync(p)
-              sftp.attrs(reqid, attrsOf(p))
+              const nativePath = fsPath(p)
+              lstatSync(nativePath)
+              sftp.attrs(reqid, attrsOf(nativePath))
             } catch {
               sftp.status(reqid, STATUS_CODE.NO_SUCH_FILE)
             }
@@ -118,7 +132,7 @@ export function startSftpServer(root: string): Promise<{ port: number; close: ()
           })
           sftp.on('MKDIR', (reqid: number, p: string) => {
             try {
-              mkdirSync(p)
+              mkdirSync(fsPath(p))
               sftp.status(reqid, STATUS_CODE.OK)
             } catch {
               sftp.status(reqid, STATUS_CODE.FAILURE)
@@ -126,7 +140,7 @@ export function startSftpServer(root: string): Promise<{ port: number; close: ()
           })
           sftp.on('RENAME', (reqid: number, from: string, to: string) => {
             try {
-              renameSync(from, to)
+              renameSync(fsPath(from), fsPath(to))
               sftp.status(reqid, STATUS_CODE.OK)
             } catch {
               sftp.status(reqid, STATUS_CODE.FAILURE)
@@ -134,7 +148,7 @@ export function startSftpServer(root: string): Promise<{ port: number; close: ()
           })
           sftp.on('REMOVE', (reqid: number, p: string) => {
             try {
-              unlinkSync(p)
+              unlinkSync(fsPath(p))
               sftp.status(reqid, STATUS_CODE.OK)
             } catch {
               sftp.status(reqid, STATUS_CODE.FAILURE)
@@ -142,7 +156,7 @@ export function startSftpServer(root: string): Promise<{ port: number; close: ()
           })
           sftp.on('RMDIR', (reqid: number, p: string) => {
             try {
-              rmdirSync(p)
+              rmdirSync(fsPath(p))
               sftp.status(reqid, STATUS_CODE.OK)
             } catch {
               sftp.status(reqid, STATUS_CODE.FAILURE)
@@ -151,7 +165,7 @@ export function startSftpServer(root: string): Promise<{ port: number; close: ()
           sftp.on('OPEN', (reqid: number, filename: string, flags: number) => {
             try {
               const isWrite = !!(flags & OPEN_MODE.WRITE)
-              const fd = openSync(filename, isWrite ? 'w' : 'r')
+              const fd = openSync(fsPath(filename), isWrite ? 'w' : 'r')
               const h = mkHandle()
               fileHandles.set(h.id, fd)
               sftp.handle(reqid, h.buf)

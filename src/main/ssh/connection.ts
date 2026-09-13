@@ -102,6 +102,20 @@ async function connectHop(
       sock: transport as ConnectConfig['sock'],
       keepaliveInterval: 15000,
       readyTimeout: 20000,
+      // Windows OpenSSH / older servers still offer ssh-rsa (and rarely ssh-dss).
+      // Keep modern keys first; omit a category and ssh2 uses its defaults.
+      algorithms: {
+        serverHostKey: [
+          'ssh-ed25519',
+          'ecdsa-sha2-nistp256',
+          'ecdsa-sha2-nistp384',
+          'ecdsa-sha2-nistp521',
+          'rsa-sha2-512',
+          'rsa-sha2-256',
+          'ssh-rsa',
+          'ssh-dss'
+        ]
+      },
       // Host-key verification (§7.1): TOFU with operator confirmation on
       // first use and mismatch rejection. ssh2 allows `verify` to be called
       // asynchronously, so the confirm dialog can resolve later.

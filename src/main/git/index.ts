@@ -28,6 +28,7 @@ import type {
   GitTag
 } from '@shared/types'
 import { quoteRemotePath, shQuote } from '../utils/shell-quote'
+import { isWindowsRemotePath, wrapWindowsGitCommand } from '../ssh/windows-host'
 
 /** Cap how many file entries we expose per directory to keep the IPC payload sane. */
 const MAX_ENTRIES = 5000
@@ -228,7 +229,7 @@ export async function gitStatusRemote(
   // `cd` first so the porcelain output is path-relative (which the parser
   // expects). The path is untrusted (it follows the remote shell cwd), so it
   // must be airtight-quoted — double quotes alone leave `$(...)`/backticks live.
-  const cmd = `cd ${quoteRemotePath(path)} && git status --porcelain=1 --branch`
+  const cmd = remoteGit(path, "status --porcelain=1 --branch")
   const res = await exec(cmd, 30000)
   if (res.code !== 0) return notARepo()
   return parsePorcelain(res.stdout)
@@ -263,7 +264,7 @@ export async function gitDiffRemote(
   file: string
 ): Promise<string> {
   // Airtight-quote both the directory and the filename (both untrusted).
-  const cmd = `cd ${quoteRemotePath(path)} && git diff -- ${quoteRemotePath(file)}`
+  const cmd = remoteGit(path, "diff -- " + quoteRemotePath(file))
   const res = await exec(cmd, 30000)
   return res.code === 0 ? res.stdout : ''
 }
@@ -293,7 +294,7 @@ export async function gitStatusViaClient(
   ) => Promise<{ stdout: string; code: number | null }>,
   path: string
 ): Promise<GitStatus> {
-  const cmd = `cd ${quoteRemotePath(path)} && git status --porcelain=1 --branch`
+  const cmd = remoteGit(path, "status --porcelain=1 --branch")
   const res = await execOnClient(client, cmd, 30000)
   if (res.code !== 0) return notARepo()
   return parsePorcelain(res.stdout)
@@ -372,14 +373,19 @@ function runLocalGitCmd(
   })
 }
 
+function remoteGit(cwd: string, gitArgs: string): string {
+  if (isWindowsRemotePath(cwd)) return wrapWindowsGitCommand(cwd, gitArgs)
+  return 'cd ' + quoteRemotePath(cwd) + ' && git ' + gitArgs
+}
+
 /** Build a remote command line for an arbitrary git invocation. */
 function buildRemoteGit(cwd: string, args: string[]): string {
   // Args are all under our control (literal git flags, not untrusted text),
   // so plain quoting with single-quote escaping is enough. Anything that
   // arrives from the renderer as a file path must already have been wrapped
   // with `quoteRemotePath` by the caller.
-  const quoted = args.map((a) => shQuote(a)).join(' ')
-  return `cd ${quoteRemotePath(cwd)} && git ${quoted}`
+  const quoted = args.map((a) => (isWindowsRemotePath(cwd) ? quoteRemotePath(a) : shQuote(a))).join(' ')
+  return remoteGit(cwd, quoted)
 }
 
 /** Public exec resolver signature used by the IPC layer (delegated to RemoteExec above). */

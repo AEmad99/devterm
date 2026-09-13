@@ -1,4 +1,10 @@
 import { posix } from 'path'
+import { isWindowsRemotePath, toWindowsSftpPath } from './windows-host'
+
+function normalizeRemotePath(path: string): string {
+  if (isWindowsRemotePath(path)) return toWindowsSftpPath(path)
+  return posix.normalize(path)
+}
 import type { SFTPWrapper, Stats } from 'ssh2'
 import type { DirListing, FileContent, FileEntry } from '@shared/types'
 import { MAX_EDIT_BYTES } from '@shared/types'
@@ -22,7 +28,7 @@ export function sftpHome(sftp: SFTPWrapper): Promise<string> {
 }
 
 export async function listRemote(sftp: SFTPWrapper, dir?: string): Promise<DirListing> {
-  const path = dir && dir.trim() ? posix.normalize(dir) : await sftpHome(sftp)
+  const path = dir && dir.trim() ? normalizeRemotePath(dir) : await sftpHome(sftp)
   const list = await promise<{ filename: string; longname: string; attrs: Stats }[]>((cb) =>
     sftp.readdir(path, cb)
   )
@@ -48,11 +54,11 @@ export async function listRemote(sftp: SFTPWrapper, dir?: string): Promise<DirLi
 }
 
 export function statRemote(sftp: SFTPWrapper, path: string): Promise<Stats> {
-  return promise<Stats>((cb) => sftp.stat(path, cb))
+  return promise<Stats>((cb) => sftp.stat(normalizeRemotePath(path), cb))
 }
 
 export async function readFileRemote(sftp: SFTPWrapper, path: string): Promise<FileContent> {
-  const p = posix.normalize(path)
+  const p = normalizeRemotePath(path)
   const st = await statRemote(sftp, p)
   if (isDirMode(st.mode ?? 0)) throw new Error('Cannot open a directory in the editor')
   const size = st.size ?? 0
@@ -77,7 +83,7 @@ export async function writeFileRemote(
   path: string,
   content: string
 ): Promise<{ mtimeMs: number; size: number }> {
-  const p = posix.normalize(path)
+  const p = normalizeRemotePath(path)
   // Mirror the local write cap (and the editor's open limit) so a hostile or
   // runaway caller can't push an unbounded buffer through the SFTP channel.
   if (Buffer.byteLength(content, 'utf8') > MAX_EDIT_BYTES)
@@ -89,31 +95,32 @@ export async function writeFileRemote(
 }
 
 export function mkdirRemote(sftp: SFTPWrapper, path: string): Promise<void> {
-  return promise<void>((cb) => sftp.mkdir(path, cb))
+  return promise<void>((cb) => sftp.mkdir(normalizeRemotePath(path), cb))
 }
 
 /** Create an empty remote file. The `wx` flag fails if anything already exists at `path`. */
 export async function createFileRemote(sftp: SFTPWrapper, path: string): Promise<void> {
-  const p = posix.normalize(path)
+  const p = normalizeRemotePath(path)
   const handle = await promise<Buffer>((cb) => sftp.open(p, 'wx', (err, h) => cb(err, h)))
   await promise<void>((cb) => sftp.close(handle, (err) => cb(err, undefined)))
 }
 
 export function renameRemote(sftp: SFTPWrapper, from: string, to: string): Promise<void> {
-  return promise<void>((cb) => sftp.rename(from, to, cb))
+  return promise<void>((cb) => sftp.rename(normalizeRemotePath(from), normalizeRemotePath(to), cb))
 }
 
 /** Recursively remove a remote file or directory. */
 export async function deleteRemote(sftp: SFTPWrapper, path: string): Promise<void> {
-  const st = await promise<Stats>((cb) => sftp.lstat(path, cb))
+  const p = normalizeRemotePath(path)
+  const st = await promise<Stats>((cb) => sftp.lstat(p, cb))
   if (isDirMode(st.mode ?? 0)) {
-    const children = await promise<{ filename: string }[]>((cb) => sftp.readdir(path, cb))
+    const children = await promise<{ filename: string }[]>((cb) => sftp.readdir(p, cb))
     for (const c of children) {
       if (c.filename === '.' || c.filename === '..') continue
-      await deleteRemote(sftp, posix.join(path, c.filename))
+      await deleteRemote(sftp, posix.join(p, c.filename))
     }
-    await promise<void>((cb) => sftp.rmdir(path, cb))
+    await promise<void>((cb) => sftp.rmdir(p, cb))
   } else {
-    await promise<void>((cb) => sftp.unlink(path, cb))
+    await promise<void>((cb) => sftp.unlink(p, cb))
   }
 }

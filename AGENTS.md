@@ -1,166 +1,155 @@
 # AGENTS.md
 
-Guidance for coding agents working in the DevTerm repository.
+Guidance for coding agents working in the DevTerm repository. Read this first; prefer the code over any doc when they disagree, and update this file in the same change when you find drift.
 
-DevTerm is an Electron 29 desktop terminal: local shells (prebuilt node-pty), SSH/SFTP sessions, workspaces, file browsing/editing (CodeMirror 6), an in-app browser, snippets, a Warp-style Git panel, a persistent transfer queue, offline Whisper dictation, global terminal search, and an embedded multi-provider **DevTerm Agent** with seven external CLI fallbacks (`pi`, `claude`, `opencode`, `kimi`, `grok`, `codex`, `antigravity`). Every agent runs in a local PTY and reaches the remote host only through DevTerm's in-process MCP bridge. Stack: electron-vite, TypeScript strict, React 18, Zustand, xterm.js, ssh2, marked + DOMPurify, `@huggingface/transformers`, `@earendil-works/pi-coding-agent` (bundled runtime), dedicated `node` binary for the agent, electron-updater, zod.
+DevTerm is an Electron 29 desktop terminal: local shells (prebuilt node-pty), SSH/SFTP sessions, tiling workspaces, file browsing/editing (CodeMirror 6), an in-app browser, snippets, a Warp-style Git panel, a persistent transfer queue, offline Whisper dictation, global terminal search, and an embedded multi-provider **DevTerm Agent** with seven external CLI fallbacks (`pi`, `claude`, `opencode`, `kimi`, `grok`, `codex`, `antigravity`). Every agent runs in a local PTY and reaches the remote host only through DevTerm's in-process MCP bridge. Stack: electron-vite, TypeScript strict, React 18, Zustand, xterm.js, ssh2, marked + DOMPurify, `@huggingface/transformers`, `@earendil-works/pi-coding-agent` (bundled runtime), a dedicated `node` binary for the agent, electron-updater, zod.
 
-**Current version:** `package.json` → `1.3.22`. Top-level views: **Terminals** (always-mounted workspace: group tabs, split panes, local/remote/browser sessions), **Connections**, **Workspaces**, **Snippets**. DevTerm is a normal framed desktop app; the first screen is the terminal, not a marketing page.
+**Version:** `package.json` (currently `1.3.20`). Top-level views: **Terminals** (the always-mounted workspace: group tabs, split panes, local/remote/browser sessions), **Connections**, **Workspaces**, **Snippets**. DevTerm is a normal framed desktop app; the first screen is the terminal, not a marketing page. Release history lives in `CHANGELOG.md` — do not duplicate it here.
+
+## Start here
+
+| Task | Command |
+| --- | --- |
+| First-time setup | `npm install --ignore-scripts`, then `npm run setup` (Electron + node-pty prebuilt). **Never** `npm rebuild` node-pty, never plain `npm install`. |
+| Dev loop | `npm run dev` (hot-reload) |
+| Required correctness gate | `npm run typecheck` (node + web tsconfigs) — run before finishing any code change |
+| Lint / format | `npm run lint`, `npm run format` (Prettier). Baseline has pre-existing lint findings; fix yours, don't boil the ocean. |
+| Tests | `npm run test` (all `*.test.ts` via tsx, 31 files), `npm run test:grid` (grid-spec validation) |
+| Smoke | `node scripts/smoke.cjs` (node-pty/ssh2). `electron . --self-test` is the deeper headless check (90s watchdog, needs a build). |
+| Package | `npm run build:win` / `build:linux` → `dist/`. Release flow (typecheck + lint + test + smoke → build → commit to `main` → push → tag `v<version>`) only on explicit request. |
+| Commit target | Commit directly to `main` unless the user asks for a branch or PR. |
+
+Project skills in `.claude/skills/` (load via the skill tool, they carry the exact workflows):
+
+- `add-ipc` — adding a renderer↔main IPC command (three-layer edit, see below).
+- `add-mcp-tool` — adding an agent MCP tool (define in `tools*.ts`, guard in `policy.ts`).
+- `verify` — pre-commit sanity (typecheck + lint + smoke).
+- `package-win` — Windows NSIS installer (human-invoked only).
 
 ## Architecture
 
 | Layer | Path | Role |
 | --- | --- | --- |
-| Main | `src/main` | BrowserWindow, IPC handlers, node-pty, SSH/SFTP, port forwards, fs, transfers, MCP bridge, git, search index, updater, persistence |
-| Preload | `src/preload/index.ts` | Only typed bridge to the sandboxed renderer (`contextIsolation: true`, `nodeIntegration: false`, `sandbox: true`) |
-| Renderer | `src/renderer` | React UI, Zustand stores, xterm, CodeMirror, browser panes, dictation worker |
-| Shared | `src/shared/types.ts` | `IPC` channel map, `DevTermApi`, domain types |
+| Main | `src/main` | BrowserWindow, IPC handlers (`src/main/ipc/*`, registered in `src/main/index.ts` → `registerIpc()`), node-pty, SSH/SFTP, port forwards, fs, transfers, MCP bridge, git, search index, updater, persistence |
+| Preload | `src/preload/index.ts` | The **only** typed bridge to the sandboxed renderer (`contextIsolation: true`, `nodeIntegration: false`, `sandbox: true`). Nothing reaches the renderer except through here. |
+| Renderer | `src/renderer` | React UI, Zustand stores (`store/`), xterm, CodeMirror, browser panes, dictation worker |
+| Shared | `src/shared/types.ts` (~2150 lines) | `IPC` channel map + `DevTermApi` interface + domain types. The contract both sides import (`@shared`). |
 
-Every renderer→main capability must be added in **all three places** together: `src/shared/types.ts` (`IPC` + `DevTermApi`), a main IPC handler, and the preload exposure. Streaming channels use the per-id suffix convention and the coalescer in `src/main/ipc/coalesce.ts`.
+**The IPC rule (no exceptions):** every renderer→main capability is added in **all three places together** — `src/shared/types.ts` (`IPC` const + `DevTermApi`), a main handler in `src/main/ipc/*` (registered from `src/main/index.ts`), and the preload exposure in `src/preload/index.ts`. A mismatch is a compile error, which is why `npm run typecheck` is the gate. Streaming channels use the per-id suffix convention (`pty:data:<id>`, `ssh:data:<id>`, `agent:bridge-status:<id>`, …) plus the coalescer in `src/main/ipc/coalesce.ts`. Fire-and-forget renderer→main calls go over `ipcRenderer.send`; request/response goes over `invoke`/`handle`.
 
 ### Code map (high traffic)
 
 | Area | Location |
 | --- | --- |
-| App / window | `src/main/index.ts` |
-| IPC registration | `src/main/ipc/*` (`foundation.ts` for settings sync / bridge activity) |
-| Local PTY | `src/main/pty/manager.ts` |
-| SSH / SFTP / reconnect / detached shells | `src/main/ssh/*` (incl. `quick-connect.ts`) |
+| App / window / IPC registration | `src/main/index.ts` (`registerIpc()` wires ~20 `register*Ipc` modules) |
+| Local PTY | `src/main/pty/manager.ts`, IPC `src/main/ipc/pty.ts` |
+| SSH / reconnect / SFTP / watch | `src/main/ssh/{manager,connection,knownHosts,osDetect,sftp,watch,quick-connect}.ts`, IPC `src/main/ipc/ssh.ts` |
+| Detached tmux sessions | `src/main/ssh/{tmux,detached-session}.ts`, UI `TmuxPicker` |
 | Port forwards (`-L`, SOCKS `-D`) | `src/main/ssh/port-forward.ts`, UI `PortForwardPanel.tsx` |
-| MCP server / tools / policy | `src/main/mcp/server.ts`, `tools.ts`, `tools-browser.ts`, `policy.ts` |
-| Agent browser control | `src/main/browser/*` (control registry, snapshot refs, URL guard), `ipc/browser-control.ts` |
-| Agent launch (bundled + fallbacks) | `src/main/agent/launch.ts`, `*-launch.ts`, `context.ts`, `extension.ts` |
-| Agent UI modes | `lib/agent-ui.ts`, `AgentPane.tsx`, `agent-window.tsx`, main `ipc/agent.ts` + `ipc/broadcast.ts` |
-| Approval rules & activity | `src/main/agent/approval-rules.ts`, `bridge-activity.ts` |
+| MCP server / policy | `src/main/mcp/{server,policy}.ts` |
+| MCP tools: host / browser / handoff | `src/main/mcp/{tools,tools-browser,tools-agent}.ts` |
+| Agent browser control | `src/main/browser/*` (control registry, snapshot refs, URL guard), IPC `src/main/ipc/browser-control.ts` |
+| Agent launch (bundled + 7 fallbacks) | `src/main/agent/{launch,context,extension,agent-bin,host-backend}-*.ts` (`claude-`, `codex-`, `opencode-`, `kimi-`, `grok-`, `antigravity-launch.ts`) |
+| Agent UI + IPC + broadcast | `AgentPane.tsx`, `agent-window.{html,tsx}`, `lib/agent-ui.ts`, main `src/main/ipc/{agent,broadcast}.ts` |
+| Approval rules & activity | `src/main/agent/{approval-rules,bridge-activity}.ts`, UI `AgentActivityPanel.tsx`, IPC `src/main/ipc/foundation.ts` |
 | Search index | `src/main/search/*` (ANSI strip at ingest) |
-| Git | `src/main/git/*`, UI `src/renderer/components/git/*` |
-| Transfers | `src/main/transfers/*` (persistent queue; `transfer.ts` is self-test helper) |
-| Session restore | `lib/session-restore.ts`, `main/ipc/session-restore.ts` |
-| SSH config import | `main/ssh/ssh-config-parse.ts`, Connections “Import SSH config” |
-| Layout / sessions / settings | `src/renderer/store/{layout,sessions,settings}.ts` |
-| Terminal chrome | `TerminalLayout.tsx`, `TerminalView.tsx`, `RemoteSessionView.tsx`, `BrowserPane.tsx` |
+| Git | `src/main/git/index.ts` (single file), UI `src/renderer/components/git/*` |
+| Transfers | `src/main/transfers/{queue,store}.ts` (`transfer.ts` is a self-test helper), IPC `src/main/ipc/transfers.ts` |
+| Session restore | `src/renderer/lib/session-restore.ts`, `src/main/ipc/session-restore.ts` |
+| SSH config import | `src/main/ssh/ssh-config-parse.ts`, Connections “Import SSH config” |
+| Sessions / layout / settings stores | `src/renderer/store/{sessions,layout,settings}.ts` |
+| Terminal chrome | `TerminalLayout.tsx`, `TerminalView.tsx`, `RemoteSessionView.tsx`, `LocalSessionView.tsx`, `BrowserPane.tsx` |
+| Tab labels / status | `src/renderer/lib/{tab-label,tab-status}.ts` |
+| Themes / hotkeys / attention | `src/renderer/lib/{themes,hotkeys,attention}.ts` |
 | Styles | `styles.css` imports `styles/{base,chrome,terminal,panels,motion}.css` |
-| Themes / hotkeys | `lib/themes.ts`, `lib/hotkeys.ts` (user-overridable) |
+| Settings import/export | `src/main/settings-io.ts` (path is `src/main/`, not `ipc/`) |
 
-## Feature notes
+## Sessions, layout, and the always-mounted invariant
 
-Non-obvious behavior and code locations. Prefer reading the code for edge cases; keep this file as a durable map, not a changelog dump.
+- `Session` (`store/sessions.ts`) has `kind: 'local' | 'remote' | 'browser'`, plus `cwd` (OSC 7), `agentUiMode/agentKind/agentPtyId/agentBridgeState/agentPendingApproval`, `needsAttention/hasUnreadOutput/processRunning/exitCode`, `connectionId` (saved-SSH remotes), `groupId`, and browser-only `url/agentOwnedBy/firstTabKey`.
+- Tiling model: binary split tree in `store/layout.ts` (`leaf` holds pane tabs; `split` divides `row`/`col` with fractional sizes; `groups` hold independent trees, default group is `default`). `TerminalLayout.tsx` computes rects and renders one stable `.term-slot` per session. **Inactive groups stay mounted, hidden via `.term-hidden` (visibility + off-screen translate, never `display:none`).**
+- **Critical:** never unmount `TerminalLayout`, never reparent xterm DOM slots — either destroys PTYs/SSH shells. Focus mode (`focusedId`, Ctrl/Cmd+Shift+Z) and zen mode (`zenMode`, Ctrl/Cmd+Alt+Z) only reposition/hide; never scale terminal text (blurs).
+- Terminal grids: `CreateGridModal.tsx` + `lib/createGrid.ts` (max 4×4), restored via the shared `restoreGroup` path. Remote grid cells each get their own ssh2 client. Groups launched from workspaces carry `launchedFromWorkspaceId` in `groupFlags` for “Save back”.
+- Tab labels compress long agent/shell activity (`lib/tab-label.ts`); busy tabs are width-capped. The one-time welcome hint (“Getting started”) is sticky — settings import must not resurrect it.
 
-### Terminals & layout
+## Terminals
 
-- Tiling model: binary split tree in `src/renderer/store/layout.ts`; `TerminalLayout.tsx` computes rects and renders one stable `.term-slot` per session. Inactive groups stay mounted, hidden via `.term-hidden` (visibility + off-screen translate, **never** `display:none`).
-- Focus mode (`focusedId`, Ctrl/Cmd+Shift+Z) and zen mode (`zenMode`, Ctrl/Cmd+Alt+Z) only reposition/hide — never reparent xterm, never scale terminal text (blurs).
-- Terminal grids: `CreateGridModal.tsx` + `lib/createGrid.ts` (max 4×4), restored via the shared `restoreGroup` path. Remote grid cells each get their own ssh2 client. Groups launched from workspaces carry `launchedFromWorkspaceId` in `groupFlags` for "Save back".
-- Local PTYs: `src/main/pty/manager.ts` picks the shell from the `defaultShell` pref (`auto` / `pwsh` / `powershell` / `cmd` / `custom`) and injects PowerShell OSC 7/133 prompt hooks (explicit shell args bypass injection). A fresh PTY exiting with no output fires `pty:startup-failure:<id>` with a targeted diagnostic.
-- Remote SSH: **one ssh2 client per session** (`src/main/ssh/manager.ts`) shared by shell, SFTP, exec, watch polling, port forwards, git ops, and agent tools. Direct hops set `setNoDelay(true)` — keep it. Single bastion hop via `profile.jump`. TOFU host keys in `userData/known_hosts.json` (mode 0o600; mismatches rejected). Auto-reconnect with exponential backoff; session ids stay stable across reconnects.
-- Remote shells get OSC 7 (`__dt7`) and OSC 133 (`__dtA`/`__dtB`) hooks (idempotent bash/zsh wraps; PowerShell prompt fn on Windows remotes). Inside tmux, hooks emit DCS-wrapped OSC (`\ePtmux;…`) and DevTerm enables `allow-passthrough` so cwd still reaches the explorer. Preserve when editing shell setup (`buildPosixShellIntegrationSetup`).
-- `remoteDetachedSessions` (default **on**): on POSIX remotes with a *working* tmux (`tmux -V`, not just `command -v`), connecting offers a pane-local picker (`TmuxPicker` + `ssh.listTmux` / `ssh.attachTmux` / `ssh.killTmux`) — live pane preview, window/command/cwd metadata, create-and-attach, kill session, or a normal login shell. Reopen anytime from the remote tab-strip button, Ctrl/Cmd+Alt+T, or the command palette. Attach is a child process, **never** `exec`, so prefix+d returns to the login shell instead of killing the SSH channel. Switching sessions while already attached uses `tmux switch-client` (exec), not typed attach. If a tmux client still exits (`exec tmux` leftovers), main reopens a normal shell without firing `ssh:exit`. Broken tmux installs skip the picker. SSH reconnect re-attaches only when the operator was still inside the chosen session. Remote POSIX shell-integration inject is echo-off + no `clear` so the login banner is not flashed/wiped.
-- Remote POSIX OSC inject (`buildPosixShellIntegrationSetup`): write via `writeQuiet` (`stty -echo` as its own line, then payload). Never `clear`. Do not type the setup into an existing tmux pane (only into a freshly created session). Preserve OSC 7/133 DCS wrapping when editing.
-- `exec` timeouts resolve `timedOut: true` with partial output — not a disconnect. Port forwarding: local `-L` and dynamic `-D` SOCKS5 (no-auth, CONNECT only) in `port-forward.ts` / `PortForwardPanel.tsx`.
-- Tab labels compress long agent/shell activity (`lib/tab-label.ts`); busy tabs are width-capped. One-time welcome hint (Getting started) surfaces real keybindings for palette / new terminal / settings; dismiss is sticky and not resurrected by settings import.
-- **Renderer:** terminals use the **canvas** addon on purpose (`lib/renderer.ts`) — WebGL is avoided because every session stays mounted and Chromium's WebGL context cap (~16) blanked panes. Fall back is xterm DOM. Do not switch to WebGL without a context-budget strategy.
-- **Autosuggest:** history-driven popup (`lib/autosuggest.ts` + `Autosuggest.tsx`) uses OSC 133 `;B` as the command-input anchor; accepting sends keystrokes to the shell (never writes into the buffer). Requires working prompt hooks.
-- **Find:** per-pane SearchAddon bar via `SearchBar`; opened from xterm key handler **and** App global hotkey through `openTerminalFind` / `registerFindOpener` in `lib/terms.ts`.
+- **Local PTYs** (`src/main/pty/manager.ts`): shell comes from the `defaultShell` pref (`auto` / `pwsh` / `powershell` / `cmd` / `custom`); PowerShell gets OSC 7/133 prompt hooks (explicit shell args bypass injection). A fresh PTY exiting with no output fires `pty:startup-failure:<id>` with a targeted diagnostic (classic Windows PowerShell 5.1 signature failure).
+- **Remote SSH — one primary ssh2 client per session** (`src/main/ssh/manager.ts`) is shared by shell, SFTP, exec, watch polling, port forwards, git ops, and agent tools on normal remotes. Windows compatibility mode is the scoped exception: when a Windows OpenSSH server resets a connection on a second channel (common with `MaxSessions=1`), command and SFTP work use isolated auxiliary clients while the visible shell stays on the primary client. Direct hops set `setNoDelay(true)` — keep it. Single bastion hop via `profile.jump` (multi-hop chains are not supported). TOFU host keys in `userData/known_hosts.json` (mode 0o600; mismatches rejected). Auto-reconnect with exponential backoff (`ReconnectPolicy`); session ids stay stable across reconnects.
+- **Shell integration:** remote shells get OSC 7 (`__dt7`) and OSC 133 (`__dtA`/`__dtB`) hooks — idempotent bash/zsh wraps, PowerShell prompt fn on Windows remotes. Inside tmux, hooks emit DCS-wrapped OSC (`\ePtmux;…`) with `allow-passthrough` enabled. POSIX inject goes through `buildPosixShellIntegrationSetup` via `writeQuiet` (`stty -echo` as its own line, then payload) — never `clear`, never type setup into an existing tmux pane (fresh sessions only), and keep the deferred `${__dtA}`/`${__dtB}` PS1 references (baking the tmux DCS envelope into PS1 prints a stray `]` — regression-tested in `detached-session.test.ts`).
+- **Detached sessions** (`remoteDetachedSessions`, default on): POSIX remotes with a *working* tmux (`tmux -V`, not just `command -v`) get a pane-local picker (`TmuxPicker` + `ssh.listTmux/attachTmux/killTmux`) with live pane preview, window/command/cwd metadata, create-and-attach, kill, or normal login shell. Reopen via pane button, Ctrl/Cmd+Alt+T, or palette. Attach is a child process, **never `exec`**, so prefix+d returns to the login shell. Switching while attached uses `tmux switch-client`. A tmux client that still exits reopens a normal shell without firing `ssh:exit`. Broken tmux installs skip the picker. Reconnect re-attaches only if the operator was still inside the chosen session.
+- **`exec` timeouts** resolve `timedOut: true` with partial output — not a disconnect. Port forwarding: local `-L` and dynamic `-D` SOCKS5 (no-auth, CONNECT only).
+- **Renderer:** terminals use the **canvas** addon on purpose (`lib/renderer.ts`) — WebGL is avoided because every session stays mounted and Chromium's ~16 WebGL context cap blanked panes. Fallback is xterm DOM. Do not switch to WebGL without a context-budget strategy. Default scrollback 10 000 (clamp 100–100 000).
+- **Autosuggest** (`lib/autosuggest.ts` + `Autosuggest.tsx`, history-driven) uses OSC 133 `;B` as the command-input anchor; accepting sends keystrokes to the shell, never writes into the buffer. Requires working prompt hooks.
+- **Find:** per-pane SearchAddon bar via `SearchBar`, opened from the xterm key handler **and** the App global hotkey through `openTerminalFind` / `registerFindOpener` in `lib/terms.ts`. Per-pane find is Ctrl/Cmd+Shift+F; global search is Ctrl/Cmd+Alt+F.
 
-### Files & editor
+## Agent bridge (DevTerm Agent + 7 fallbacks)
 
-- `FileExplorer` follows the active shell cwd: local via fs IPC, remote via SFTP on the same ssh2 client. Shared `FsApi` abstraction in `src/renderer/lib/fsapi.ts`.
-- Listings live-update via `FsApi.watch()` (local `src/main/fs/watch.ts`; remote SFTP poll at 2500ms). Do not add manual refresh as the primary path.
-- Editor: CodeMirror 6 (`EditorView.tsx`), max 5 MiB (`MAX_EDIT_BYTES`), original EOL re-applied on save; sanitized Markdown preview in `lib/markdown-preview.ts` (marked GFM + DOMPurify). Opening a file must keep the Terminals/file tab strip so users can leave the editor.
-- Dual-pane SFTP browser uses the **persistent transfer queue** (legacy ad-hoc transfer IPC is gone from the renderer).
-
-### Browser panes
-
-- `<webview>` tabs on partition `persist:browser`, hardened in `src/main/index.ts` + `src/main/ipc/browser.ts`: preload stripped, `nodeIntegration: false`, http(s)/about:blank only (other schemes go to the OS browser), sensitive permissions default-denied, UA de-Electroned.
-- Per-origin zoom persisted (`userData/browser-zoom.json`); downloads to `userData/Downloads` with throttled progress broadcast (~150ms). Browser panes are sessions (groups/tabs/splits/focus) but create no PTY or SSH channel.
-
-### Agent bridge (DevTerm Agent + fallbacks)
-
-**Product default:** `agentKind: 'devterm'` — the bundled multi-provider agent (`@earendil-works/pi-coding-agent` + packaged `node` binary), not an external CLI. External CLIs remain selectable fallbacks.
-
-Launch layers:
+**Product default:** `agentKind: 'devterm'` — the bundled multi-provider agent (`@earendil-works/pi-coding-agent` + packaged `node` binary), not an external CLI. `AgentKind = 'devterm' | 'claude' | 'pi' | 'opencode' | 'kimi' | 'grok' | 'codex' | 'antigravity'`.
 
 | Kind | Prep | How it reaches MCP |
 | --- | --- | --- |
 | `devterm` | `prepareBuiltinAgentLaunch` in `launch.ts` | Bundled Node + CLI + `devterm-mcp.mjs` extension. **Remote:** `--no-builtin-tools` (host work is MCP). **Local:** builtin fs/shell on, process cwd = operator folder; MCP is browser-only |
 | `pi` | `prepareAgentLaunch` | PATH `pi` + same extension isolation flags |
-| `claude` | `claude-launch.ts` | Native MCP via `--mcp-config`; keeps local Read/Write/Edit for scratch |
+| `claude` | `claude-launch.ts` | Native MCP via `--mcp-config`; keeps local Read/Write/Edit for scratch (remote) or Bash/Glob/Grep too (local) |
 | `opencode` | `opencode-launch.ts` | Per-session `opencode.json` remote MCP entry; tools as `devterm_*` |
 | `kimi` | `kimi-launch.ts` | Per-session `.kimi-code/mcp.json`; tools as `mcp__devterm__*` |
 | `grok` | `grok-launch.ts` | Per-session `.grok/config.toml` HTTP MCP; tools as `devterm__*` |
 | `codex` | `codex-launch.ts` | Isolated `CODEX_HOME/config.toml` HTTP MCP; tools as `mcp__devterm__*` |
-| `antigravity` | `antigravity-launch.ts` | Per-session `.antigravity/mcp.json` HTTP MCP for Google `agy` / Antigravity CLI |
+| `antigravity` | `antigravity-launch.ts` | Per-session `.antigravity/mcp.json` HTTP MCP for Google `agy` |
 
-Bridge & tools:
-
-- MCP bridge (`src/main/mcp/server.ts`) on `127.0.0.1:<random-port>` gated by a random bearer token.
-- Host tools (`src/main/mcp/tools.ts`): `ping`, `get_host_context`, `run_command`, `list_dir`, `read_file`, `write_file` — **remote only**, against `SshHostBackend` on the session's ssh2 client. Local agents do **not** register these tools (`hostTools: false`); they use the CLI's own Read/Write/Bash/Grep in the operator's folder (`resolveLocalSpawnCwd`). `browser_*` tools still register on both surfaces.
-- Relative paths and `run_command` on remotes honor the live POSIX cwd from OSC 7; Windows remotes keep login-default semantics for cwd prefixing.
-- Browser tools (`src/main/mcp/tools-browser.ts`, toggle in Settings → DevTerm Agent, default on): `browser_list/open/navigate/snapshot/click/type/press_key/screenshot/attach/detach/close`. The agent freely drives tabs it opened (badged `AGT`); operator-opened tabs are readable/drivable only after a one-time per-tab confirm (`browser_attach`), grants live in-memory and clear on Stop/close. Snapshots inject ref tags (`data-dt-ref`) resolved by later click/type calls; results carry an UNTRUSTED banner (prompt-injection defense). Navigation reuses the guest URL guard (`browser/url-guard.ts`) — http(s)/about:blank only, same allowlist as interactive panes. Password fields follow the policy ladder; approval-rule prefixes match URLs/origins.
-- MCP launch uses policy mode `full` (no DevTerm confirm modal). Permission prompts belong to the agent CLI (Claude `/permissions`, Codex approval, etc.). Approval rules (`approval-rules.ts`, `userData/approval-rules.json`) remain a **PRE-CHECK** allow/deny/ask at the MCP boundary. UI for rules lives under Settings → Agent guardrails. The old per-session Policy picker is gone — it did not map onto Claude/Grok (always bypassed) or Codex the way the UI implied.
-- Built-in local fs/shell tools are disabled for **remote** agents so host work crosses the MCP bridge (shared ssh2 client). **Local** agents keep builtins and skip MCP host tools. Claude on a remote still keeps Read/Write/Edit for **scratch** only; Claude on a local pane also gets Bash/Glob/Grep.
-- Briefings: remote writes per-session `AGENTS.md` in a temp overlay (`buildAgentsMd`). Local appends `buildLocalNativeMd` via `--append-system-prompt` and does not plant AGENTS.md in the project.
+- MCP bridge (`src/main/mcp/server.ts`) on `127.0.0.1:<random-port>` gated by a random Bearer [REDACTED] MCP launch uses policy mode `full` (no DevTerm confirm modal) — permission prompts belong to the agent CLI. Approval rules (`approval-rules.ts`, `userData/approval-rules.json`, UI under Settings → Agent guardrails) remain a **PRE-CHECK** allow/deny/ask at the MCP boundary. There is no per-session policy picker.
+- **Host tools** (`tools.ts`, remote only, against `SshHostBackend`): `ping`, `get_host_context`, `run_command`, `list_dir`, `read_file`, `write_file`. Local agents do **not** register these (`hostTools: false`); they use the CLI's own tools in the operator folder (`resolveLocalSpawnCwd`). Relative paths and `run_command` on POSIX remotes honor the live POSIX cwd from OSC 7; Windows remotes use the Windows compatibility clients and Windows path wrappers.
+- **Browser tools** (`tools-browser.ts`, Settings → DevTerm Agent toggle, default on — 11 tools): `browser_list/open/navigate/snapshot/click/type/press_key/screenshot/attach/detach/close`. Agent-owned tabs (badged `AGT`) are freely drivable; operator tabs need one-time per-tab confirm (`browser_attach`, in-memory grants cleared on Stop/close). Snapshots inject ref tags (`data-dt-ref`); results carry an UNTRUSTED banner (prompt-injection defense). Navigation reuses the guest URL guard — http(s)/about:blank only. Password fields follow the policy ladder; approval-rule prefixes match URLs/origins.
+- **Local handoff** (`tools-agent.ts`, local-only, default on): `agent_list`, `agent_delegate`, `agent_message` — visible sibling tabs, source cwd/leaf preserved, per-source delegate cap, never registered on remote bridges. Close the target tab to stop only that agent.
+- Briefings: remote writes per-session `AGENTS.md` in a temp overlay (`buildAgentsMd`); local appends `buildLocalNativeMd` via `--append-system-prompt` without planting files in the project.
 - Bridge status over `agent:bridge-status:<id>`; MCP `notifications/message` heartbeat every 25s; renderer pushes live cwd via `agent:set-cwd`; confirmations (`agent:confirm`) time out after 120s as `'timeout'`. Confirms and PTY data are **broadcast** to every `BrowserWindow` so a floating agent window can approve and stream.
-- Agent PTY is **not** killed on its own exit — bridge + temp dir stay up for auto-restart after SSH reconnect; cleaned up only on explicit **Stop** / session close / quit. Activity log: `bridge-activity.ts` → `AgentActivityPanel.tsx` (filterable, exportable JSONL).
-- Resume keys: remote uses `deriveAgentSessionId` (saved connection / `user@host:port`). Local uses `deriveLocalAgentSessionId(cwd)` so two folders do not share one transcript.
-- Local handoff (`src/main/mcp/tools-agent.ts`, default on in Settings → DevTerm Agent) is local-only: `agent_list`, `agent_delegate`, and `agent_message` expose visible sibling tabs, preserve the source cwd/leaf, cap delegates per source, and never register on remote bridges. Delegated launches carry a wrapped first prompt plus optional model/effort; close the target tab to stop only that agent.
-
-**Agent UI modes (1.3.15+):** process lifetime ≠ UI placement.
+- **Agent PTY is not killed on its own exit** — bridge + temp dir stay up for auto-restart after SSH reconnect; cleanup only on explicit **Stop** / session close / quit. Activity log: `bridge-activity.ts` → `AgentActivityPanel.tsx` (filterable, exportable JSONL).
+- Resume keys: remote `deriveAgentSessionId` (saved connection or `user@host:port`); local `deriveLocalAgentSessionId(cwd)` so two folders never share a transcript. When `resumeSessions` is on, launch uses `--session-dir <userData>/agent-sessions --session-id <stable-id>`, else `--no-session`.
+- DevTerm Agent settings (`agentPreferences` in `store/settings.ts`): provider/model, ordered `fallbackModels` (`provider/model` pairs) used on HTTP 408/429/5xx via `registerModelFailover` in `extension.ts`. Credentials never cross DevTerm IPC — keys stay in Pi's auth store (`~/.pi/agent/auth.json`) or process env; `agent:capabilities` reports runtime version, model catalog, and authenticated-provider **presence** only. Instruction-only skills allowlistable with SHA-256 pin (`trustedSkills`, re-checked every launch); executable third-party extensions stay disabled.
+- **Agent UI modes — process lifetime ≠ UI placement** (`session.agentUiMode`, `store/sessions.setAgentUi`; main tracks via `agent:set-ui-mode`, broadcasts `agent:ui-mode-changed`):
 
 | Mode | UX |
 | --- | --- |
-| `docked` | Side column beside the remote shell (classic layout) |
+| `docked` | Side column beside the remote shell |
 | `hidden` | Full terminal estate; process keeps running; chip shows mode + last task |
-| `floating` | Separate OS `BrowserWindow` (`agent-window.html`) — multi-monitor |
+| `floating` | Separate OS `BrowserWindow` (`agent-window.html` + `agent-window.tsx`) for multi-monitor |
 
-- Store fields: `session.agentUiMode` / `agentPtyId` / `agentPolicyMode` (`store/sessions.setAgentUi`). Main tracks mode via `agent:set-ui-mode` and broadcasts `agent:ui-mode-changed` so the main window store stays in sync when the float window docks/hides.
-- `agent:open` is **idempotent** unless `forceRestart` (Restart button). Mode switches reattach; they must not kill the agent.
-- Main window keeps a **stashed** `AgentPane` (`.agent-ui-stash` + `.term-hidden`) while the agent is alive so scrollback survives hide/float; only the **active** surface sends input/resize and attention chimes.
-- **Open Agent** is an icon cluster on the pane tab strip (`PaneAgentControls`, next to + / focus): sparkle launches, letter mark picks the backend, hide / float / stop once running. No ask-bar compose strip and no text header. **Remote** (`RemoteSessionView`): Open Agent docks a side column beside the SSH shell. **Local** (`LocalSessionView`): Open Agent occupies this terminal pane (shell stays mounted, hidden) so the MCP bridge — including in-app `browser_*` tools — is wired; it is not a right-hand split.
-- Floating window controls: Dock / Hide / Stop; OS close (X) demotes to `hidden` without killing the process. Closing the remote tab calls `agent.close` + `agent.closeWindow`.
-- Helpers: `lib/agent-ui.ts` (`ensureAgent`, `stopAgent`, `setAgentUiMode`). Renderer entry: `agent-window.html` + `agent-window.tsx` (electron-vite multi-page input).
+- `agent:open` is **idempotent** unless `forceRestart` (Restart button). Mode switches reattach and must never kill the agent. Main window keeps a **stashed** `AgentPane` (`.agent-ui-stash` + `.term-hidden`) while alive so scrollback survives; only the active surface sends input/resize and attention chimes. **Open Agent** is an icon cluster on the pane tab strip (`PaneAgentControls`): sparkle launches, letter mark picks the backend, hide/float/stop once running. Remote docks a side column; **local occupies the pane** (shell stays mounted, hidden) so the MCP bridge incl. `browser_*` stays wired. Floating window: Dock/Hide/Stop; OS close (X) demotes to `hidden`. Closing the remote tab calls `agent.close` + `agent.closeWindow`. Helpers: `lib/agent-ui.ts` (`ensureAgent`, `stopAgent`, `setAgentUiMode`).
+- Attention signals (`lib/attention.ts`) are agent-oriented: Web Audio chime, OS notification + taskbar flash, tab badge, idle-after-burst detector (heuristic — no OSC 9/133-C/D protocol).
 
-**DevTerm Agent settings (since 1.3.3+):**
+## Files, editor, browser panes
 
-- Provider / model preferences, ordered rate-limit fallbacks (`fallbackModels` as `provider/model` pairs), and resume toggle live in Settings → DevTerm Agent (`agentPreferences` in `store/settings.ts`).
-- Credentials never cross DevTerm IPC: OAuth/API keys stay in Pi's auth store (`~/.pi/agent/auth.json`) or process env; `agent:capabilities` reports runtime version, model catalog, and authenticated-provider **presence** only.
-- On HTTP 408 / 429 / 5xx, the MCP extension (`extension.ts` → `registerModelFailover`) switches the next request to the next authenticated fallback.
-- Resumable conversations: when `resumeSessions` is on, launch uses `--session-dir <userData>/agent-sessions --session-id <stable-id>`; `deriveAgentSessionId()` keys by saved connection id or `user@host:port` so transcripts survive tab close/reopen (1.3.11). Otherwise `--no-session`.
-- Instruction-only skill files can be allowlisted with a SHA-256 pin (`trustedSkills`); digest is re-checked at every launch. Executable third-party extensions remain disabled.
-- Packaging: `electron-builder.yml` `asarUnpack`s `node/bin`, `@earendil-works/**`, and the agent's dependency closure so the external Node process can resolve modules outside `app.asar`.
-- Local performance telemetry: on-demand `performance:snapshot` IPC (`src/main/ipc/performance.ts`); Settings → Performance polls ~3s; nothing is sampled in the background or uploaded.
-- Attention signals (`lib/attention.ts`) are agent-oriented: Web Audio chime, OS notification + taskbar flash, tab badge, idle-after-burst detector.
+- `FileExplorer` follows the active shell cwd: local via fs IPC, remote via SFTP on the same ssh2 client. Shared `FsApi` abstraction (`src/renderer/lib/fsapi.ts`). Listings live-update via `FsApi.watch()` (local `src/main/fs/watch.ts`; remote SFTP poll at 2500ms) — never add manual refresh as the primary path.
+- Editor: CodeMirror 6 (`EditorView.tsx`), max 5 MiB (`MAX_EDIT_BYTES`), original EOL re-applied on save; sanitized Markdown preview (`lib/markdown-preview.ts`, marked GFM + DOMPurify; Edit/Side/Preview, Ctrl/Cmd+Alt+M). Opening a file must keep the Terminals/file tab strip so users can leave the editor.
+- Dual-pane SFTP browser uses the **persistent transfer queue** (legacy ad-hoc transfer IPC is gone from the renderer).
+- Browser panes: `<webview>` on partition `persist:browser`, hardened in `src/main/index.ts` + `src/main/ipc/browser.ts` (preload stripped, `nodeIntegration: false`, http(s)/about:blank only with other schemes to the OS browser, sensitive permissions default-denied, de-Electroned UA). Per-origin zoom in `userData/browser-zoom.json`; downloads to `userData/Downloads` with ~150ms-throttled progress. Browser panes are sessions (groups/tabs/splits/focus) but create no PTY or SSH channel.
 
-### Search, history, palette
+## Search, palette, git, transfers, dictation, workspaces, restore
 
-- Global search (`src/main/search/index.ts`): in-memory, 2000 lines/session, fed by local PTY **and** remote SSH output; ANSI/VT/C0 stripped at ingest so the modal shows plain text. Modal: Ctrl/Cmd+Alt+F.
-- Optional persistent search tail: `settings.searchPersist` → `userData/search/<sessionId>.jsonl` (FIFO cap).
-- Command palette (Ctrl/Cmd+K): fuzzy + frecency; categories Actions / Snippets / Connections / Workspaces / History. History merges DevTerm records with host shell-history files; PSReadLine multi-line (trailing-backtick) continuations are reassembled and multi-line junk is excluded from the palette rather than mangled.
-- Snippets (`userData/snippets.json`) support `{{placeholders}}`.
-
-### Git, transfers, dictation, workspaces
-
-- Git panel (`components/git/*`, logic `src/main/git/index.ts`): **full read + write** (stage/unstage/commit/push/pull/branch/stash/tag/remote). A stale "Git awareness (read-only)" comment in `src/shared/types.ts` is wrong — do not re-introduce read-only product framing. Remote ops reuse the session's exec channel; `onChange` polls every 5s; writes invalidate the status cache. VS Code–style graph in `GitGraphView.tsx`. Destructive actions use shared `ConfirmDialog` (not `window.confirm`).
-- Persistent transfer queue (`src/main/transfers/*`, `userData/transfers.json`): concurrency 2, survives restarts, no mid-file resume (interrupted items marked canceled; users retry). Progress events are coalesced; `selectVisible` is last-24h and must stay referentially stable for Zustand (use `useShallow`).
+- Global search (`src/main/search/index.ts`): in-memory, 2000 lines/session, fed by local PTY **and** remote SSH output; ANSI/VT/C0 stripped at ingest. Optional persistent tail: `settings.searchPersist` → `userData/search/<sessionId>.jsonl` (FIFO cap).
+- Command palette (Ctrl/Cmd+K, user-overridable in `lib/hotkeys.ts`): fuzzy + frecency; Actions / Snippets / Connections / Workspaces / History. History merges DevTerm records with host shell-history files; PSReadLine multi-line (trailing-backtick) continuations are reassembled, multi-line junk excluded rather than mangled. Snippets (`userData/snippets.json`) support `{{placeholders}}`.
+- Git panel (`components/git/*`, logic `src/main/git/index.ts`): **full read + write** (status/diff/log/branches/remotes/stash/tags/blame/show + checkout/branch/fetch/pull/push/commit/stage/discard/tag/remote/merge). Remote ops reuse the session's exec channel; `git:on-change` polls every 5s; writes invalidate the status cache. Graph in `GitGraphView.tsx`. Destructive actions use shared `ConfirmDialog`, never `window.confirm`. (A stale “read-only” comment in `types.ts` is wrong — do not re-introduce read-only framing.)
+- Persistent transfer queue (`src/main/transfers/*`, `userData/transfers.json`): concurrency 2, survives restarts, **no mid-file resume** (interrupted items are canceled; users retry). Progress events are coalesced; `selectVisible` is last-24h and must stay referentially stable for Zustand (use `useShallow`).
 - Voice dictation: renderer-only Whisper (`src/renderer/lib/stt/*`), WebGPU→WASM fallback, push-to-talk (Ctrl/Cmd+Shift+M), models cached in `persist:browser`; `ort/*.wasm` must stay `asarUnpack`ed. Worker crash recovery discards stale ready messages.
-- Workspaces (`userData/workspaces.json`): capture / launch / rename / duplicate / `autoLaunch` on boot (all flagged workspaces open in their own groups). Ad-hoc SSH sessions without a saved `connectionId` are skipped on capture.
-- **Session restore** (`settings.sessionRestore`, default on): debounced snapshot of groups → `userData/session-restore.json` via `sessionRestore.*` IPC; boot order is auto-launch workspaces → restore snapshot → empty local. Restores local shells + saved SSH only (not browsers / ad-hoc SSH / agents). Code: `lib/session-restore.ts`, `main/ipc/session-restore.ts`.
-- **SSH config import:** Connections → “Import SSH config” parses `~/.ssh/config` (`main/ssh/ssh-config-parse.ts`); concrete Hosts only; merges Host * defaults; skips duplicates; no passwords.
-- QuickConnect (`userData/quick-connect.json`): MRU `host:port:user` triples (cap 20) drive the host datalist in `ConnectionForm`. Known-hosts management UI lives under Connections.
+- Workspaces (`userData/workspaces.json`, no secrets): capture / launch / rename / duplicate / `autoLaunch` on boot (each into its own group). Ad-hoc SSH sessions without a saved `connectionId` are skipped on capture.
+- Session restore (`settings.sessionRestore`, default on): debounced snapshot of groups → `userData/session-restore.json`; boot order is auto-launch workspaces → restore snapshot → empty local. Restores local shells + saved SSH only (not browsers / ad-hoc SSH / agents / editors / scrollback).
+- SSH config import (Connections → “Import SSH config”, `ssh-config-parse.ts`): concrete Hosts only, merges Host * defaults, skips duplicates, no passwords. QuickConnect (`userData/quick-connect.json`): MRU `host:port:user` triples (cap 20) feeding the host datalist; known-hosts management UI under Connections.
 
-### Settings, theme, window
+## Settings, theme, window
 
-- Settings live in `src/renderer/store/settings.ts`, persist to renderer `localStorage` (`devterm.settings.v1`), mirrored to `userData/settings.json` via `settings:sync`. Export/import (`src/main/settings-io.ts`) strips secrets and always merges through the same normalizers as load.
-- One theme drives chrome + xterm palette via CSS variables (`lib/themes.ts`, split CSS under `styles/`) — use variables / `color-mix`, not hardcoded colors. Prefer tokens like `--danger`, `--ok`, `--font-mono`, `--font-ui`. Motion is CSS-only and behind `prefers-reduced-motion` guards; never animate/scale the xterm viewport.
+- Settings (`store/settings.ts`: theme, terminal prefs, autoReconnect, attention, agentKind/agentPreferences, remoteDetachedSessions, sessionRestore, defaultShell, gitPanelOpen, keybindings overrides, stt, searchPersist, …) persist to renderer `localStorage` (`devterm.settings.v1`), mirrored to `userData/settings.json` via `settings:sync`. Export/import (`src/main/settings-io.ts`) strips secrets and merges through the same normalizers as load.
+- One theme drives chrome + xterm palette via CSS variables (`lib/themes.ts`, 9 themes incl. Glass) — use variables / `color-mix` (e.g. `--danger`, `--ok`, `--font-mono`, `--font-ui`), never hardcoded colors. Motion is CSS-only behind `prefers-reduced-motion` guards; never animate/scale the xterm viewport.
 - Keybindings: ids in `lib/hotkeys.ts`, user-overridable; App focus guards avoid firing most shortcuts while typing in an editor.
-- Window: normal framed opaque BrowserWindow — Windows owns snapping/titlebar; never add custom snap or fake window controls. Key flags: `backgroundThrottling: false`, `webviewTag: true`, `autoHideMenuBar`, caches pinned into `userData`, top frame navigation-locked, `appUserModelId com.devterm.app`.
-- Auto-update: `src/main/updater.ts` (electron-updater, GitHub `AEmad99/devterm`, unsigned builds, skipped in dev/self-test).
-- Shared UI helpers: `ConfirmDialog`, `useEscapeKey`, `formatBytes`, `ModalShell` a11y (`role="dialog"`, `aria-modal`, `aria-labelledby`). Pane tabs use `role="tablist"` / `role="tab"`.
+- Window: normal framed opaque BrowserWindow — Windows owns snapping/titlebar; never add custom snap or fake window controls. Key flags: `backgroundThrottling: false`, `webviewTag: true`, `autoHideMenuBar`, caches pinned into `userData`, top frame navigation-locked, `appUserModelId com.devterm.app`. Local performance telemetry is on-demand `performance:snapshot` IPC polled ~3s from Settings → Performance — nothing sampled in background or uploaded.
+- Auto-update: `src/main/updater.ts` (electron-updater, GitHub `AEmad99/devterm`, unsigned, skipped in dev/self-test).
+- Shared UI helpers: `ConfirmDialog`, `useEscapeKey`, `formatBytes`, `ModalShell` a11y (`role="dialog"`, `aria-modal`, `aria-labelledby`); pane tabs use `role="tablist"` / `role="tab"`.
 
 ## Persistence
 
 | Store | Contents |
 | --- | --- |
-| `userData/connections.json` | Saved SSH profiles; secret fields safeStorage-encrypted (incl. bastion `jump`) |
+| `userData/connections.json` | Saved SSH profiles; secrets safeStorage-encrypted (incl. bastion `jump`) |
 | `userData/workspaces.json` | Workspace snapshots (no secrets) |
 | `userData/snippets.json` | Command snippets |
 | `userData/approval-rules.json` | Agent allow/deny/ask rules |
@@ -179,256 +168,47 @@ Bridge & tools:
 
 **In-memory only:** live sessions/layout (mirrored to session-restore when enabled), group flags, editors, transfer runtime, agent processes, search index (unless `searchPersist`), dictation state.
 
-## Commands
-
-- `npm run setup`: first-time setup (Electron + node-pty prebuilt). **Never** `npm rebuild` node-pty. Prefer `npm install --ignore-scripts` then `setup`.
-- `npm run dev` / `build` / `preview`: electron-vite modes.
-- `npm run typecheck`: required correctness gate (node + web tsconfigs).
-- `npm run lint`, `npm run format` / `format:check`.
-- `npm run test`: all `*.test.ts` via tsx. `npm run test:grid`: grid-spec validation.
-- `node scripts/smoke.cjs`: node-pty/ssh2 smoke test. `electron . --self-test`: headless self-test (90s watchdog).
-- `npm run build:win` / `build:linux`: installers into `dist/`. `release:win` / `release:linux` also publish via electron-builder.
-- **Release flow:** typecheck + lint + test + smoke → `build:win` → commit to `main` → push → tag `v<version>` → upload `dist/DevTerm-<version>-setup.exe` + `.blockmap` + `latest.yml` (clobber). Builds are unsigned (`CSC_IDENTITY_AUTO_DISCOVERY=false` if packaging hits winCodeSign symlink issues on Windows).
-
 ## Packaging
 
-- Version = `package.json` `version` (currently **1.3.22**).
-- electron-builder: `appId com.devterm.app`, `productName DevTerm`, NSIS x64 (`oneClick: false`, `perMachine: false`, `allowToChangeInstallationDirectory: true`), unsigned (`verifyUpdateCodeSignature: false`), `npmRebuild: false`, GitHub publish provider `AEmad99/devterm`.
-- NSIS reinstall close logic: `resources/installer.nsh` (`nsis.include`) — `customInit` + `customCheckAppRunning` force-kill install-dir processes (required because elevated UAC inner installs skip stock `CHECK_APP_RUNNING`); `customUnInstallCheck*` lets upgrades continue if the old uninstaller fails.
-- `asarUnpack` must include: `node-pty`, `ort/*.wasm`, bundled agent Node binary (`node/bin/**`), `@earendil-works/**`, and the listed agent runtime dependency packages in `electron-builder.yml`. Do not drop those entries or the built-in agent fails to start from the installed app.
+- `electron-builder.yml`: `appId com.devterm.app`, NSIS x64 (`oneClick: false`, `perMachine: false`), unsigned (`verifyUpdateCodeSignature: false`), `npmRebuild: false`, GitHub provider `AEmad99/devterm`. NSIS reinstall logic in `resources/installer.nsh` force-kills install-dir processes (elevated UAC inner installs skip stock `CHECK_APP_RUNNING`).
+- `asarUnpack` must keep: `node-pty`, `ort/*.wasm`, agent Node binary (`node/bin/**`), `@earendil-works/**` and the listed agent runtime dependency closure. Dropping entries breaks the built-in agent (external Node can't resolve modules inside `app.asar`) or dictation.
+- Unsigned builds: pass `CSC_IDENTITY_AUTO_DISCOVERY=false` if packaging hits winCodeSign symlink issues on Windows.
+
+## Tests
+
+31 `*.test.ts` files (run via `npm run test`): all eight agent launch modules (`agent-bin`, `launch`, `claude`, `opencode`, `kimi`, `grok`, `antigravity` — note: no `codex-launch.test.ts`), approval-rules, agent context, host-backend, browser control/interact/snapshot/url-guard, MCP policy/tools-agent/tools-register, search ansi/index, ssh detached-session/ssh-config-parse/tmux, shell-quote, history-parse, plus renderer-side extractCommandPrefix, markdown-preview, snippets, stt resample, tab-label, tab-status, layout. Large surfaces (layout DnD, SSH reconnect, SFTP queue, multi-window agent) rely on self-test + manual QA — the biggest coverage gap.
 
 ## Critical rules
 
-- Keep terminals mounted: hide with `.term-hidden`; never unmount `TerminalLayout` or reparent xterm DOM slots (destroys PTYs/SSH shells).
-- Never rebuild node-pty locally; keep node-pty, `ort/*.wasm`, and the bundled agent runtime `asarUnpack`ed.
-- Add IPC through shared types (`IPC` + `DevTermApi`), main handler, and preload exposure together.
-- One SSH client per session for shell/SFTP/watch/exec/forwards/git/agent tools — never open hidden duplicate connections.
-- Preserve OSC 7 cwd tracking and OSC 133 prompt markers for local and remote shells.
+- Keep terminals mounted: hide with `.term-hidden`; never unmount `TerminalLayout` or reparent xterm DOM slots.
+- Never rebuild node-pty; keep node-pty, `ort/*.wasm`, and the bundled agent runtime `asarUnpack`ed.
+- Add IPC through shared types + main handler + preload together; register new `src/main/ipc/*` modules from `registerIpc()` in `src/main/index.ts`.
+- Keep one primary SSH client per session for normal remotes. Windows OpenSSH compatibility may use the manager-owned command-only and SFTP-only auxiliary clients when the target cannot multiplex channels; never add untracked duplicate connections.
+- Preserve OSC 7 cwd tracking and OSC 133 prompt markers (local + remote, incl. tmux DCS wrapping and the deferred `${__dtA}`/`${__dtB}` PS1 form).
 - Use `FsApi.watch()` for live listings; no manual refresh as a primary path.
-- Respect the MCP policy boundary in new tools; approval rules pre-check overrides the mode for allow/deny.
+- Respect the MCP policy boundary in new tools; approval-rules pre-check overrides the mode for allow/deny. Credentials for model providers never travel over DevTerm IPC.
 - Agent terminal output is user-facing data, not app state; don't kill the agent PTY on its own exit.
-- Agent **process lifetime ≠ UI mode**: hide/float/dock must not call `agent.close`; only explicit Stop / session close / quit. Keep `agent:open` idempotent unless `forceRestart`.
-- Settings persist to renderer `localStorage`, not `userData`; export/import bundles strip secrets and merge.
+- Agent **process lifetime ≠ UI mode**: hide/float/dock must not call `agent.close`; only explicit Stop / session close / quit. Keep `agent:open` idempotent unless `forceRestart` — but the reattach path must also require the stored `lastOpts.kind` to match, otherwise switching kinds in the picker silently re-shows the old kind's live process.
+- Settings persist to renderer `localStorage`, mirrored to `userData`; export/import bundles strip secrets and merge through normalizers.
 - Transfers do not resume mid-file across restarts.
 - Use theme CSS variables; keep motion out of the xterm viewport and behind reduced-motion guards.
 - Keep the BrowserWindow normal/framed; Windows owns snapping — no custom window controls.
-- Credentials for model providers never travel over DevTerm IPC; only capability/auth presence is exposed.
-- Commit directly to `main` unless the user asks for a branch or PR.
 
-## Recent release notes (for context)
+## Known limits (verified against code — re-verify before fixing)
 
-- **1.3.22** — File explorer sort (name/size/modified/type + folders-first) and filter-as-you-type search in the sidebar and SFTP panes; toast notifications; transfer rate/ETA; chrome density setting; pinned manager rows + last-connected stamps; Reveal in Explorer; titlebar git badge; MCP per-session transports (opencode reconnect fix) + 8 MiB request cap; dirty-guarded modal forms, house footer, hotkey tooltips; hotkey capture isolation.
-- **1.3.21** — Window/agent management pass: pane **⋮ menu** (split right/down, equalize, merge, close pane) + **tab context menu** (rename, split, move to new group, close others/to-the-right); guarded closes (agent/process/dirty editor) + quit confirmation (unsaved editors + running agents); active tab scroll-into-view; split handles double-click to equalize; window bounds persistence, dynamic taskbar title, single-instance lock, tray reopen, notification click → session focus, badge count; agent **overview cockpit** (Ctrl/Cmd+Alt+A) with show/float/restart/stop; restart from pane cluster + float; hidden/floating agent attention fixed (badge from float via main, exit badge); float gets local/remote awareness, Restart, persisted bounds; local agents get an activity panel; session restore now includes **browsers, agents, editors** and always runs alongside auto-launch workspaces, with a restore toast; approval rules `ask` now actually prompts under `full`; activity log marks `isError` tool results as failures; palette gained ~17 actions; new hotkeys `newGroup` / `nextGroup` / `prevGroup` / `splitRight` / `splitDown` / `agents` / `toggleGit`; Settings gets Escape/focus-trap, confirmations for destructive resets, keybinding conflict warnings, default-agent picker, and UI for status bar / idle detection / scroll speed / terminal bg color.
-- **1.3.20** — Quiet terminal chrome (Ghostty / Windows Terminal density); theme-aware status colors; docked SFTP shows local and remote without a resize.
-- **1.3.19** — Native local agent (builtin tools in the operator folder; MCP is browser-only); first-class in-app `browser_*` tools with a visible agent cursor; `browser_open` splits beside the agent; tab-strip Open Agent + kind picker (ask bar gone); local `agent_list` / `agent_delegate` / `agent_message` handoff; Markdown preview hotkey.
-- **1.3.18** — Remote ask bar is the agent launch surface (no duplicated Open agent / Policy picker); first DevTerm Agent prompt is passed on the CLI so the agent starts working; permission prompts belong to the agent CLI; SSH shell-integration reclaim leftover inject rows without `clear`.
-- **1.3.17** — Richer tmux picker (live pane preview, window/command/cwd, kill session); reopen via pane button / Ctrl+Alt+T / palette; attach-while-inside uses `switch-client`; remote shell-integration inject no longer echoes a wall of script then `clear`s the login banner.
-- **1.3.16** — Fix stray `]` around remote bash prompts (detached tmux): the OS-integration prompt markers now reference `${__dtA}`/`${__dtB}` deferred in PS1 instead of baking the tmux DCS envelope bytes in, which let bash's `\]` decoder print a literal bracket. Regression-tested in `detached-session.test.ts`.
-- **1.3.15** — Agent UI modes (`docked` / `floating` / `hidden`) with process lifetime decoupled from layout; Warp-style **Ask agent** strip under remote shells (ensure + inject into live agent PTY); floating agent OS window (multi-monitor) with dock/hide/stop and cross-window confirm routing; session-restore MVP (last groups/local/saved-SSH); `~/.ssh/config` import; global Find hotkey wired through `openTerminalFind`; default scrollback raised to 10 000; multi-window PTY/bridge broadcast for pop-out agent.
-- **1.3.14** — Settings modal scrolling fix (issue #4): the dialog's grid row now tracks its own height (`grid-template-rows: minmax(0, 1fr)`) with `min-height: 0` guards on both columns, so long tabs scroll inside `.settings-content-body` instead of overflowing and getting clipped by `overflow: hidden`. Sidebar nav regrouped into labeled sections with per-tab subtitles; new-tab picker restyled as list rows; terminal context menu gains a clipboard/selection separator; pane tab-strip nav arrows hidden when the strip is collapsed.
-- **1.3.13** — Remote detached sessions: probe `tmux -V` before `exec` so hosts with a broken tmux install (e.g. missing `libncurses.so.5`) fall back to a normal shell instead of killing the SSH channel.
-- **1.3.12** — Terminal host padding fix: moved xterm padding to inner `.xterm` element so `FitAddon` accurately calculates row height without clipping bottom prompt lines at the status bar.
-- **1.3.11** — Persistent remote agent task memory, stable per-connection/per-host session keys across tab opens and app restarts, titlebar badge cleanup, and modal scroll padding overflow fix.
-- **1.3.10** — Robust NSIS installer process termination: normalize 8.3 short paths, tree-kill lingering agent processes (node.exe), and override customRemoveFiles to eliminate 'DevTerm can't be closed' prompt during reinstalls/upgrades.
-- **1.3.9** — Google Antigravity CLI (`agy`) support: binary resolution, per-session `.antigravity/mcp.json` HTTP MCP bridge config, host briefings, and UI fallback options.
-- **1.3.7** — Installer never treats `*setup*` as the app; safe-root wipe before extract; temp PS unlock script.
-- **1.3.6** — Installer elevated/UAC fix: unlock runs in `customInit` on the elevated inner process; old-uninstall failures no longer abort upgrade.
-- **1.3.5** — Windows installer reinstall: force-close DevTerm + install-dir orphans (agent node.exe); quit tree-kills local PTYs.
-- **1.3.4** — Deep reliability pass: git live status, SOCKS5 handshake, SSH reconnect/forwards/watches, PTY id-reuse, transfer cancel/flush, MCP agent cleanup, packaging size exclusions, TOFU confirm dialog.
-- **1.3.3** — Bundled multi-provider DevTerm Agent (default), provider/model routing + rate-limit fallbacks, resumable agent sessions, SHA-256 pinned skills, Settings performance snapshot, packaging unpack for agent Node runtime, remote detached tmux sessions setting.
-- **1.3.2** — PSReadLine multi-line history fix, ANSI-stripped global search, React #185 Zustand/`useShallow` fixes, welcome hint, ConfirmDialog/useEscapeKey, a11y polish.
-- **1.3.1** — STT worker crash recovery, download/transfer flicker fixes, layout/session guards, hotkey fixes.
-- **1.3.0** — Full settings sync, agent guardrails UI, known-hosts panel, remote SSH search index, SOCKS `-D`, persistent search tail, QuickConnect, agent activity export, workspace auto-launch, SftpBrowser on persistent queue.
+- **Windows remotes are first-class for agents:** OpenSSH exec is wrapped in PowerShell (`Set-Location` + EncodedCommand) so `run_command` and relative file tools follow OSC 7 cwd. SFTP paths round-trip `C:\\Users\\...` and `/C/Users/...`. Interactive Windows shells launch PowerShell with OSC 7/133. RDP is a graphical `mstsc` session and does not provide agent host tools.
+- **No bridge tools for git/search/forwards** — agents shell those out via `run_command`. Capability ceiling, not a bug.
+- **Restore is MVP:** browsers, ad-hoc SSH, editors, agents, scrollback don't survive restart. Local detach/reattach not shipped (PTYs die with the app).
+- **Single bastion hop** (`profile.jump`); no ProxyJump chains. No block-based terminal UI (OSC 133 A/B only, no C/D exit markers), no programmable app CLI/socket API, no inline images/sixel, no OSC 9/99 attention protocol.
+- **Mount-everything × renderer cost:** every session stays mounted by design; canvas renderer + 10k scrollback bound the cost, but many groups/grids still burn RAM/CPU. No auto-hibernate.
+- **Electron 29 age:** behind current majors; upgrade is a project (webview, node-pty ABI, asarUnpack), tracked as platform risk. macOS is not a product focus (no signed release pipeline).
+- Open GitHub issues (`AEmad99/devterm`): **#1** command syntax highlighting (hard in a raw PTY — shell owns the line; scope to block UI/input editor or set expectations), **#2** app preview/annotate mode (not shipped).
 
----
+## Doc pointers
 
-## Product inventory (what ships today — v1.3.21)
-
-Snapshot of the **implemented** surface area as of this audit. Use this when prioritizing features so we do not re-build what already exists. Prefer reading the code for edge cases.
-
-### Capability matrix
-
-| Area | Status | Notes / code |
-| --- | --- | --- |
-| Local shells | **Shipped** | `defaultShell` auto/pwsh/powershell/cmd/custom; ConPTY startup-failure diagnostics; OSC 7/133 PS hooks |
-| SSH remote shells | **Shipped** | Password / key / single bastion hop; TOFU; auto-reconnect; TCP_NODELAY; one client/session |
-| Detached remote sessions | **Shipped** | tmux picker on connect; attach without `exec`; detach returns to login shell |
-| Local session detach/reattach | **Not shipped** | Still planned in `FEATURE-PLANS.md`; PTYs die with the app |
-| Session/layout restore on app restart | **Shipped (MVP)** | `sessionRestore` (default on): last-session snapshot in `userData/session-restore.json`; auto-launch workspaces still win; ad-hoc SSH skipped |
-| Tiling splits + groups | **Shipped** | Binary split tree, drag tabs, focus + zen modes; always-mounted slots |
-| Terminal grids + broadcast | **Shipped** | Up to 4×4 (`CreateGridModal` / `createGrid.ts`); optional initial broadcast command |
-| File explorer (cwd-following) | **Shipped** | Local fs + remote SFTP; `FsApi.watch()` live updates |
-| Dual-pane SFTP + transfers | **Shipped** | Persistent queue (concurrency 2); no mid-file resume |
-| CodeMirror editor | **Shipped** | Multi-language CM6; 5 MiB cap; Markdown edit/side/preview (`MarkdownPreview`, Ctrl/Cmd+Alt+M) |
-| In-app browser | **Shipped** | Hardened `<webview>`, zoom, downloads; first-class agent `browser_*` control |
-| Command palette + snippets | **Shipped** | Ctrl/Cmd+K; `{{placeholders}}`; history + frecency |
-| History-driven autosuggest | **Shipped** | OSC 133 ;B anchors + popup (`lib/autosuggest.ts`) |
-| Per-pane find | **Shipped** | SearchAddon + `SearchBar`; App hotkey + pane key handler via `openTerminalFind` |
-| Global terminal search | **Shipped** | Ctrl/Cmd+Alt+F; 2000 lines/session; optional disk tail |
-| Default scrollback | **Shipped** | Default **10 000** lines (clamp 100–100 000) |
-| Git panel (Warp-style) | **Shipped** | Full R/W panel + graph; remote via same SSH exec |
-| Port forwards | **Shipped** | `-L` and SOCKS5 `-D` |
-| Offline Whisper dictation | **Shipped** | Push-to-talk; WebGPU→WASM; models in browser partition |
-| Themes / settings export | **Shipped** | 9 themes incl. Glass; full settings sync + import/export (secrets stripped) |
-| Bundled DevTerm Agent | **Shipped (default)** | Multi-provider Pi runtime + packaged Node; resume + model failover |
-| External agent CLIs | **Shipped** | pi, claude, opencode, kimi, grok, codex, antigravity — all via MCP bridge |
-| Agent UI modes | **Shipped** | `docked` / `floating` / `hidden`; process keeps running when hidden/floated |
-| Ask-agent strip | **Removed** | Header Open Agent is the launch surface; no bottom compose bar |
-| Floating agent window | **Shipped** | Separate OS window (`agent-window.html`); dock/hide/stop |
-| Local DevTerm Agent | **Shipped** | Header Open Agent on `LocalSessionView` occupies the pane (not a side split); native builtin tools in the operator cwd; MCP is `browser_*` only; resume key is per-directory |
-| Local agent handoff | **Shipped** | Local-only `agent_list` / `agent_delegate` / `agent_message`; visible sibling tab or split, source-leaf placement, cwd validation, and per-source cap |
-| Agent browser tools | **Shipped** | 11 `browser_*` MCP tools; agent-owned tabs + confirm-gated attach to operator tabs; ref-based snapshots; screenshots to `userData/agent-artifacts` |
-| MCP host tools | **Shipped** | `ping`, `get_host_context`, `run_command`, `list_dir`, `read_file`, `write_file` over HostBackend (SSH or local) |
-| Agent guardrails | **Shipped** | Prefix approval rules + activity log; permission prompts belong to the agent CLI |
-| Attention signals | **Shipped** | Agent-only idle chime, tab badge, OS notify when backgrounded |
-| QuickConnect / known hosts UI | **Shipped** | MRU host triples; Connections known-hosts management |
-| Workspaces auto-launch | **Shipped** | `autoLaunch` on boot into separate groups |
-| Windows installer | **Shipped** | NSIS x64 unsigned; heavy process-kill/unlock work in 1.3.5–1.3.10 |
-| Linux packaging | **Shipped (secondary)** | `build:linux` AppImage path; primary QA is Windows |
-| macOS packaging | **Not a product focus** | Electron stack can run in dev; no signed macOS release pipeline |
-| `~/.ssh/config` import | **Shipped** | Connections → “Import SSH config”; concrete Hosts only; no passwords |
-| Multi-hop ProxyJump chain | **Not shipped** | Single `profile.jump` hop only |
-| Block-based terminal UI | **Not shipped** | OSC 133 A/B injected; no C/D exit markers → no Warp-style blocks |
-| Programmable app CLI / socket API | **Not shipped** | No cmux-style external control surface |
-| Inline images / sixel | **Not shipped** | Paste-image saves path to temp file only |
-| Auto-update (GitHub) | **Shipped** | electron-updater; unsigned; skipped in dev/self-test |
-
-### Scale (repo)
-
-- ~180 TypeScript/TSX sources under `src/`, ~15 unit tests, ~1600-line `types.ts`.
-- Typecheck clean at audit time (`npm run typecheck`).
-- Open GitHub issues (AEmad99/devterm): **#1** syntax highlight, **#2** app preview/annotate mode. **#3** markdown preview shipped (editor buttons + Ctrl/Cmd+Alt+M). **#4** settings scroll closed in 1.3.14.
-
-### Doc debt (out of date vs code)
-
-| Doc | Problem |
-| --- | --- |
-| `FEATURE-PLANS.md` (2026-06-25) | Global search + remote tmux + session restore MVP + SSH config import are **implemented**; local detach still open |
-| `CHANGELOG.md` | Catch up at release time (keep in the release checklist) |
-
----
-
-## Known bugs & fix candidates
-
-Ordered roughly by user impact × confidence. These were found by code inspection against v1.3.15; re-verify before fixing.
-
-### Confirmed / high confidence
-
-1. ~~**Find hotkey is focus-gated and App path is a no-op**~~ **Fixed** in 1.3.15 (`openTerminalFind`).
-
-2. **Windows remote agent cwd is intentionally weak**  
-   - MCP `run_command` / relative paths only prefix POSIX cwd (`/` paths). Windows remotes stay on login `$HOME` / profile default. Documented in `tools.ts`, but operators on Windows SSH hosts will see "agent ran in the wrong directory" as a bug.  
-   - **Fix options:** PowerShell `Set-Location` wrapper when host OS is windows; or force absolute paths in the agent briefing more aggressively.
-
-3. ~~**Live workspace evaporates on quit**~~ **MVP shipped** in 1.3.15. Still missing on restore: browser panes, ad-hoc SSH, open editors, agent panes / UI mode.
-
-4. **Transfers never resume mid-file**  
-   - Restart/cancel → canceled; user must retry whole file. Fine for small configs; painful for multi-GB artifacts.  
-   - **Fix:** SFTP resume via offset write / `fstat` size check, or document clearly in UI.
-
-5. ~~**Ask-bar prompt inject is best-effort for TUI agents**~~ **Removed** with the ask bar. Agents are launched from the remote header Open Agent button into the docked pane.
-
-### Medium confidence / design traps
-
-6. **Mount-everything × renderer cost**  
-   - Every session in every group stays mounted (correct for PTY survival). Canvas renderer is deliberate (WebGL context cap). Many groups + grids still burn RAM/CPU; Settings performance snapshot helps diagnose but there is no auto-hibernate of idle groups' xterm buffers.  
-   - Default scrollback is 10 000 (clamp 100–100 000). Stashed agent panes while floating add a second xterm subscriber — intentional for scrollback.
-
-7. **Attention is idle-heuristic, not protocol-true**  
-   - No OSC 9/99/777 notification parsing (cmux-style); no OSC 133 ;C/;D command-finished markers. Idle-after-burst can false-positive on quiet long jobs or false-negative on agents that print sparingly.  
-   - **Fix ladder:** emit/consume OSC 133 C/D → true exit-code badges → optional OSC 9 attention.
-
-8. **Agent MCP tool surface is still thin on git/search/forwards**  
-   - `browser_*` and local `agent_*` handoff are shipped. There are still no bridge tools for git, port-forward, or search — agents must shell those out via `run_command`.  
-   - Not a runtime bug, but a capability ceiling vs Warp/cmux agent workflows.
-
-9. **Open issue hygiene**  
-   - #3 Markdown Preview Mode shipped (editor buttons + Ctrl/Cmd+Alt+M).  
-   - #1 "command syntax highlighting like zsh" is hard in a raw PTY (shell owns the line); set expectations or scope to block UI / input editor.  
-   - #2 app preview/annotate mode is not shipped.
-
-10. **Electron 29 age**  
-    - Chromium security train moves; 29 is behind current Electron majors. Upgrade is a project, not a one-liner (webview, node-pty ABI, asarUnpack). Track as platform risk.
-
-### Test / CI gaps
-
-- Only ~15 `*.test.ts` files; large surfaces (layout DnD, SSH reconnect, agent launch matrix, SFTP queue) rely on self-test + manual QA.  
-- `CHANGELOG.md` lag makes support harder — keep it in the release checklist.
-
----
-
-## Competitive suggestions (Warp, cmux, and peers)
-
-Suggestions are **mapped to DevTerm's existing architecture** (always-mounted tiling, one SSH client, MCP boundary, Windows-first Electron). Steal product ideas, not stack rewrites.
-
-### Priority legend
-
-- **P0** — small code, high daily-driver impact  
-- **P1** — differentiates DevTerm as an *agentic SSH workbench*  
-- **P2** — larger bets / platform work  
-
-### From Warp (agentic terminal + blocks + workflows)
-
-| Idea | Why it wins | DevTerm fit | Priority |
-| --- | --- | --- | --- |
-| **Command blocks** (group input+output, copy output only, collapse) | Best single UX leap past raw xterm scrollback | Already inject OSC 133 A/B; add C/D (exit) markers in PS/bash hooks, parse in `TerminalView`, render block chrome **outside** the xterm canvas (overlay), never reparent xterm | **P1** |
-| **Workflows** (named multi-step, parameterized, shareable) | Snippets are single-shot; ops runbooks are multi-step | Extend snippets → workflow docs (JSON in userData) + palette runner; optional "send each line / wait for prompt" using OSC 133 | **P1** |
-| **Natural-language → shell** (inline, not only full agent pane) | Low-friction vs opening Agent | Ask bar removed; next: "Explain selection" / "Fix last error" with selection + last block context | **P1** |
-| **Vertical tabs with git branch / task metadata** | Multitasking at a glance | Extend `tab-label.ts` + StatusBar: branch from git poll, agent task already exists; optional vertical tab strip setting | **P1** |
-| **Agent diff review surface** | Warp reviews code changes in-app | Hook git panel + editor: "show agent write_file diff before apply" in `confirm` policy | **P1** |
-| **Input editor** (multiline, IDE keys before submit) | Better than fighting readline for long commands | Optional compose box above active pane; submit sends to PTY | **P2** |
-| **Parallel multi-agent orchestration UI** | Warp/Oz narrative | DevTerm already runs one agent pane per remote session; add "open second agent" as another tab on same SSH client (bridge already per-session — may need second MCP server id) | **P2** |
-
-### From cmux (native agent multitasking terminal)
-
-| Idea | Why it wins | DevTerm fit | Priority |
-| --- | --- | --- | --- |
-| **Notification rings / stronger attention chrome** | Operators juggle many agents | Build on `lib/attention.ts`: pane outline CSS when `needsAttention` / `agentPendingApproval`; parse OSC 9/99 if present | **P0** |
-| **Full session restore** (windows, panes, cwd, scrollback, agents) | "Quit and continue" | **MVP shipped (1.3.15)** for local + saved SSH groups; still missing browsers / ad-hoc SSH / agents / scrollback | **P0 (partial)** |
-| **Tab metadata: ports + cwd + branch** | Situational awareness | Port-forward list + `ss`/`netstat` optional probe is heavy — start with cwd (have it) + git branch (have it) | **P0** |
-| **Programmable CLI / socket API** | Agents and scripts drive the app | Optional local IPC/HTTP under bearer token: open session, send keys, read screen text, open browser URL — mirror MCP security model | **P1** |
-| **Scriptable browser for agents** | Verify web changes without leaving app | **Shipped (1.3.19)** — 11 `browser_*` MCP tools on existing BrowserPane / webview | **P1 done** |
-| **Subagent → new pane** | Visibility of parallel work | **Shipped locally (1.3.19)** — `agent_delegate` sibling tab/split; remote still one agent per session | **P2 partial** |
-| **GPU terminal (Ghostty/libghostty)** | Native perf story | **Do not** chase on Electron Windows path; canvas choice is intentional. Revisit only if leaving Electron (`TAURI-MIGRATION.md`) | **P2 / defer** |
-
-### From Windows Terminal / iTerm2 / Ghostty / WezTerm / Tabby
-
-| Idea | Source | DevTerm fit | Priority |
-| --- | --- | --- | --- |
-| **Import `~/.ssh/config`** | WT, Tabby, many SSH UIs | **Shipped (1.3.15)** — Connections → Import SSH config | **P0 done** |
-| **Raise default scrollback** (10k–50k) + soft cap | All modern terminals | **Default 10k shipped (1.3.15)**; clamp 100–100k | **P0 done** |
-| **Shell integration exit codes on tabs** | iTerm2, WT | OSC 133 C/D → `exitCode` badge on tab (field already exists on `Session`) | **P0** |
-| **Multi-hop ProxyJump** | OpenSSH | `jump` is single hop; allow `jump[]` chain in profile + connection.ts | **P1** |
-| **Profiles** (color/icon per connection) | WT | Connection color → tab accent | **P1** |
-| **Hyperlink + path click** | WT, iTerm | WebLinks addon exists; add path→editor open for local/remote | **P1** |
-| **Quake / dropdown terminal** | WT, many | Global hotkey + always-on-top mini mode — care with framed window rules | **P2** |
-| **Inline image protocol** | iTerm2, Kitty | Large effort on xterm.js; paste-image path already covers agents | **P2** |
-| **WSL / serial / Docker attach profiles** | WT | Custom shell pref covers WSL path; first-class WSL distro picker would help Windows users | **P2** |
-
-### Highest-leverage roadmap (recommended order)
-
-1. **P0 polish:** ~~fix Find hotkey~~; ~~raise scrollback default~~; ~~session restore MVP~~; ~~SSH config import~~; ~~agent docked/float/hide~~; ~~GitHub #3 markdown preview~~; exit-code tab badges still open.  
-2. **P1 differentiators:** OSC 133 blocks + exit codes; ~~browser MCP tools~~; workflows; vertical tab metadata; selection-aware explain/fix; multi-hop jump; richer session restore (browsers/agents).  
-3. **P2 platform:** richer multi-agent panes (local handoff shipped); structured DevTerm Agent chat; Electron major upgrade; optional native migration research only if Electron ceilings dominate.
-
-### What *not* to copy blindly
-
-- **Drop Electron for Ghostty/Swift** just because cmux is fast — DevTerm's value is Windows + remote SSH + MCP air-gap agent, not macOS-native GPU.  
-- **Replace the PTY with a Warp-style reimplementation of the shell** — keep real shells; layer blocks/AI beside xterm.  
-- **Cloud agent orchestration (Warp Oz)** — out of scope until local/remote single-host UX is best-in-class.  
-- **Bypass the MCP policy boundary** for "smarter" tools — every new host capability goes through `policy.ts` + approval rules.
-
----
-
-## Audit method (for the next refresh)
-
-When re-auditing this file:
-
-1. Diff `package.json` version + `git log` / tags vs "Recent release notes".  
-2. Walk `src/shared/types.ts` `DevTermApi` / `IPC` for new surfaces.  
-3. Re-scan for `TODO` / empty hotkey cases / stale "read-only" comments.  
-4. Re-check open GitHub issues against implemented components.  
-5. Spot-check competitor landing pages only for **product** deltas, not marketing copy.  
-6. Prefer code over `README` / `FEATURE-PLANS` when they disagree — then fix those docs in the same change.
-
-When behavior and this file disagree, **trust the code** and update this file in the same change.
+- `README.md` / `OVERVIEW.md` — user-facing product description and quick start.
+- `CLAUDE.md` — longer narrative walkthrough of user flows (overlaps this file; this file wins on conflicts).
+- `CHANGELOG.md` + `release-notes-v1.3.*.md` — release history.
+- `FEATURE-PLANS.md` (2026-06-25) — stale in places (global search, remote tmux, session-restore MVP, SSH import have **shipped**); trust the code.
+- `TAURI-MIGRATION.md` — native-migration research only; not a direction unless Electron ceilings dominate.
+- `plans/` — one-off design notes (`terminal-grid.md`, `markdown-preview.md`).

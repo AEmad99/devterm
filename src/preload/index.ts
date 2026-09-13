@@ -7,6 +7,7 @@ import {
   type SSHProfile,
   type SSHConnectResult,
   type SSHStatus,
+  type RdpStatus,
   type ReconnectPolicy,
   type TmuxListing,
   type TmuxAttachRequest,
@@ -89,6 +90,13 @@ const api: DevTermApi = {
     attachTmux: (id, req: TmuxAttachRequest): Promise<void> =>
       ipcRenderer.invoke(IPC.sshAttachTmux, id, req),
     killTmux: (id, name: string): Promise<void> => ipcRenderer.invoke(IPC.sshKillTmux, id, name)
+  },
+  rdp: {
+    connect: (profile: SSHProfile): Promise<{ sessionId: string }> =>
+      ipcRenderer.invoke(IPC.rdpConnect, profile),
+    disconnect: (id: string) => ipcRenderer.send(IPC.rdpDisconnect, id),
+    focus: (id: string) => ipcRenderer.send(IPC.rdpFocus, id),
+    onStatus: (id, cb) => subscribe<RdpStatus>(`${IPC.rdpStatus}:${id}`, cb)
   },
   fs: {
     list: (path?: string): Promise<DirListing> => ipcRenderer.invoke(IPC.fsList, path),

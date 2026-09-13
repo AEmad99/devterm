@@ -12,6 +12,7 @@ import type {
 import { establish } from './connection'
 import { detectRemoteContext } from './osDetect'
 import { PortForwardManager } from './port-forward'
+import { windowsPowerShellInteractiveCommand } from './windows-host'
 import {
   TMUX_CLIENT_LEFT_RE,
   TMUX_LIST_CLIENTS,
@@ -38,6 +39,19 @@ interface Session {
    */
   client?: Client
   jump?: Client
+  /**
+   * Windows OpenSSH compatibility clients. Some Windows SSH servers advertise
+   * a shell but reset the whole transport when a second channel is opened on
+   * that connection. Keep the operator's interactive channel on `client` and
+   * use one command-only connection plus one SFTP-only connection instead.
+   */
+  execClient?: Client
+  execJump?: Client
+  execClientInflight?: Promise<Client>
+  execQueue?: Promise<void>
+  sftpClient?: Client
+  sftpJump?: Client
+  sftpClientInflight?: Promise<Client>
   shell?: ClientChannel
   /** Last requested terminal channel, retained across transport reconnects. */
   shellRequest?: ShellRequest
@@ -66,13 +80,7 @@ interface Session {
   profile: SSHProfile
   /** Active reconnect loop, if any. Set by the manager when scheduling a retry. */
   reconnect?: ReconnectState
-  /**
-   * Cached result of the post-open shell probe for the Windows-PowerShell
-   * branch. The probe is `echo $PSVersionTable`; the response is checked
-   * once and held so we don't re-probe on every prompt (and so the
-   * shell-setup branch in `openShell` can skip straight to injection).
-   * `null` = unknown / not yet probed. `true` = PowerShell detected.
-   */
+  /** True when the Windows interactive channel was opened as PowerShell. */
   isWindowsPowerShell?: boolean
   /** Pending shell-setup write timers; cleared on disconnect. */
   setupTimers?: Set<NodeJS.Timeout>
@@ -212,51 +220,6 @@ export const STTY_DISABLE_ECHO = '\x15stty -echo 2>/dev/null\n'
 /** Wait for `stty -echo` to run before sending the payload on a slow SSH link. */
 const QUIET_WRITE_GAP_MS = 180
 
-/**
- * Detect whether the open shell on a Windows remote is PowerShell. The probe
- * is `echo $PSVersionTable` (PowerShell evaluates the variable, cmd.exe
- * echoes it literally). Wrapped in a timeout so a misbehaving host can't
- * stall the shell-open path. Result is cached per session so the OSC 7
- * injection in `openShell` doesn't have to re-probe.
- *
- * NOTE: cmd.exe does not support OSC 7 at all (it has no prompt function
- * hook; `prompt $G` doesn't emit one). We fall back to no-OSC-7 there and
- * surface a comment in the shell-setup branch explaining the limitation.
- */
-async function probeWindowsShell(client: Client): Promise<boolean> {
-  return new Promise((resolve) => {
-    let settled = false
-    const done = (v: boolean) => {
-      if (settled) return
-      settled = true
-      resolve(v)
-    }
-    const timer = setTimeout(() => done(false), 5000)
-    client.exec('echo $PSVersionTable', (err, stream) => {
-      if (err) {
-        clearTimeout(timer)
-        return done(false)
-      }
-      const stdoutChunks: Buffer[] = []
-      stream
-        .on('close', () => {
-          clearTimeout(timer)
-          // PowerShell renders the table as a multi-line ASCII string starting
-          // with the header line "Name                           Value"; cmd.exe
-          // just prints "$PSVersionTable" verbatim. Match the table header.
-          // Decode once on completion so multi-byte UTF-8 split across ssh2
-          // data chunks isn't mangled into U+FFFD.
-          const stdout = Buffer.concat(stdoutChunks).toString('utf8')
-          done(/^\s*Name\s+Value/m.test(stdout))
-        })
-        .on('data', (d: Buffer) => stdoutChunks.push(d))
-        .stderr.on('data', () => {
-          /* ignore — probe failure is non-fatal */
-        })
-    })
-  })
-}
-
 export interface SSHHandlers {
   onData: (sessionId: string, data: string) => void
   onExit: (sessionId: string) => void
@@ -267,9 +230,11 @@ export interface SSHHandlers {
 export type SSHStatusListener = (status: SSHStatus) => void
 
 /**
- * Owns SSH sessions. One ssh2 client per session; the human shell is one
- * channel on it (SFTP and the MCP bridge will open further channels on the
- * SAME client in later phases — never a second connection).
+ * Owns SSH sessions. The normal path uses one ssh2 client per session, with
+ * the human shell, SFTP, and MCP bridge sharing its channels. Windows
+ * OpenSSH compatibility mode is the deliberate exception: servers with a
+ * one-channel limit get isolated command-only and SFTP-only clients so an
+ * agent command cannot reset the operator's interactive shell.
  */
 export class SSHManager {
   private sessions = new Map<string, Session>()
@@ -409,8 +374,142 @@ export class SSHManager {
     s.shell = undefined
     s.shellDecoder = undefined
     s.shellInflight = undefined
+    this.closeAuxClient(s, 'exec')
+    this.closeAuxClient(s, 'sftp')
     s.sftp = undefined
     s.sftpInflight = undefined
+  }
+
+  /** Close a Windows compatibility client without treating it as a session drop. */
+  private closeAuxClient(s: Session, kind: 'exec' | 'sftp'): void {
+    const client = kind === 'exec' ? s.execClient : s.sftpClient
+    const jump = kind === 'exec' ? s.execJump : s.sftpJump
+    if (kind === 'exec') {
+      s.execClient = undefined
+      s.execJump = undefined
+      s.execClientInflight = undefined
+      s.execQueue = undefined
+    } else {
+      s.sftpClient = undefined
+      s.sftpJump = undefined
+      s.sftpClientInflight = undefined
+    }
+    if (!client) return
+    // The auxiliary close listener only clears auxiliary state. Removing it
+    // here avoids a late `close` event touching a session being torn down.
+    client.removeAllListeners('close')
+    try {
+      client.end()
+      jump?.end()
+    } catch {
+      /* ignore */
+    }
+  }
+
+  /**
+   * Open the command-only connection used by Windows remotes. The primary
+   * client must remain alive because it owns the visible interactive shell.
+   */
+  private ensureWindowsExecClient(sessionId: string): Promise<Client> {
+    const s = this.sessions.get(sessionId)
+    if (!s) return Promise.reject(new Error('unknown session'))
+    if (s.execClient) return Promise.resolve(s.execClient)
+    if (s.execClientInflight) return s.execClientInflight
+    if (!s.client) return Promise.reject(new Error(RECONNECTING_ERR))
+
+    const primary = s.client
+    const inflight = establish(
+      {
+        host: s.profile.host,
+        port: s.profile.port,
+        username: s.profile.username,
+        password: s.profile.password,
+        privateKeyPath: s.profile.privateKeyPath,
+        passphrase: s.profile.passphrase,
+        jump: s.profile.jump
+      },
+      () => {
+        /* Auxiliary connection failures belong to the operation, not the shell. */
+      }
+    ).then(({ client, jump }) => {
+      const current = this.sessions.get(sessionId)
+      if (current !== s || s.closing || s.client !== primary) {
+        client.end()
+        jump?.end()
+        throw new Error(RECONNECTING_ERR)
+      }
+      s.execClient = client
+      s.execJump = jump
+      client.on('close', () => {
+        if (s.execClient === client) {
+          s.execClient = undefined
+          s.execJump = undefined
+        }
+      })
+      return client
+    })
+    s.execClientInflight = inflight
+    void inflight.then(
+      () => {
+        if (s.execClientInflight === inflight) s.execClientInflight = undefined
+      },
+      () => {
+        if (s.execClientInflight === inflight) s.execClientInflight = undefined
+      }
+    )
+    return inflight
+  }
+
+  /** Open the SFTP-only connection used by Windows remotes. */
+  private ensureWindowsSftpClient(sessionId: string): Promise<Client> {
+    const s = this.sessions.get(sessionId)
+    if (!s) return Promise.reject(new Error('unknown session'))
+    if (s.sftpClient) return Promise.resolve(s.sftpClient)
+    if (s.sftpClientInflight) return s.sftpClientInflight
+    if (!s.client) return Promise.reject(new Error(RECONNECTING_ERR))
+
+    const primary = s.client
+    const inflight = establish(
+      {
+        host: s.profile.host,
+        port: s.profile.port,
+        username: s.profile.username,
+        password: s.profile.password,
+        privateKeyPath: s.profile.privateKeyPath,
+        passphrase: s.profile.passphrase,
+        jump: s.profile.jump
+      },
+      () => {
+        /* Auxiliary connection failures belong to the operation, not the shell. */
+      }
+    ).then(({ client, jump }) => {
+      const current = this.sessions.get(sessionId)
+      if (current !== s || s.closing || s.client !== primary) {
+        client.end()
+        jump?.end()
+        throw new Error(RECONNECTING_ERR)
+      }
+      s.sftpClient = client
+      s.sftpJump = jump
+      client.on('close', () => {
+        if (s.sftpClient === client) {
+          s.sftpClient = undefined
+          s.sftpJump = undefined
+          s.sftp = undefined
+        }
+      })
+      return client
+    })
+    s.sftpClientInflight = inflight
+    void inflight.then(
+      () => {
+        if (s.sftpClientInflight === inflight) s.sftpClientInflight = undefined
+      },
+      () => {
+        if (s.sftpClientInflight === inflight) s.sftpClientInflight = undefined
+      }
+    )
+    return inflight
   }
 
   /**
@@ -641,19 +740,22 @@ export class SSHManager {
     if (s.shellInflight) return s.shellInflight
     const client = s.client
     const inflight = new Promise<void>((resolve, reject) => {
-      client.shell(
-        {
-          term: 'xterm-256color',
-          cols,
-          rows,
-          // Hide the OSC-hook inject (and tmux attach) so it is not echoed, then
-          // the setup script turns echo back on. Servers that ignore pty modes
-          // still get the stty -echo two-step in writeQuiet().
-          modes: { ECHO: 0 }
-        },
-        (err, channel) => {
+      // POSIX shells use a quiet post-open hook, so disable echo for that
+      // short injection. Windows receives its prompt hook in the process
+      // command line and must keep normal PTY echo for interactive input.
+      const pty =
+        s.context.os === 'windows'
+          ? { term: 'xterm-256color', cols, rows }
+          : {
+              term: 'xterm-256color',
+              cols,
+              rows,
+              modes: { ECHO: 0 as const }
+            }
+      const onChannel = (err: Error | undefined | null, channel?: ClientChannel) => {
           s.shellInflight = undefined
           if (err) return reject(err)
+          if (!channel) return reject(new Error("no shell channel"))
           s.shell = channel
           // Stream every chunk through a per-session UTF-8 decoder so multi-byte
           // codepoints split across ssh2 data events decode correctly instead
@@ -715,65 +817,103 @@ export class SSHManager {
             !s.shellRequest?.tmuxSession
           ) {
             this.scheduleQuietWrite(s, buildPosixShellIntegrationSetup(), 250)
-          } else if (s.context.os === 'windows') {
-            // Windows remote: probe whether the open shell is PowerShell (the
-            // OpenSSH server default on Server 2019+ and most modern Windows
-            // boxes). cmd.exe has no prompt hook that can emit OSC 7, so we
-            // intentionally fall through to no-op there — see the limitation
-            // note on `probeWindowsShell`. The setup is identical in shape to
-            // the local PTY's PowerShell branch in `main/pty/manager.ts`
-            // (function `prompt` writes the OSC 7 sequence and the OSC 133 ;A/;B
-            // markers around the visible prompt).
-            void probeWindowsShell(client).then((isPS) => {
-              s.isWindowsPowerShell = isPS
-              if (!isPS) return // cmd.exe: known limitation, no OSC 7.
-              const setup =
-                `function prompt { $e=[char]27; $b=[char]7; $p=$PWD.ProviderPath; ` +
-                `$u=($p -replace '\\\\','/'); ` +
-                `Write-Host -NoNewline ($e + ']133;A' + $b + $e + ']7;file:///' + $u + $b); ` +
-                `('PS ' + $p + '> ' + $e + ']133;B' + $b) }; prompt\n`
-              const t = setTimeout(() => {
-                if (s.setupTimers) s.setupTimers.delete(t)
-                if (s.shell && this.sessions.has(sessionId)) s.shell.write(setup)
-              }, 700)
-              if (!s.setupTimers) s.setupTimers = new Set()
-              s.setupTimers.add(t)
-            })
           }
           resolve()
-        }
-      )
+      }
+      if (s.context.os === 'windows') {
+        // Win32-OpenSSH can be configured with `ForceCommand` or a shell
+        // implementation that rejects SSH `shell` requests with a message
+        // such as “Interactive mode not supported. Use command exec instead.”
+        // Use an interactive exec channel for Windows and never fall back to
+        // `client.shell()` there. PowerShell is the useful default for agents;
+        // cmd.exe keeps the terminal usable on minimal Windows installations.
+        const promptSetup =
+          `function prompt { $e=[char]27; $b=[char]7; $p=$PWD.ProviderPath; ` +
+          `$u=($p -replace '\\\\','/'); ` +
+          `Write-Host -NoNewline ($e + ']133;A' + $b + $e + ']7;file:///' + $u + $b); ` +
+          `('PS ' + $p + '> ' + $e + ']133;B' + $b) }`
+        client.exec(windowsPowerShellInteractiveCommand(promptSetup), { pty }, (err, channel) => {
+          if (!err && channel) {
+            s.isWindowsPowerShell = true
+            onChannel(undefined, channel)
+            return
+          }
+          const powershellError = err ?? new Error('PowerShell exec channel was not opened')
+          client.exec('cmd.exe', { pty }, (fallbackErr, fallbackChannel) => {
+            if (!fallbackErr && fallbackChannel) {
+              s.isWindowsPowerShell = false
+              onChannel(undefined, fallbackChannel)
+              return
+            }
+            onChannel(
+              fallbackErr ??
+                new Error(`Windows shell could not be opened: ${powershellError.message}`),
+              fallbackChannel
+            )
+          })
+        })
+      } else {
+        client.shell(pty, onChannel)
+      }
     })
     s.shellInflight = inflight
     return inflight
   }
 
   /**
-   * Lazily open an SFTP channel on the session's EXISTING client (channel mux —
-   * never a second connection), cached for reuse. Concurrent callers share one
-   * in-flight open so we never leak a second SFTP channel.
+   * Lazily open an SFTP channel. Normal remotes use the session's existing
+   * client; Windows remotes use their SFTP-only compatibility client so a
+   * server that permits only one channel cannot reset the visible shell.
    */
   getSftp(sessionId: string): Promise<SFTPWrapper> {
     const s = this.sessions.get(sessionId)
     if (!s) return Promise.reject(new Error('unknown session'))
     if (s.sftp) return Promise.resolve(s.sftp)
-    if (!s.client) return Promise.reject(new Error(RECONNECTING_ERR))
     if (s.sftpInflight) return s.sftpInflight
-    const client = s.client
-    s.sftpInflight = new Promise<SFTPWrapper>((resolve, reject) => {
-      client.sftp((err, sftp) => {
-        s.sftpInflight = undefined
-        if (err) return reject(err)
-        s.sftp = sftp
-        // Only clear the cache if this wrapper is still the one we stored —
-        // a later open must not be wiped by a leaked wrapper's close.
-        sftp.on('close', () => {
-          if (s.sftp === sftp) s.sftp = undefined
+
+    const primary = s.client
+    const inflight = (async () => {
+      const client =
+        s.context.os === 'windows'
+          ? await this.ensureWindowsSftpClient(sessionId)
+          : primary
+      if (!client) throw new Error(RECONNECTING_ERR)
+      return new Promise<SFTPWrapper>((resolve, reject) => {
+        client.sftp((err, sftp) => {
+          const current = this.sessions.get(sessionId)
+          const clientStillBelongs =
+            current === s &&
+            !s.closing &&
+            (s.context.os === 'windows' ? s.sftpClient === client : s.client === client)
+          if (err) return reject(err)
+          if (!clientStillBelongs) {
+            try {
+              sftp.end()
+            } catch {
+              /* ignore */
+            }
+            return reject(new Error(RECONNECTING_ERR))
+          }
+          s.sftp = sftp
+          // Only clear the cache if this wrapper is still the one we stored —
+          // a later open must not be wiped by a leaked wrapper's close.
+          sftp.on('close', () => {
+            if (s.sftp === sftp) s.sftp = undefined
+          })
+          resolve(sftp)
         })
-        resolve(sftp)
       })
-    })
-    return s.sftpInflight
+    })()
+    s.sftpInflight = inflight
+    void inflight.then(
+      () => {
+        if (s.sftpInflight === inflight) s.sftpInflight = undefined
+      },
+      () => {
+        if (s.sftpInflight === inflight) s.sftpInflight = undefined
+      }
+    )
+    return inflight
   }
 
   getContext(sessionId: string): HostContext | undefined {
@@ -794,13 +934,41 @@ export class SSHManager {
   ): Promise<{ stdout: string; stderr: string; code: number | null; timedOut: boolean }> {
     const s = this.sessions.get(sessionId)
     if (!s) return Promise.reject(new Error('unknown session'))
+    if (s.context.os === 'windows') {
+      // Windows OpenSSH installations commonly have MaxSessions=1. Queue
+      // command channels per session so Git/status and an agent tool cannot
+      // race each other on the dedicated command connection.
+      const previous = s.execQueue ?? Promise.resolve()
+      const queued = previous
+        .catch(() => undefined)
+        .then(async () =>
+          this.execOnClient(await this.ensureWindowsExecClient(sessionId), command, timeoutMs)
+        )
+      const queueTail = queued.then(
+        () => undefined,
+        () => undefined
+      )
+      s.execQueue = queueTail
+      void queueTail.then(() => {
+        if (s.execQueue === queueTail) s.execQueue = undefined
+      })
+      return queued
+    }
     if (!s.client) return Promise.reject(new Error(RECONNECTING_ERR))
-    const client = s.client
+    return this.execOnClient(s.client, command, timeoutMs)
+  }
+
+  private execOnClient(
+    client: Client,
+    command: string,
+    timeoutMs: number
+  ): Promise<{ stdout: string; stderr: string; code: number | null; timedOut: boolean }> {
     return new Promise((resolve, reject) => {
       let settled = false
       const stdoutChunks: Buffer[] = []
       const stderrChunks: Buffer[] = []
       let streamRef: ClientChannel | undefined
+      let exitCode: number | null = null
       // Decode once on completion so multi-byte UTF-8 codepoints split across
       // ssh2 data chunks aren't turned into U+FFFD by per-chunk `.toString()`.
       const snapshot = () => ({
@@ -832,24 +1000,40 @@ export class SSHManager {
         detach()
         finish({ ...snapshot(), code: null, timedOut: true })
       }, timeoutMs)
-      client.exec(command, (err, stream) => {
-        if (err) {
-          clearTimeout(timer)
-          return reject(err)
-        }
-        streamRef = stream
-        stream
-          .on('close', (c: number) => {
+      try {
+        client.exec(command, (err, stream) => {
+          if (err) {
             clearTimeout(timer)
-            finish({ ...snapshot(), code: c ?? null, timedOut: false })
-          })
-          .on('data', (d: Buffer) => {
-            if (!settled) stdoutChunks.push(d)
-          })
-          .stderr.on('data', (d: Buffer) => {
-            if (!settled) stderrChunks.push(d)
-          })
-      })
+            return reject(err)
+          }
+          streamRef = stream
+          stream
+            .on('exit', (code: number | null) => {
+              exitCode = typeof code === 'number' ? code : null
+            })
+            .on('close', (c: number) => {
+              clearTimeout(timer)
+              finish({
+                ...snapshot(),
+                code: exitCode ?? (typeof c === 'number' ? c : null),
+                timedOut: false
+              })
+            })
+            .on('error', (streamError: Error) => {
+              clearTimeout(timer)
+              if (!settled) reject(streamError)
+            })
+            .on('data', (d: Buffer) => {
+              if (!settled) stdoutChunks.push(d)
+            })
+            .stderr.on('data', (d: Buffer) => {
+              if (!settled) stderrChunks.push(d)
+            })
+        })
+      } catch (err) {
+        clearTimeout(timer)
+        reject(err)
+      }
     })
   }
 
@@ -1071,7 +1255,10 @@ export class SSHManager {
       clearTimeout(s.reconnect.timer)
       delete s.reconnect
     }
-    // The placeholder session has no live client (`client === undefined`).
+    // The placeholder session has no live client (`client === undefined`),
+    // but auxiliary Windows clients may still be finishing a command.
+    this.closeAuxClient(s, 'exec')
+    this.closeAuxClient(s, 'sftp')
     if (s.client) {
       try {
         s.shell?.close()

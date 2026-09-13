@@ -4974,3 +4974,31 @@
   justify-content: flex-end;
   margin-top: 10px;
 }
+
+.rdp-pane {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--bg);
+}
+.rdp-card {
+  max-width: 420px;
+  padding: 20px 22px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+}
+.rdp-kicker {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+.rdp-status { color: var(--ok); margin: 8px 0; }
+.rdp-copy { color: var(--muted); line-height: 1.45; }
+.rdp-actions { margin-top: 14px; }
+.protocol-row { gap: 16px; margin-bottom: 8px; }
+

@@ -23,6 +23,18 @@ describe('agent briefings', () => {
     assert.match(md, /mcp__devterm__run_command/)
     assert.match(md, /Built-in tools are disabled/)
     assert.match(md, /browser_list/)
+    assert.doesNotMatch(md, /Windows host/)
+  })
+
+  it('Windows remote briefing tells the agent to use PowerShell', () => {
+    const md = buildAgentsMd(
+      { kind: 'remote', os: 'windows', hostname: 'winbox', detail: 'Windows Server' },
+      false,
+      'C:\\Users\\Administrator'
+    )
+    assert.match(md, /Windows host/)
+    assert.match(md, /PowerShell/)
+    assert.match(md, /Set-Location/)
   })
 
   it('local native briefing uses builtin tools and does not mention MCP host tools as required', () => {

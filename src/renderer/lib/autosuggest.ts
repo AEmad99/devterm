@@ -27,6 +27,12 @@ export interface SuggestView {
   above: boolean
 }
 
+/** Move a listbox selection with wraparound. Pure so it stays unit-testable. */
+export function moveSelection(index: number, delta: number, length: number): number {
+  if (length <= 0) return 0
+  return (index + delta + length) % length
+}
+
 /**
  * History commands that continue `prefix` (case-insensitive), recency first then
  * by frequency, deduped. Only commands that add something past the prefix count.
@@ -126,19 +132,36 @@ export function attachAutosuggest(
   // crowd the typed text — without it the popup's first row lands flush with
   // the prompt line and the suggestion appears to overwrite the command.
   const POPUP_GAP = 6
-  const popupPixel = (): { left: number; top: number; above: boolean } => {
+  const popupPixel = (
+    itemCount: number
+  ): { left: number; top: number; above: boolean } => {
     const screen = host.querySelector('.xterm-screen') as HTMLElement | null
+    const hostH = host.clientHeight || screen?.clientHeight || 0
     const ch = (screen?.clientHeight ?? host.clientHeight) / Math.max(1, term.rows)
     const b = term.buffer.active
-    const above = b.cursorY > term.rows * 0.6
+    // Rough popup height: one ~28px row per item + ~30px hint bar. Used only
+    // to pick the side with room so the box never covers the typed line and
+    // never clips off the pane edge (it used to always go below until 60% of
+    // the pane, then always above — either side could overflow and bury input).
+    const estH = Math.min(240, itemCount * 28 + 30)
+    const caretTop = ch * b.cursorY
+    const caretBottom = ch * (b.cursorY + 1)
+    const spaceBelow = hostH - caretBottom - POPUP_GAP
+    const spaceAbove = caretTop - POPUP_GAP
+    let above = b.cursorY > term.rows * 0.6
+    if (!above && spaceBelow < Math.min(estH, 160) && spaceAbove > spaceBelow) above = true
+    else if (above && spaceAbove < Math.min(estH, 160) && spaceBelow > spaceAbove) above = false
     const left = 4
-    const top = above ? ch * b.cursorY - POPUP_GAP : ch * (b.cursorY + 1) + POPUP_GAP
+    const rawTop = above ? caretTop - POPUP_GAP : caretBottom + POPUP_GAP
+    // Clamp inside the pane so a mis-measured cell height can't push the box
+    // over the prompt line or off-screen (which read as "blocks my input").
+    const top = Math.max(4, Math.min(rawTop, Math.max(4, hostH - 40)))
     return { left, top, above }
   }
 
   const show = (prefix: string, items: string[]) => {
     index = 0
-    const pos = popupPixel()
+    const pos = popupPixel(items.length)
     view = { items, index, prefix, left: pos.left, top: pos.top, above: pos.above }
     opts.onChange(view)
   }
@@ -207,13 +230,48 @@ export function attachAutosuggest(
     opts.onChange(view)
   }
 
+  const move = (delta: number) => {
+    if (!view || view.items.length === 0) return
+    index = moveSelection(index, delta, view.items.length)
+    view = { ...view, index }
+    opts.onChange(view)
+  }
+
   const handleKey = (e: KeyboardEvent): boolean => {
     if (!view) return false
+    const k = e.key.length === 1 ? e.key.toLowerCase() : e.key
+    // ↑/↓ (and Ctrl+P / Ctrl+N, the readline equivalents) walk the suggestion
+    // list while it's open. The key is consumed so it never reaches the shell
+    // — otherwise ↑ would pull shell history and fight the popup selection.
+    // Esc closes the popup and restores plain shell-history navigation.
+    if (
+      e.key === 'ArrowDown' ||
+      (e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey && k === 'n')
+    ) {
+      e.preventDefault()
+      move(1)
+      return true
+    }
+    if (
+      e.key === 'ArrowUp' ||
+      (e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey && k === 'p')
+    ) {
+      e.preventDefault()
+      move(-1)
+      return true
+    }
     if (e.key === 'Escape') {
+      e.preventDefault()
       hide()
       return true
     }
-    if (e.key === 'ArrowRight' || (e.key === 'Tab' && !e.shiftKey)) {
+    if (e.key === 'Tab' && e.shiftKey) {
+      e.preventDefault()
+      move(-1)
+      return true
+    }
+    if (e.key === 'ArrowRight' || e.key === 'Tab') {
+      e.preventDefault()
       accept(index)
       return true
     }
