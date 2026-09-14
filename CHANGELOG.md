@@ -5,10 +5,22 @@ at the top. Dates are ISO `YYYY-MM-DD`.
 
 ## Unreleased
 
+## 1.3.26 — 2026-09-14
+
+### Fixed
+
+- Packaged Windows builds ship node-pty's ConPTY native addons (`conpty.node`). v1.3.25 omitted `build/Release` (the npm package's `files` field does not list it), so every local PTY — including all agents — failed with `Cannot find module '../build/Release/conpty.node'`. Packaging now patches that `files` list and fails the Windows build if the natives are missing.
+- `npm run setup` extracts the bundled Node `.zip` with PowerShell on Windows so Git Bash's GNU tar cannot strand the agent runtime install.
+
+## 1.3.25 — 2026-09-14
+
+In-app browser hardening and Windows OpenSSH transport isolation.
+
 ### Fixed
 
 - Windows OpenSSH keeps the visible PowerShell terminal isolated from commands, SFTP, and port-forward streams, and performs bounded recovery when an unexpected shell-channel drop leaves the SSH transport alive.
 - Compatibility connections to older Windows OpenSSH servers prefer a faster fixed-group key exchange after the host is identified as Windows, while retaining modern algorithms first.
+- In-app browser navigation and certificate handling are hardened (persistent page state, mounted inactive tabs, certificate trust prompts).
 
 ## 1.3.24 — 2026-09-14
 

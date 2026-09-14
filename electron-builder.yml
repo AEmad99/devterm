@@ -41,8 +41,15 @@ files:
   - '!.eden{,/**/*}'
   - '!.muse{,/**/*}'
   - '!.agents{,/**/*}'
+# node-pty's npm `files` field omits build/ (Windows ConPTY addons live there
+# after `npm run setup`). beforePack patches that field; afterPack fails the
+# Windows build if conpty.node still is not in the unpacked output.
+beforePack: scripts/before-pack.cjs
+afterPack: scripts/after-pack.cjs
 asarUnpack:
   - '**/node_modules/node-pty/**'
+  # Native addons cannot be dlopen'd from inside asar.
+  - '**/*.node'
   # Dedicated runtime for the built-in DevTerm Agent. Executables cannot run
   # from inside app.asar, so keep the platform-specific Node binary on disk.
   - '**/node_modules/node/bin/**'

@@ -11,6 +11,7 @@ Produce the Windows installer for DevTerm.
 
 Reminders specific to this repo (surface these if the build fails):
 - **node-pty must stay `asarUnpack`'d** (configured in `electron-builder.yml`). If the packaged app crashes loading the PTY native module, the unpack rule was likely removed.
+- **Windows natives (`conpty.node`) must be in the unpacked output.** `npm run setup` extracts them into `node_modules/node-pty/build/Release/`; electron-builder would otherwise drop that folder because node-pty's npm `files` field omits `build/`. `beforePack` / `afterPack` patch and assert this — a missing `conpty.node` must fail the build, not ship.
 - The build is **unsigned**; Windows SmartScreen warnings on the installer are expected.
 - `npm run release:win` publishes to GitHub and needs `GITHUB_TOKEN` in `.env` (git-ignored) — only run it if the user explicitly asks to publish a release.
 

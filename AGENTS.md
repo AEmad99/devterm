@@ -4,7 +4,7 @@ Guidance for coding agents working in the DevTerm repository. Read this first; p
 
 DevTerm is an Electron 29 desktop terminal: local shells (prebuilt node-pty), SSH/SFTP sessions, tiling workspaces, file browsing/editing (CodeMirror 6), an in-app browser, snippets, a Warp-style Git panel, a persistent transfer queue, offline Whisper dictation, global terminal search, and an embedded multi-provider **DevTerm Agent** with seven external CLI fallbacks (`pi`, `claude`, `opencode`, `kimi`, `grok`, `codex`, `antigravity`). Every agent runs in a local PTY and reaches the remote host only through DevTerm's in-process MCP bridge. Stack: electron-vite, TypeScript strict, React 18, Zustand, xterm.js, ssh2, marked + DOMPurify, `@huggingface/transformers`, `@earendil-works/pi-coding-agent` (bundled runtime), a dedicated `node` binary for the agent, electron-updater, zod.
 
-**Version:** `package.json` (currently `1.3.20`). Top-level views: **Terminals** (the always-mounted workspace: group tabs, split panes, local/remote/browser sessions), **Connections**, **Workspaces**, **Snippets**. DevTerm is a normal framed desktop app; the first screen is the terminal, not a marketing page. Release history lives in `CHANGELOG.md` — do not duplicate it here.
+**Version:** `package.json` (currently `1.3.26`). Top-level views: **Terminals** (the always-mounted workspace: group tabs, split panes, local/remote/browser sessions), **Connections**, **Workspaces**, **Snippets**. DevTerm is a normal framed desktop app; the first screen is the terminal, not a marketing page. Release history lives in `CHANGELOG.md` — do not duplicate it here.
 
 ## Start here
 
@@ -171,12 +171,13 @@ Project skills in `.claude/skills/` (load via the skill tool, they carry the exa
 ## Packaging
 
 - `electron-builder.yml`: `appId com.devterm.app`, NSIS x64 (`oneClick: false`, `perMachine: false`), unsigned (`verifyUpdateCodeSignature: false`), `npmRebuild: false`, GitHub provider `AEmad99/devterm`. NSIS reinstall logic in `resources/installer.nsh` force-kills install-dir processes (elevated UAC inner installs skip stock `CHECK_APP_RUNNING`).
-- `asarUnpack` must keep: `node-pty`, `ort/*.wasm`, agent Node binary (`node/bin/**`), `@earendil-works/**` and the listed agent runtime dependency closure. Dropping entries breaks the built-in agent (external Node can't resolve modules inside `app.asar`) or dictation.
+- `asarUnpack` must keep: `node-pty`, `**/*.node`, `ort/*.wasm`, agent Node binary (`node/bin/**`), `@earendil-works/**` and the listed agent runtime dependency closure. Dropping entries breaks the built-in agent (external Node can't resolve modules inside `app.asar`) or dictation.
+- Windows packaging must ship `node-pty/build/Release/conpty.node` (and the rest of the prebuilt Release dir). The npm package's `files` field omits `build/`; `scripts/before-pack.cjs` patches that in, and `scripts/after-pack.cjs` fails the build if the unpacked output is still missing the natives. Never ship a Windows installer that cannot spawn a local PTY.
 - Unsigned builds: pass `CSC_IDENTITY_AUTO_DISCOVERY=false` if packaging hits winCodeSign symlink issues on Windows.
 
 ## Tests
 
-31 `*.test.ts` files (run via `npm run test`): all eight agent launch modules (`agent-bin`, `launch`, `claude`, `opencode`, `kimi`, `grok`, `antigravity` — note: no `codex-launch.test.ts`), approval-rules, agent context, host-backend, browser control/interact/snapshot/url-guard, MCP policy/tools-agent/tools-register, search ansi/index, ssh detached-session/ssh-config-parse/tmux, shell-quote, history-parse, plus renderer-side extractCommandPrefix, markdown-preview, snippets, stt resample, tab-label, tab-status, layout. Large surfaces (layout DnD, SSH reconnect, SFTP queue, multi-window agent) rely on self-test + manual QA — the biggest coverage gap.
+32 `*.test.ts` files (run via `npm run test`): all eight agent launch modules (`agent-bin`, `launch`, `claude`, `opencode`, `kimi`, `grok`, `antigravity` — note: no `codex-launch.test.ts`), approval-rules, agent context, host-backend, browser control/interact/snapshot/url-guard, MCP policy/tools-agent/tools-register, search ansi/index, ssh detached-session/ssh-config-parse/tmux, shell-quote, history-parse, pty-native-pack, plus renderer-side extractCommandPrefix, markdown-preview, snippets, stt resample, tab-label, tab-status, layout. Large surfaces (layout DnD, SSH reconnect, SFTP queue, multi-window agent) rely on self-test + manual QA — the biggest coverage gap.
 
 ## Critical rules
 

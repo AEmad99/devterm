@@ -31,12 +31,24 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const nm = join(root, 'node_modules')
 
 /**
- * Extract a downloaded archive with the system tar. Git Bash's GNU tar needs
- * `--force-local` for Windows drive-colon paths, while the stock Windows
- * bsdtar rejects that exact flag — so try the flag first and fall back to the
- * plain form. bsdtar and GNU tar both auto-detect zip/gzip/xz.
+ * Extract a downloaded archive. Windows `.zip` uses Expand-Archive because Git
+ * Bash's GNU tar cannot read zip. Other archives use system tar: GNU tar needs
+ * `--force-local` for Windows drive-colon paths, while stock Windows bsdtar
+ * rejects that flag — try the flag first and fall back to the plain form.
  */
 function extractArchive(archivePath, dest) {
+  // GNU tar (Git Bash) cannot read zip and also needs --force-local for Windows
+  // drive-colon paths. bsdtar (Windows tar) reads zip but rejects --force-local.
+  // Expand-Archive is the reliable Windows zip path.
+  if (process.platform === 'win32' && archivePath.toLowerCase().endsWith('.zip')) {
+    const psPath = archivePath.replace(/'/g, "''")
+    const psDest = dest.replace(/'/g, "''")
+    execSync(
+      `powershell.exe -NoProfile -Command "Expand-Archive -LiteralPath '${psPath}' -DestinationPath '${psDest}' -Force"`,
+      { stdio: 'inherit' }
+    )
+    return
+  }
   const posix = (p) => p.replace(/\\/g, '/')
   const run = (args) =>
     execSync(
@@ -65,7 +77,9 @@ const resolveElectronAbi = () => {
     const known = { 28: 119, 29: 121, 30: 123, 31: 125, 32: 128, 33: 130, 34: 132, 35: 135 }
     const abi = known[Number(version.split('.')[0])]
     if (!abi) {
-      throw new Error(`node-abi unavailable and Electron ${version} is not in the fallback ABI table`)
+      throw new Error(
+        `node-abi unavailable and Electron ${version} is not in the fallback ABI table`
+      )
     }
     console.warn(`! node-abi not resolvable; using fallback ABI v${abi} for Electron ${version}`)
     return `v${abi}`
@@ -82,21 +96,36 @@ const TARBALL_SHA256 = {
 }
 
 // 1) Electron binary
-const electronBin = join(nm, 'electron', 'dist', process.platform === 'win32' ? 'electron.exe' : 'electron')
+const electronBin = join(
+  nm,
+  'electron',
+  'dist',
+  process.platform === 'win32' ? 'electron.exe' : 'electron'
+)
 if (existsSync(electronBin)) {
   console.log('✓ Electron binary present')
 } else {
   console.log('• Fetching Electron binary…')
-  execSync(`node ${JSON.stringify(join(nm, 'electron', 'install.js'))}`, { stdio: 'inherit', cwd: root })
+  execSync(`node ${JSON.stringify(join(nm, 'electron', 'install.js'))}`, {
+    stdio: 'inherit',
+    cwd: root
+  })
 }
 
 // 2) node-pty native addon for the Electron ABI. A marker file records which
 //    ABI the installed pty.node was built for; a stale binary from an older
 //    Electron (wrong ABI) is re-fetched instead of trusted on sight.
+//    On Windows, ConPTY loads conpty.node (not pty.node); both ship in the
+//    same prebuilt tarball and both must be present or every local PTY fails.
 const ptyBin = join(nm, 'node-pty', 'build', 'Release', 'pty.node')
+const conptyBin = join(nm, 'node-pty', 'build', 'Release', 'conpty.node')
 const ptyAbiMarker = join(nm, 'node-pty', 'build', 'Release', '.devterm-abi')
 const installedAbi = existsSync(ptyAbiMarker) ? readFileSync(ptyAbiMarker, 'utf8').trim() : null
-if (existsSync(ptyBin) && installedAbi === ELECTRON_ABI) {
+const nativesPresent =
+  existsSync(ptyBin) &&
+  installedAbi === ELECTRON_ABI &&
+  (process.platform !== 'win32' || existsSync(conptyBin))
+if (nativesPresent) {
   console.log(`✓ node-pty native binary present (Electron ABI ${ELECTRON_ABI})`)
 } else if (process.platform !== 'win32' || process.arch !== 'x64') {
   if (existsSync(ptyBin)) {
@@ -112,8 +141,12 @@ if (existsSync(ptyBin) && installedAbi === ELECTRON_ABI) {
     )
   }
 } else {
-  if (existsSync(ptyBin)) {
-    console.log(`• node-pty binary is stale (ABI ${installedAbi ?? 'unknown'} ≠ ${ELECTRON_ABI}); re-fetching`)
+  if (existsSync(ptyBin) && !existsSync(conptyBin)) {
+    console.log('• node-pty pty.node is present but conpty.node is missing; re-fetching')
+  } else if (existsSync(ptyBin)) {
+    console.log(
+      `• node-pty binary is stale (ABI ${installedAbi ?? 'unknown'} ≠ ${ELECTRON_ABI}); re-fetching`
+    )
   }
   const url = `https://github.com/homebridge/node-pty-prebuilt-multiarch/releases/download/v${NODE_PTY_VER}/node-pty-prebuilt-multiarch-v${NODE_PTY_VER}-electron-${ELECTRON_ABI}-win32-x64.tar.gz`
   const tgz = join(root, '.node-pty-prebuilt.tar.gz')
@@ -128,17 +161,27 @@ if (existsSync(ptyBin) && installedAbi === ELECTRON_ABI) {
   const actualSha = createHash('sha256').update(tarball).digest('hex')
   if (expectedSha) {
     if (actualSha !== expectedSha) {
-      console.error(`✗ SHA-256 mismatch for ${ELECTRON_ABI} tarball:\n  expected ${expectedSha}\n  actual   ${actualSha}`)
+      console.error(
+        `✗ SHA-256 mismatch for ${ELECTRON_ABI} tarball:\n  expected ${expectedSha}\n  actual   ${actualSha}`
+      )
       process.exit(1)
     }
   } else {
-    console.warn(`! No SHA-256 pin for Electron ABI ${ELECTRON_ABI}; verify ${actualSha} out-of-band and add it to TARBALL_SHA256`)
+    console.warn(
+      `! No SHA-256 pin for Electron ABI ${ELECTRON_ABI}; verify ${actualSha} out-of-band and add it to TARBALL_SHA256`
+    )
   }
   writeFileSync(tgz, tarball)
   mkdirSync(join(nm, 'node-pty', 'build'), { recursive: true })
   extractArchive(tgz, join(nm, 'node-pty'))
   rmSync(tgz)
   writeFileSync(ptyAbiMarker, ELECTRON_ABI + '\n')
+  if (!existsSync(ptyBin) || !existsSync(conptyBin)) {
+    console.error(
+      '✗ node-pty prebuilt extract did not produce pty.node and conpty.node under build/Release/.'
+    )
+    process.exit(1)
+  }
   console.log(`✓ node-pty native binary installed (Electron ABI ${ELECTRON_ABI})`)
 }
 
@@ -202,7 +245,9 @@ if (process.platform === 'win32') {
     'ort-wasm-simd-threaded.jsep.mjs'
   ]
   if (!existsSync(ortDist)) {
-    console.warn('! onnxruntime-web not found; skipping STT wasm copy (voice dictation will be unavailable)')
+    console.warn(
+      '! onnxruntime-web not found; skipping STT wasm copy (voice dictation will be unavailable)'
+    )
   } else {
     mkdirSync(ortDest, { recursive: true })
     let copied = 0
@@ -261,7 +306,9 @@ if (existsSync(bundledNode)) {
     fetch(`${base}/SHASUMS256.txt`)
   ])
   if (!res.ok || !sumsRes.ok) {
-    console.error(`✗ Download failed (HTTP ${res.status}/${sumsRes.status}). Check the network and retry.`)
+    console.error(
+      `✗ Download failed (HTTP ${res.status}/${sumsRes.status}). Check the network and retry.`
+    )
     process.exit(1)
   }
   const archive = Buffer.from(await res.arrayBuffer())
@@ -276,7 +323,9 @@ if (existsSync(bundledNode)) {
   }
   const actual = createHash('sha256').update(archive).digest('hex')
   if (actual !== expected) {
-    console.error(`✗ SHA-256 mismatch for ${artifactName}:\n  expected ${expected}\n  actual   ${actual}`)
+    console.error(
+      `✗ SHA-256 mismatch for ${artifactName}:\n  expected ${expected}\n  actual   ${actual}`
+    )
     process.exit(1)
   }
   const tmp = mkdtempSync(join(root, '.node-runtime-'))
