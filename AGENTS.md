@@ -196,7 +196,7 @@ Project skills in `.claude/skills/` (load via the skill tool, they carry the exa
 
 ## Known limits (verified against code — re-verify before fixing)
 
-- **Windows remotes are first-class for agents:** OpenSSH exec is wrapped in PowerShell (`Set-Location` + EncodedCommand) so `run_command` and relative file tools follow OSC 7 cwd. SFTP paths round-trip `C:\\Users\\...` and `/C/Users/...`. Interactive Windows shells launch PowerShell with OSC 7/133. RDP is a graphical `mstsc` session and does not provide agent host tools.
+- **Windows remotes are first-class for agents:** OpenSSH exec is wrapped in PowerShell (`Set-Location` + EncodedCommand) so `run_command` and relative file tools follow OSC 7 cwd. SFTP paths round-trip `C:\\Users\\...` and `/C/Users/...`. Interactive Windows shells launch PowerShell with OSC 7/133.
 - **No bridge tools for git/search/forwards** — agents shell those out via `run_command`. Capability ceiling, not a bug.
 - **Restore is MVP:** browsers, ad-hoc SSH, editors, agents, scrollback don't survive restart. Local detach/reattach not shipped (PTYs die with the app).
 - **Single bastion hop** (`profile.jump`); no ProxyJump chains. No block-based terminal UI (OSC 133 A/B only, no C/D exit markers), no programmable app CLI/socket API, no inline images/sixel, no OSC 9/99 attention protocol.

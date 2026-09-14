@@ -120,6 +120,7 @@ function applyHostBg(host: HTMLElement, bg: TerminalBg, theme: Theme): void {
  * xterm wiring serves both (Trap §8: WebGL is feature-detected with fallback).
  */
 function TerminalView({ session }: { session: Session }) {
+  const isWindowsRemote = session.kind === 'remote' && session.context?.os === 'windows'
   const hostRef = useRef<HTMLDivElement>(null)
   const termRef = useRef<Terminal | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
@@ -247,9 +248,10 @@ function TerminalView({ session }: { session: Session }) {
     // Registered so snippets/the palette can write to this shell by session id
     // (the local pty id is private to this effect).
     //
-    // Queue input that arrives before the local PTY is created. Callers such as
-    // grid broadcast, snippets, and the command palette may send a command as
-    // soon as the terminal mounts, before node-pty has finished starting.
+    // Queue input that arrives before the local PTY or remote shell channel is
+    // ready. Callers such as grid broadcast, snippets, and the command palette
+    // may send a command as soon as the terminal mounts, before the backend has
+    // finished starting.
     const inputQueue: string[] = []
     let sendInput: (data: string) => void = (d) => inputQueue.push(d)
     registerTerminalInput(session.id, (d) => sendInput(d))
@@ -257,7 +259,10 @@ function TerminalView({ session }: { session: Session }) {
       query:
         session.kind === 'remote' ? { scope: 'remote', sessionId: session.id } : { scope: 'local' },
       send: (d) => sendInput(d),
-      onChange: setSuggestView
+      onChange: setSuggestView,
+      // PowerShell/Win32-OpenSSH must receive bare Tab for native completion;
+      // the history popup remains available through ArrowRight and the mouse.
+      acceptTab: !isWindowsRemote
     })
     suggestRef.current = suggest
 
@@ -469,8 +474,8 @@ function TerminalView({ session }: { session: Session }) {
     }
 
     // Register keystroke handling synchronously at mount so input typed while a
-    // local PTY is still spawning isn't dropped — `sendInput` queues until the
-    // backend is wired (grid broadcast/snippets rely on the same queue).
+    // PTY or SSH channel is still spawning isn't dropped — `sendInput` queues
+    // until the backend is wired (grid broadcast/snippets rely on the same queue).
     term.onData((d) => {
       if (blockInputRef.current) return
       onUserInput(d)
@@ -573,6 +578,12 @@ function TerminalView({ session }: { session: Session }) {
         .openShell(sid, term.cols, term.rows)
         .then(async () => {
           if (disposed) return
+          // `openShell` resolves only after the ssh2 channel exists. Wire the
+          // sender here so input queued during channel negotiation is replayed
+          // instead of being written while `shell` is still undefined.
+          sendInput = (d) => window.devterm.ssh.input(sid, d)
+          for (const d of inputQueue) sendInput(d)
+          inputQueue.length = 0
           const offerTmux = useSettings.getState().remoteDetachedSessions
           if (!offerTmux) {
             applyStartCwd()
@@ -598,7 +609,6 @@ function TerminalView({ session }: { session: Session }) {
         .catch((e) => {
           term.write(`\r\n\x1b[31m[failed to open shell: ${String(e)}]\x1b[0m\r\n`)
         })
-      sendInput = (d) => window.devterm.ssh.input(sid, d)
       wireResize((c, r) => window.devterm.ssh.resize(sid, c, r))
     }
 
@@ -749,6 +759,7 @@ function TerminalView({ session }: { session: Session }) {
         view={suggestView}
         onAccept={(i) => suggestRef.current?.accept(i)}
         onHover={(i) => suggestRef.current?.hover(i)}
+        acceptTab={!isWindowsRemote}
       />
       {findOpen && (
         <SearchBar

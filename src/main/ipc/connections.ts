@@ -51,12 +51,28 @@ function transform(c: SavedConnection, fn: (s?: string) => string | undefined): 
   return out
 }
 
+/**
+ * Keep the persisted store forward-compatible after the app became SSH-only.
+ * Older entries may still carry a protocol discriminator and desktop-only
+ * fields; unsupported entries are ignored and supported entries are stripped
+ * back to the SSH shape before they reach the renderer.
+ */
+function normalizeSavedConnection(c: SavedConnection): SavedConnection | undefined {
+  const raw = c as SavedConnection & { protocol?: unknown; domain?: unknown }
+  if (raw.protocol !== undefined && raw.protocol !== 'ssh') return undefined
+  const { protocol: _protocol, domain: _domain, ...ssh } = raw
+  return transform(ssh, decryptSecret)
+}
+
 async function readAll(): Promise<SavedConnection[]> {
   try {
     const raw = await fs.readFile(storeFile(), 'utf8')
     const parsed = JSON.parse(raw)
     const list: SavedConnection[] = Array.isArray(parsed?.connections) ? parsed.connections : []
-    return list.map((c) => transform(c, decryptSecret))
+    return list.flatMap((c) => {
+      const normalized = normalizeSavedConnection(c)
+      return normalized ? [normalized] : []
+    })
   } catch {
     return [] // missing or unreadable file → no saved connections
   }

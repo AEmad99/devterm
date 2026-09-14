@@ -3,7 +3,22 @@
 All notable changes to DevTerm are documented here. The most recent section is
 at the top. Dates are ISO `YYYY-MM-DD`.
 
-## Unreleased
+## 1.3.24 — 2026-09-14
+
+Windows OpenSSH stability follow-up.
+
+### Fixed
+
+- Interactive Windows shells now preserve input typed while the SSH channel is opening, translate xterm Backspace for Win32 PTYs, and leave Tab completion to PowerShell.
+- Win32-OpenSSH SFTP home paths are normalized consistently with other Windows paths.
+- SSH clients and jump-host connections are released when context detection fails, a reconnect is canceled, or a Windows compatibility connection closes.
+- Repeated reconnect requests no longer start overlapping attempts or revive an explicitly disconnected session.
+
+### Changed
+
+- Removed the experimental RDP connection type so saved connections and session restore remain SSH-only. Legacy RDP entries are ignored during load and export.
+
+## 1.3.23 — 2026-09-13
 
 ### Added
 

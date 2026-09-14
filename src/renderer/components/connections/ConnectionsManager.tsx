@@ -18,7 +18,6 @@ import { IconRemote, IconPlus, IconConnect, IconEdit, IconTrash, IconPin } from 
  */
 export default function ConnectionsManager({ onConnect }: { onConnect: () => void }) {
   const connectSsh = useSessions((s) => s.connectSsh)
-  const connectRdp = useSessions((s) => s.connectRdp)
   const pinned = useSettings((s) => s.pinned.connections)
   const togglePin = useSettings((s) => s.togglePin)
   const lastConnectedAt = useSettings((s) => s.lastConnectedAt)
@@ -54,8 +53,7 @@ export default function ConnectionsManager({ onConnect }: { onConnect: () => voi
   const connect = (c: SavedConnection) => {
     const { id: _id, name: _name, ...profile } = c
     recordConnected(c.id)
-    if (c.protocol === 'rdp') void connectRdp(profile, { connectionId: c.id })
-    else void connectSsh(profile, { connectionId: c.id })
+    void connectSsh(profile, { connectionId: c.id })
     onConnect()
   }
 

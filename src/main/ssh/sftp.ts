@@ -24,7 +24,7 @@ function isLinkMode(mode: number): boolean {
 }
 
 export function sftpHome(sftp: SFTPWrapper): Promise<string> {
-  return promise<string>((cb) => sftp.realpath('.', cb))
+  return promise<string>((cb) => sftp.realpath('.', cb)).then(normalizeRemotePath)
 }
 
 export async function listRemote(sftp: SFTPWrapper, dir?: string): Promise<DirListing> {

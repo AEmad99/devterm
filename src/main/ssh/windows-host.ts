@@ -128,6 +128,16 @@ export function windowsPowerShellInteractiveCommand(script: string): string {
   )
 }
 
+/**
+ * xterm emits the physical Backspace key as DEL (`0x7f`). Win32 OpenSSH's
+ * Windows PTY expects BS (`0x08`) for readline/PSReadLine to erase a
+ * character. Keep this translation at the SSH boundary so keyboard input from
+ * the terminal, snippets, and autocomplete all use the same wire format.
+ */
+export function normalizeWindowsInteractiveInput(data: string): string {
+  return data.replace(/\x7f/g, '\b')
+}
+
 export function isAlreadyWindowsWrapped(command: string): boolean {
   return (
     RE_POWERSHELL_EXE.test(command) &&

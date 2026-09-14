@@ -21,7 +21,7 @@ import type { AgentBridgeState, AgentKind } from '@shared/types'
 
 export interface TabLabelInput {
   id?: string
-  kind?: 'local' | 'remote' | 'browser' | 'rdp'
+  kind?: 'local' | 'remote' | 'browser'
   title?: string
   customTitle?: boolean
   localNum?: number
@@ -64,7 +64,6 @@ function defaultBaseTitle(s: TabLabelInput): string {
   if (s.kind === 'local') return `Local ${s.localNum ?? '?'}`
   if (s.kind === 'remote') return s.context?.hostname ? `remote · ${s.context.hostname}` : 'Remote'
   if (s.kind === 'browser') return 'Browser'
-  if (s.kind === 'rdp') return s.title || 'RDP'
   return 'Terminal'
 }
 

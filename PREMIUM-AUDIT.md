@@ -115,7 +115,7 @@ combo is the enterprise gap.**
 ### MobaXterm (Win Free / Pro ~69 EUR)
 
 Premium: deep session tree, net-share sync, sidebar SFTP + drag-drop, port-forward
-wizard + X11, serial + RDP/VNC, MobaEditor, macros, seat licensing.
+wizard + X11, serial, MobaEditor, macros, seat licensing.
 **The Windows all-in-one + X11 + serial story.**
 
 ### iTerm2 (macOS, free/GPL)

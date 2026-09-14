@@ -269,12 +269,18 @@ async function readConnectionsSanitized(): Promise<SavedConnection[]> {
     {}
   )
   if (!Array.isArray(raw.connections)) return []
-  return raw.connections.map((c) => {
+  return raw.connections.flatMap((c) => {
+    // Do not carry entries from removed connection types into a portable
+    // export. Current entries are SSH-only, and legacy SSH discriminators are
+    // safe to normalize away here.
+    if (c.protocol !== undefined && c.protocol !== 'ssh') return []
     const out = stripSecrets(c)
+    delete out.protocol
+    delete out.domain
     if (out.jump && typeof out.jump === 'object') {
       out.jump = stripSecrets(out.jump as Record<string, unknown>)
     }
-    return out as unknown as SavedConnection
+    return [out as unknown as SavedConnection]
   })
 }
 

@@ -82,8 +82,6 @@ export interface HostContext {
 // SSH
 // ---------------------------------------------------------------------------
 
-export type ConnectionProtocol = 'ssh' | 'rdp'
-
 export interface SSHHop {
   host: string
   port: number
@@ -100,10 +98,6 @@ export interface SSHProfile extends SSHHop {
   name?: string
   /** Optional single bastion/ProxyJump hop. */
   jump?: SSHHop
-  /** Connection protocol. Default `ssh` (OpenSSH). `rdp` opens Windows Remote Desktop. */
-  protocol?: ConnectionProtocol
-  /** Optional Windows domain for RDP / NTLM. */
-  domain?: string
 }
 
 /**
@@ -270,12 +264,6 @@ export type SSHStatus =
       attempts: number
       reason: string
     }
-
-export type RdpStatus =
-  | { type: 'connecting' }
-  | { type: 'connected' }
-  | { type: 'closed' }
-  | { type: 'error'; message: string }
 
 // ---------------------------------------------------------------------------
 // Files (SFTP remote + local fs) and transfers
@@ -775,11 +763,6 @@ export const IPC = {
   sshAttachTmux: 'ssh:attachTmux',
   sshKillTmux: 'ssh:killTmux',
 
-  rdpConnect: 'rdp:connect',
-  rdpDisconnect: 'rdp:disconnect',
-  rdpFocus: 'rdp:focus',
-  rdpStatus: 'rdp:status', // suffixed :<sessionId>
-
   // local filesystem
   fsList: 'fs:list',
   fsHome: 'fs:home',
@@ -1067,12 +1050,6 @@ export interface DevTermApi {
      * shell). Idempotent if the session is already gone.
      */
     killTmux(sessionId: string, name: string): Promise<void>
-  }
-  rdp: {
-    connect(profile: SSHProfile): Promise<{ sessionId: string }>
-    disconnect(sessionId: string): void
-    focus(sessionId: string): void
-    onStatus(sessionId: string, cb: (s: RdpStatus) => void): () => void
   }
   /** Local filesystem browsing. */
   fs: {

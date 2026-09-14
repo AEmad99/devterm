@@ -81,8 +81,6 @@ export function captureSessionRestoreSnapshot(
       sidToItem.set(s.id, id)
       return {
         id,
-        // RDP sessions are intentionally not restorable (mstsc owns their
-        // lifetime), but keep the union explicit for the shared restore type.
         kind: s.kind === 'remote' ? 'remote' : s.kind === 'browser' ? 'browser' : 'local',
         connectionId: s.kind === 'remote' ? s.connectionId : undefined,
         cwd: s.cwd,

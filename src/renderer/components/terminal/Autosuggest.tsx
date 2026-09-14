@@ -12,11 +12,13 @@ import type { SuggestView } from '../../lib/autosuggest'
 export default function Autosuggest({
   view,
   onAccept,
-  onHover
+  onHover,
+  acceptTab = true
 }: {
   view: SuggestView | null
   onAccept: (i: number) => void
   onHover: (i: number) => void
+  acceptTab?: boolean
 }) {
   const boxRef = useRef<HTMLDivElement>(null)
   // Keep the keyboard-selected row visible while walking with ↑/↓.
@@ -52,7 +54,17 @@ export default function Autosuggest({
       ))}
       <div className="as-hint">
         <kbd>↑</kbd>
-        <kbd>↓</kbd> choose · <kbd>Tab</kbd>/<kbd>→</kbd> accept · <kbd>Esc</kbd> shell history
+        <kbd>↓</kbd> choose ·{' '}
+        {acceptTab ? (
+          <>
+            <kbd>Tab</kbd>/<kbd>→</kbd> accept
+          </>
+        ) : (
+          <>
+            <kbd>→</kbd> accept · <kbd>Tab</kbd> shell completion
+          </>
+        )}{' '}
+        · <kbd>Esc</kbd> shell history
       </div>
     </div>
   )

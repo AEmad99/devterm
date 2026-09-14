@@ -92,6 +92,8 @@ export function attachAutosuggest(
     query: HistoryQuery
     send: (data: string) => void
     onChange: (view: SuggestView | null) => void
+    /** Let the native remote shell own Tab completion when requested. */
+    acceptTab?: boolean
   }
 ): AutosuggestController {
   let anchor: Anchor | null = null
@@ -266,14 +268,25 @@ export function attachAutosuggest(
       return true
     }
     if (e.key === 'Tab' && e.shiftKey) {
+      if (opts.acceptTab === false) {
+        hide()
+        return false
+      }
       e.preventDefault()
       move(-1)
       return true
     }
-    if (e.key === 'ArrowRight' || e.key === 'Tab') {
+    if (e.key === 'ArrowRight' || (e.key === 'Tab' && opts.acceptTab !== false)) {
       e.preventDefault()
       accept(index)
       return true
+    }
+    if (e.key === 'Tab') {
+      // A Windows PowerShell prompt has its own completion engine. Dismissing
+      // the history popup while returning false lets xterm emit the native HT
+      // byte instead of swallowing the key in the renderer.
+      hide()
+      return false
     }
     // Enter submits the typed line; just dismiss the popup and let it through.
     if (e.key === 'Enter') hide()

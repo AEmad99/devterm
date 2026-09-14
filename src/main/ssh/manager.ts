@@ -12,7 +12,10 @@ import type {
 import { establish } from './connection'
 import { detectRemoteContext } from './osDetect'
 import { PortForwardManager } from './port-forward'
-import { windowsPowerShellInteractiveCommand } from './windows-host'
+import {
+  normalizeWindowsInteractiveInput,
+  windowsPowerShellInteractiveCommand
+} from './windows-host'
 import {
   TMUX_CLIENT_LEFT_RE,
   TMUX_LIST_CLIENTS,
@@ -80,8 +83,6 @@ interface Session {
   profile: SSHProfile
   /** Active reconnect loop, if any. Set by the manager when scheduling a retry. */
   reconnect?: ReconnectState
-  /** True when the Windows interactive channel was opened as PowerShell. */
-  isWindowsPowerShell?: boolean
   /** Pending shell-setup write timers; cleared on disconnect. */
   setupTimers?: Set<NodeJS.Timeout>
   /**
@@ -100,6 +101,8 @@ const RECONNECTING_ERR = 'session reconnecting'
 interface ReconnectState {
   /** Timer for the next attempt; cleared when the loop is cancelled. */
   timer: NodeJS.Timeout
+  /** Prevent overlapping attempts when reconnect is triggered repeatedly. */
+  running?: boolean
   /** How many attempts have been made so far. */
   attempt: number
   /** Effective max attempts from the policy at loop start. */
@@ -318,14 +321,22 @@ export class SSHManager {
       onStatus
     )
 
-    // Attach close BEFORE detectRemoteContext: a drop during detection must
-    // still schedule reconnect rather than leaving a dead client with no
-    // listener and a false "connected" state.
-    client.on('close', () => this.handleTransportClose(id))
-
-    const context = await detectRemoteContext(client)
-    this.sessions.set(id, { id, client, jump, context, profile })
-    return { sessionId: id, context }
+    try {
+      const context = await detectRemoteContext(client)
+      this.sessions.set(id, { id, client, jump, context, profile })
+      client.on('close', () => this.handleTransportClose(id))
+      return { sessionId: id, context }
+    } catch (err) {
+      // Detection is part of connecting. A transport that fails before the
+      // session is installed has no later disconnect path to release it.
+      try {
+        client.end()
+        jump?.end()
+      } catch {
+        /* ignore */
+      }
+      throw err
+    }
   }
 
   /**
@@ -444,6 +455,11 @@ export class SSHManager {
         if (s.execClient === client) {
           s.execClient = undefined
           s.execJump = undefined
+          try {
+            jump?.end()
+          } catch {
+            /* ignore */
+          }
         }
       })
       return client
@@ -496,6 +512,11 @@ export class SSHManager {
           s.sftpClient = undefined
           s.sftpJump = undefined
           s.sftp = undefined
+          try {
+            jump?.end()
+          } catch {
+            /* ignore */
+          }
         }
       })
       return client
@@ -616,11 +637,14 @@ export class SSHManager {
    */
   private async runReconnect(sessionId: string, state: ReconnectState): Promise<void> {
     const s = this.sessions.get(sessionId)
-    if (!s) return
+    if (!s || s.reconnect !== state || s.closing || state.running) return
     const profile = s.profile
+    state.running = true
     state.attempt += 1
+    let pendingClient: Client | undefined
+    let pendingJump: Client | undefined
     try {
-      const { client, jump } = await establish(
+      const established = await establish(
         {
           host: profile.host,
           port: profile.port,
@@ -634,10 +658,27 @@ export class SSHManager {
           /* swallow per-attempt status events — surface only the final outcome */
         }
       )
-      // Wire close immediately so a drop during detectRemoteContext still
-      // re-enters the reconnect path (mirrors connect()).
-      client.on('close', () => this.handleTransportClose(sessionId))
-      const context = await detectRemoteContext(client)
+      pendingClient = established.client
+      pendingJump = established.jump
+      if (this.sessions.get(sessionId) !== s || s.reconnect !== state || s.closing) {
+        pendingClient.end()
+        pendingJump?.end()
+        pendingClient = undefined
+        pendingJump = undefined
+        return
+      }
+      const context = await detectRemoteContext(pendingClient)
+      if (this.sessions.get(sessionId) !== s || s.reconnect !== state || s.closing) {
+        pendingClient.end()
+        pendingJump?.end()
+        pendingClient = undefined
+        pendingJump = undefined
+        return
+      }
+      const client = pendingClient
+      const jump = pendingJump
+      pendingClient = undefined
+      pendingJump = undefined
       this.sessions.set(sessionId, {
         id: sessionId,
         client,
@@ -647,6 +688,7 @@ export class SSHManager {
         // Clear reconnect bookkeeping on success; the next drop starts a new loop.
         shellRequest: state.shellRequest ?? s.shellRequest
       })
+      client.on('close', () => this.handleTransportClose(sessionId))
       // Re-establish -L/-D listeners that were suspended on the previous drop.
       try {
         await this.forwardManager.rebind(sessionId)
@@ -668,6 +710,13 @@ export class SSHManager {
       }
       this.fireStatus(sessionId, { type: 'reconnected', attempt: state.attempt })
     } catch (err) {
+      try {
+        pendingClient?.end()
+        pendingJump?.end()
+      } catch {
+        /* ignore */
+      }
+      if (this.sessions.get(sessionId) !== s || s.reconnect !== state || s.closing) return
       const reason = (err as Error).message || String(err)
       state.lastError = reason
       if (state.attempt >= state.maxAttempts) {
@@ -700,6 +749,8 @@ export class SSHManager {
         delayMs: delay
       })
       state.timer = setTimeout(() => void this.runReconnect(sessionId, state), delay)
+    } finally {
+      state.running = false
     }
   }
 
@@ -753,72 +804,69 @@ export class SSHManager {
               modes: { ECHO: 0 as const }
             }
       const onChannel = (err: Error | undefined | null, channel?: ClientChannel) => {
-          s.shellInflight = undefined
-          if (err) return reject(err)
-          if (!channel) return reject(new Error("no shell channel"))
-          s.shell = channel
-          // Stream every chunk through a per-session UTF-8 decoder so multi-byte
-          // codepoints split across ssh2 data events decode correctly instead
-          // of turning into U+FFFD. The close handler flushes any trailing bytes
-          // the decoder buffered (the final incomplete codepoint renders as a
-          // single replacement char).
-          s.shellDecoder = new TextDecoder('utf-8', { fatal: false })
-          const dec = s.shellDecoder
-          const emitShellData = (chunk: string) => {
-            if (!chunk) return
-            if (s.tmuxClientRunning && TMUX_CLIENT_LEFT_RE.test(chunk)) {
-              this.scheduleResumeAfterTmux(sessionId)
-            }
-            this.handlers.onData(sessionId, chunk)
+        s.shellInflight = undefined
+        if (err) return reject(err)
+        if (!channel) return reject(new Error('no shell channel'))
+        s.shell = channel
+        // Stream every chunk through a per-session UTF-8 decoder so multi-byte
+        // codepoints split across ssh2 data events decode correctly instead
+        // of turning into U+FFFD. The close handler flushes any trailing bytes
+        // the decoder buffered (the final incomplete codepoint renders as a
+        // single replacement char).
+        s.shellDecoder = new TextDecoder('utf-8', { fatal: false })
+        const dec = s.shellDecoder
+        const emitShellData = (chunk: string) => {
+          if (!chunk) return
+          if (s.tmuxClientRunning && TMUX_CLIENT_LEFT_RE.test(chunk)) {
+            this.scheduleResumeAfterTmux(sessionId)
           }
-          channel
-            .on('data', (d: Buffer) => {
-              emitShellData(dec.decode(d, { stream: true }))
-            })
-            .on('close', () => {
-              s.shell = undefined
-              if (s.shellDecoder) {
-                const tail = s.shellDecoder.decode()
-                if (tail) emitShellData(tail)
-                s.shellDecoder = undefined
-              }
-              // `exec tmux` + detach (or a crashed tmux client) closes this
-              // channel while the ssh2 client is still up. Don't tell the
-              // renderer the connection died — resume a login shell instead.
-              if (s.tmuxClientRunning && s.client && !s.closing && !s.reconnect) {
-                this.scheduleResumeAfterTmux(sessionId)
-                return
-              }
-              this.handlers.onExit(sessionId)
-            })
-          channel.stderr.on('data', (d: Buffer) => {
+          this.handlers.onData(sessionId, chunk)
+        }
+        channel
+          .on('data', (d: Buffer) => {
             emitShellData(dec.decode(d, { stream: true }))
           })
+          .on('close', () => {
+            s.shell = undefined
+            if (s.shellDecoder) {
+              const tail = s.shellDecoder.decode()
+              if (tail) emitShellData(tail)
+              s.shellDecoder = undefined
+            }
+            // `exec tmux` + detach (or a crashed tmux client) closes this
+            // channel while the ssh2 client is still up. Don't tell the
+            // renderer the connection died — resume a login shell instead.
+            if (s.tmuxClientRunning && s.client && !s.closing && !s.reconnect) {
+              this.scheduleResumeAfterTmux(sessionId)
+              return
+            }
+            this.handlers.onExit(sessionId)
+          })
+        channel.stderr.on('data', (d: Buffer) => {
+          emitShellData(dec.decode(d, { stream: true }))
+        })
 
-          // Reconnect path: the operator already chose a session. Attach as a
-          // child (never exec) so a later detach returns to this login shell.
-          if (s.shellRequest?.tmuxSession && (s.context.os === 'linux' || s.context.os === 'mac')) {
-            this.writeTmuxAttach(s, s.shellRequest.tmuxSession, false)
-          }
+        // Reconnect path: the operator already chose a session. Attach as a
+        // child (never exec) so a later detach returns to this login shell.
+        if (s.shellRequest?.tmuxSession && (s.context.os === 'linux' || s.context.os === 'mac')) {
+          this.writeTmuxAttach(s, s.shellRequest.tmuxSession, false)
+        }
 
-          // Best-effort OSC 7 cwd reporting for POSIX remotes so the file explorer
-          // can follow `cd`. The hook must be wired per-shell: bash re-runs
-          // PROMPT_COMMAND before each prompt, while zsh ignores it and instead
-          // calls the functions in `precmd_functions`. We detect the live shell via
-          // $ZSH_VERSION (set in the interactive shell, so more reliable than probing)
-          // and append to whichever mechanism applies — preserving the distro's own
-          // hooks and staying idempotent.
-          //
-          // Injected quietly (pty ECHO off + stty -echo) and never `clear`s the
-          // login banner. Skipped when we are about to attach tmux — that path
-          // would otherwise type the script into the pane.
-          if (
-            (s.context.os === 'linux' || s.context.os === 'mac') &&
-            !s.shellRequest?.tmuxSession
-          ) {
-            this.scheduleQuietWrite(s, buildPosixShellIntegrationSetup(), 250)
-          }
-          resolve()
+        // Best-effort OSC 7 cwd reporting for POSIX remotes so the file explorer
+        // can follow `cd`. The hook must be wired per-shell: bash re-runs
+        // PROMPT_COMMAND before each prompt, while zsh ignores it and instead
+        // calls the functions in `precmd_functions`. We detect the live shell via
+        // $ZSH_VERSION (set in the interactive shell, so more reliable than probing)
+        // and append to whichever mechanism applies — preserving the distro's own
+        // hooks and staying idempotent.
+        //
+        // Injected quietly (pty ECHO off + stty -echo) and never `clear`s the
+        // login banner. Skipped when we are about to attach tmux — that path
+        // would otherwise type the script into the pane.
+        if ((s.context.os === 'linux' || s.context.os === 'mac') && !s.shellRequest?.tmuxSession) {
+          this.scheduleQuietWrite(s, buildPosixShellIntegrationSetup(), 250)
+        }
+        resolve()
       }
       if (s.context.os === 'windows') {
         // Win32-OpenSSH can be configured with `ForceCommand` or a shell
@@ -834,14 +882,12 @@ export class SSHManager {
           `('PS ' + $p + '> ' + $e + ']133;B' + $b) }`
         client.exec(windowsPowerShellInteractiveCommand(promptSetup), { pty }, (err, channel) => {
           if (!err && channel) {
-            s.isWindowsPowerShell = true
             onChannel(undefined, channel)
             return
           }
           const powershellError = err ?? new Error('PowerShell exec channel was not opened')
           client.exec('cmd.exe', { pty }, (fallbackErr, fallbackChannel) => {
             if (!fallbackErr && fallbackChannel) {
-              s.isWindowsPowerShell = false
               onChannel(undefined, fallbackChannel)
               return
             }
@@ -874,9 +920,7 @@ export class SSHManager {
     const primary = s.client
     const inflight = (async () => {
       const client =
-        s.context.os === 'windows'
-          ? await this.ensureWindowsSftpClient(sessionId)
-          : primary
+        s.context.os === 'windows' ? await this.ensureWindowsSftpClient(sessionId) : primary
       if (!client) throw new Error(RECONNECTING_ERR)
       return new Promise<SFTPWrapper>((resolve, reject) => {
         client.sftp((err, sftp) => {
@@ -1038,7 +1082,11 @@ export class SSHManager {
   }
 
   input(sessionId: string, data: string): void {
-    this.sessions.get(sessionId)?.shell?.write(data)
+    const session = this.sessions.get(sessionId)
+    if (!session?.shell) return
+    session.shell.write(
+      session.context.os === 'windows' ? normalizeWindowsInteractiveInput(data) : data
+    )
   }
 
   /**

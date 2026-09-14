@@ -102,7 +102,6 @@ import { registerPtyIpc } from './ipc/pty'
 import { IPC } from '@shared/types'
 import { flushPersist, globalSearchIndex } from './search/index'
 import { registerSshIpc } from './ipc/ssh'
-import { registerRdpIpc } from './ipc/rdp'
 import { registerContextIpc } from './ipc/context'
 import { registerFileIpc } from './ipc/files'
 import { registerAgentIpc, type AgentController } from './ipc/agent'
@@ -367,7 +366,6 @@ function createWindow(): void {
 function registerIpc(): void {
   ptyManager = registerPtyIpc(() => mainWindow)
   sshManager = registerSshIpc(() => mainWindow)
-  registerRdpIpc()
   fileController = registerFileIpc(sshManager, () => mainWindow)
   agentController = registerAgentIpc(sshManager, ptyManager, () => mainWindow)
   registerConnectionsIpc()

@@ -4,7 +4,6 @@ import TerminalView from './TerminalView'
 import RemoteSessionView from './RemoteSessionView'
 import LocalSessionView from './LocalSessionView'
 import BrowserPane from './BrowserPane'
-import RdpSessionView from './RdpSessionView'
 import { useSessions, type Session } from '../../store/sessions'
 import { useEditors } from '../../store/editors'
 import { useSettings } from '../../store/settings'
@@ -353,8 +352,6 @@ export default function TerminalLayout({
               )}
               {s.kind === 'browser' ? (
                 <BrowserPane session={s} />
-              ) : s.kind === 'rdp' ? (
-                <RdpSessionView session={s} />
               ) : s.kind === 'remote' ? (
                 <RemoteSessionView session={s} />
               ) : s.kind === 'local' ? (

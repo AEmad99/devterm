@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import type { ConnectionProtocol, SavedConnection, SSHProfile } from '@shared/types'
+import type { SavedConnection, SSHProfile } from '@shared/types'
 import { useSessions } from '../../store/sessions'
 import Button from '../common/Button'
 import ModalFooter from '../common/ModalFooter'
@@ -8,10 +8,8 @@ import { useDirtyGuard } from '../../lib/use-dirty-guard'
 
 type FormState = {
   name: string
-  protocol: ConnectionProtocol
   host: string
   port: string
-  domain: string
   username: string
   password: string
   privateKeyPath: string
@@ -26,10 +24,8 @@ type FormState = {
 
 const EMPTY: FormState = {
   name: '',
-  protocol: 'ssh',
   host: '',
   port: '22',
-  domain: '',
   username: '',
   password: '',
   privateKeyPath: '',
@@ -46,10 +42,8 @@ const EMPTY: FormState = {
 function fromSaved(c: SavedConnection): FormState {
   return {
     name: c.name ?? '',
-    protocol: c.protocol === 'rdp' ? 'rdp' : 'ssh',
     host: c.host ?? '',
-    port: String(c.port ?? (c.protocol === 'rdp' ? 3389 : 22)),
-    domain: c.domain ?? '',
+    port: String(c.port ?? 22),
     username: c.username ?? '',
     password: c.password ?? '',
     privateKeyPath: c.privateKeyPath ?? '',
@@ -65,15 +59,13 @@ function fromSaved(c: SavedConnection): FormState {
 
 function toProfile(f: FormState): SSHProfile {
   return {
-    protocol: f.protocol,
     host: f.host.trim(),
-    port: Number(f.port) || (f.protocol === 'rdp' ? 3389 : 22),
-    domain: f.domain.trim() || undefined,
+    port: Number(f.port) || 22,
     username: f.username.trim(),
     password: f.password || undefined,
     privateKeyPath: f.privateKeyPath.trim() || undefined,
     passphrase: f.passphrase || undefined,
-    jump: f.protocol !== 'rdp' && f.useJump
+    jump: f.useJump
       ? {
           host: f.jumpHost.trim(),
           port: Number(f.jumpPort) || 22,
@@ -97,7 +89,6 @@ export default function ConnectionForm({
   onSaved?: (list: SavedConnection[]) => void
 }) {
   const connectSsh = useSessions((s) => s.connectSsh)
-  const connectRdp = useSessions((s) => s.connectRdp)
   const [f, setF] = useState<FormState>(initial ? fromSaved(initial) : EMPTY)
   const [saved, setSaved] = useState<SavedConnection[]>([])
   // The id of the saved connection currently loaded (so Save overwrites it).
@@ -134,8 +125,7 @@ export default function ConnectionForm({
     void window.devterm.quickConnect
       .record(profile.host, profile.port, profile.username)
       .catch(() => undefined)
-    if (c.protocol === 'rdp') connectRdp(profile, { connectionId: c.id })
-    else connectSsh(profile, { connectionId: c.id })
+    void connectSsh(profile, { connectionId: c.id })
     onClose()
   }
 
@@ -164,8 +154,7 @@ export default function ConnectionForm({
     void window.devterm.quickConnect
       .record(profile.host, profile.port, profile.username)
       .catch(() => undefined)
-    if (profile.protocol === 'rdp') await connectRdp(profile, { connectionId })
-    else await connectSsh(profile, { connectionId })
+    await connectSsh(profile, { connectionId })
     onClose()
   }
 
@@ -179,40 +168,6 @@ export default function ConnectionForm({
         onSubmit={submit}
       >
         <h3>{editingId ? 'Edit connection' : 'New connection'}</h3>
-        <div className="row protocol-row" role="radiogroup" aria-label="Protocol">
-          <label className="checkbox">
-            <input
-              type="radio"
-              name="dt-protocol"
-              checked={f.protocol === 'ssh'}
-              onChange={() =>
-                setF((p) => ({
-                  ...p,
-                  protocol: 'ssh',
-                  port: p.protocol === 'rdp' && p.port === '3389' ? '22' : p.port
-                }))
-              }
-            />{' '}
-            OpenSSH
-          </label>
-          <label className="checkbox">
-            <input
-              type="radio"
-              name="dt-protocol"
-              checked={f.protocol === 'rdp'}
-              onChange={() =>
-                setF((p) => ({
-                  ...p,
-                  protocol: 'rdp',
-                  port: p.protocol === 'ssh' && (p.port === '22' || !p.port) ? '3389' : p.port,
-                  useJump: false
-                }))
-              }
-            />{' '}
-            Remote Desktop (RDP)
-          </label>
-        </div>
-
         {saved.length > 0 && (
           <div className="saved-conns">
             <div className="saved-head">Saved connections</div>
@@ -287,12 +242,6 @@ export default function ConnectionForm({
           Username
           <input value={f.username} onChange={set('username')} required placeholder="root" />
         </label>
-        {f.protocol === 'rdp' && (
-          <label>
-            Domain
-            <input value={f.domain} onChange={set('domain')} placeholder="optional" />
-          </label>
-        )}
         <label>
           Password
           <input
