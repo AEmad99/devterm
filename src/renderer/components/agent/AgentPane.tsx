@@ -166,6 +166,7 @@ export default function AgentPane({
       fontFamily: 'Cascadia Code, Consolas, "Courier New", monospace',
       fontSize: 13,
       cursorBlink: true,
+      cursorInactiveStyle: 'outline',
       allowProposedApi: true,
       theme: (() => {
         const t = getTheme(useSettings.getState().themeId)

@@ -13,6 +13,12 @@ import {
 import { readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
 
+// Certificates explicitly accepted from the browser warning are trusted only
+// for this app run. This avoids weakening Chromium globally or silently carrying
+// a development certificate exception into a later session.
+const trustedBrowserCertificates = new Set<string>()
+const pendingBrowserCertificatePrompts = new Map<string, Promise<boolean>>()
+
 // Pin Chromium's disk cache, GPU shader cache, and service-worker storage
 // inside the app's own userData directory before the cache subsystem
 // initialises. Electron 29 on Windows defaults the cache to
@@ -475,6 +481,59 @@ if (!gotSingleInstance) {
         .replace(/ DevTerm\/[^ ]+/, '')
         .replace(/ Electron\/[^ ]+/, '')
     )
+
+    // Electron does not render Chromium's normal certificate interstitial in a
+    // <webview>; without an app handler, invalid/self-signed development
+    // certificates simply fail. Offer an explicit, one-session trust decision
+    // for browser guests while preserving the secure default.
+    app.on('certificate-error', (event, webContents, url, error, certificate, callback) => {
+      if (!webContents || webContents.session !== browserSession) return
+      event.preventDefault()
+      let host = url
+      try {
+        host = new URL(url).host
+      } catch {
+        /* retain the full URL */
+      }
+      const fingerprint = certificate.fingerprint || certificate.serialNumber || 'unknown'
+      const trustKey = `${host}\n${fingerprint}`
+      if (trustedBrowserCertificates.has(trustKey)) {
+        callback(true)
+        return
+      }
+
+      let decision = pendingBrowserCertificatePrompts.get(trustKey)
+      if (!decision) {
+        const opts = {
+          type: 'warning' as const,
+          title: 'Certificate warning',
+          message: `The certificate for ${host} cannot be verified.`,
+          detail:
+            `${error}\n\n` +
+            `Issued to: ${certificate.subjectName || host}\n` +
+            `Issued by: ${certificate.issuerName || 'Unknown issuer'}\n` +
+            `Fingerprint: ${fingerprint}\n\n` +
+            'Only continue if you trust this development or test server. This exception lasts until DevTerm exits.',
+          buttons: ['Go back', 'Trust and continue'],
+          defaultId: 0,
+          cancelId: 0,
+          noLink: true
+        }
+        decision = (mainWindow
+          ? dialog.showMessageBox(mainWindow, opts)
+          : dialog.showMessageBox(opts)
+        ).then(
+          ({ response }) => response === 1,
+          () => false
+        )
+        pendingBrowserCertificatePrompts.set(trustKey, decision)
+        void decision.finally(() => pendingBrowserCertificatePrompts.delete(trustKey))
+      }
+      void decision.then((trusted) => {
+        if (trusted) trustedBrowserCertificates.add(trustKey)
+        callback(trusted)
+      })
+    })
 
     // The browser pane loads arbitrary untrusted pages. Without a handler,
     // camera/mic/geolocation/notifications/USB/serial/HID prompts fall through to

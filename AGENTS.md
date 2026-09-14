@@ -133,7 +133,7 @@ Project skills in `.claude/skills/` (load via the skill tool, they carry the exa
 - Persistent transfer queue (`src/main/transfers/*`, `userData/transfers.json`): concurrency 2, survives restarts, **no mid-file resume** (interrupted items are canceled; users retry). Progress events are coalesced; `selectVisible` is last-24h and must stay referentially stable for Zustand (use `useShallow`).
 - Voice dictation: renderer-only Whisper (`src/renderer/lib/stt/*`), WebGPU→WASM fallback, push-to-talk (Ctrl/Cmd+Shift+M), models cached in `persist:browser`; `ort/*.wasm` must stay `asarUnpack`ed. Worker crash recovery discards stale ready messages.
 - Workspaces (`userData/workspaces.json`, no secrets): capture / launch / rename / duplicate / `autoLaunch` on boot (each into its own group). Ad-hoc SSH sessions without a saved `connectionId` are skipped on capture.
-- Session restore (`settings.sessionRestore`, default on): debounced snapshot of groups → `userData/session-restore.json`; boot order is auto-launch workspaces → restore snapshot → empty local. Restores local shells + saved SSH only (not browsers / ad-hoc SSH / agents / editors / scrollback).
+- Session restore (`settings.sessionRestore`, default on): debounced snapshot of groups → `userData/session-restore.json`; boot order is auto-launch workspaces → restore snapshot → empty local. Restores local shells, saved SSH, browser panes at their latest active URL, agents, and editors (not ad-hoc SSH, extra in-pane browser tabs, or terminal scrollback).
 - SSH config import (Connections → “Import SSH config”, `ssh-config-parse.ts`): concrete Hosts only, merges Host * defaults, skips duplicates, no passwords. QuickConnect (`userData/quick-connect.json`): MRU `host:port:user` triples (cap 20) feeding the host datalist; known-hosts management UI under Connections.
 
 ## Settings, theme, window
@@ -198,7 +198,7 @@ Project skills in `.claude/skills/` (load via the skill tool, they carry the exa
 
 - **Windows remotes are first-class for agents:** OpenSSH exec is wrapped in PowerShell (`Set-Location` + EncodedCommand) so `run_command` and relative file tools follow OSC 7 cwd. SFTP paths round-trip `C:\\Users\\...` and `/C/Users/...`. Interactive Windows shells launch PowerShell with OSC 7/133.
 - **No bridge tools for git/search/forwards** — agents shell those out via `run_command`. Capability ceiling, not a bug.
-- **Restore is MVP:** browsers, ad-hoc SSH, editors, agents, scrollback don't survive restart. Local detach/reattach not shipped (PTYs die with the app).
+- **Restore is MVP:** local shells, saved SSH, browser panes at their latest active URL, agents, and editors survive restart. Extra in-pane browser tabs, ad-hoc SSH, and terminal scrollback don't. Local detach/reattach is not shipped (PTYs die with the app).
 - **Single bastion hop** (`profile.jump`); no ProxyJump chains. No block-based terminal UI (OSC 133 A/B only, no C/D exit markers), no programmable app CLI/socket API, no inline images/sixel, no OSC 9/99 attention protocol.
 - **Mount-everything × renderer cost:** every session stays mounted by design; canvas renderer + 10k scrollback bound the cost, but many groups/grids still burn RAM/CPU. No auto-hibernate.
 - **Electron 29 age:** behind current majors; upgrade is a project (webview, node-pty ABI, asarUnpack), tracked as platform risk. macOS is not a product focus (no signed release pipeline).

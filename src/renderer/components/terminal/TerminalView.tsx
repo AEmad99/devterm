@@ -191,6 +191,7 @@ function TerminalView({ session }: { session: Session }) {
       lineHeight: prefs.lineHeight,
       cursorStyle: prefs.cursorStyle,
       cursorBlink: prefs.cursorBlink,
+      cursorInactiveStyle: 'outline',
       scrollback: prefs.scrollback,
       scrollSensitivity: prefs.scrollSensitivity,
       allowProposedApi: true,

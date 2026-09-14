@@ -141,6 +141,8 @@ interface SessionState {
   setStatus: (id: string, status: string) => void
   /** Update a session's tab title (browser panes push the page title here). */
   setTitle: (id: string, title: string) => void
+  /** Keep a browser pane's restorable URL aligned with its active in-pane tab. */
+  setBrowserUrl: (id: string, url: string) => void
   /** Set a user-chosen tab title and mark it custom so dynamic labels don't overwrite it. */
   setCustomTitle: (id: string, title: string) => void
   setCwd: (id: string, cwd: string) => void
@@ -401,6 +403,12 @@ export const useSessions = create<SessionState>((set, get) => ({
       // we don't re-render the whole pane tree each time (mirrors setCwd's guard).
       if (!cur || cur.title === title) return s
       return { sessions: s.sessions.map((x) => (x.id === id ? { ...x, title } : x)) }
+    }),
+  setBrowserUrl: (id, url) =>
+    set((s) => {
+      const cur = s.sessions.find((x) => x.id === id)
+      if (!cur || cur.kind !== 'browser' || cur.url === url) return s
+      return { sessions: s.sessions.map((x) => (x.id === id ? { ...x, url } : x)) }
     }),
   setCustomTitle: (id, title) =>
     set((s) => {

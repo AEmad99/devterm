@@ -135,7 +135,7 @@ type StatePatch = Partial<Omit<TabState, 'id' | 'initialUrl' | 'title'>>
 /**
  * One browser tab: an isolated, out-of-process Electron <webview> guest under the
  * shared persistent partition (so logins/cookies are shared across tabs and panes
- * and survive restarts). It stays mounted (display toggled by the parent) so its
+ * and survive restarts). It stays mounted (visibility toggled by the parent) so its
  * page and scroll position survive tab switches; it reports nav/title changes up
  * and registers itself so main-process new-window requests land here as new tabs.
  *
@@ -385,8 +385,22 @@ const BrowserTab = memo(
           bubbles: true,
           cancelable: true
         })
+        const mod = input.control || input.meta
+        const browserShortcut =
+          mod &&
+          ['l', 't', 'w', 'r', 'f', '=', '+', '-', '0'].includes(input.key.toLowerCase())
+        if (input.alt && input.key === 'Left') {
+          e.preventDefault()
+          if (wv.canGoBack()) wv.goBack()
+          return
+        }
+        if (input.alt && input.key === 'Right') {
+          e.preventDefault()
+          if (wv.canGoForward()) wv.goForward()
+          return
+        }
         const matched = matchHotkey(synthetic, resolveHotkeys(useSettings.getState().keybindings))
-        if (!matched) return
+        if (!matched && !browserShortcut) return
         e.preventDefault()
         window.dispatchEvent(synthetic)
       }
@@ -438,6 +452,7 @@ const BrowserTab = memo(
  */
 interface BrowserToolbarProps {
   address: string
+  currentUrl: string
   loading: boolean
   canBack: boolean
   canFwd: boolean
@@ -451,6 +466,7 @@ interface BrowserToolbarProps {
 
 const BrowserToolbar = memo(function BrowserToolbar({
   address,
+  currentUrl,
   loading,
   canBack,
   canFwd,
@@ -568,7 +584,7 @@ const BrowserToolbar = memo(function BrowserToolbar({
         className="browser-btn"
         title="Open in system browser"
         aria-label="Open in system browser"
-        onClick={() => void window.devterm.openExternal(address || HOME_URL)}
+        onClick={() => void window.devterm.openExternal(currentUrl || HOME_URL)}
       >
         <IconExternal size={14} />
       </Button>
@@ -677,6 +693,7 @@ function BrowserPane({ session }: { session: Session }) {
   const [downloads, setDownloads] = useState<BrowserDownloadItem[]>([])
   const [find, setFind] = useState<{ open: boolean; text: string }>({ open: false, text: '' })
   const handles = useRef(new Map<string, TabHandle>())
+  const paneRef = useRef<HTMLDivElement | null>(null)
   const activeRef = useRef(activeId)
   activeRef.current = activeId
 
@@ -706,9 +723,34 @@ function BrowserPane({ session }: { session: Session }) {
   // Minus / 0 zoom the active tab. `/` opens the find bar.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      // Skip when the user is typing into the find bar input or the address bar.
+      // Every browser pane stays mounted. Only the focused pane may consume a
+      // window shortcut; otherwise one Ctrl+T would create a tab in every pane.
+      if (useSessions.getState().activeId !== session.id) return
       const tag = (e.target as HTMLElement | null)?.tagName
-      if (tag === 'INPUT' || tag === 'TEXTAREA') return
+      const typing = tag === 'INPUT' || tag === 'TEXTAREA'
+      const mod = e.ctrlKey || e.metaKey
+      // Browser-standard shortcuts must work from the address/find bars too.
+      if (mod && e.key.toLowerCase() === 'l') {
+        e.preventDefault()
+        paneRef.current?.querySelector<HTMLInputElement>('.browser-addr')?.focus()
+        return
+      }
+      if (mod && e.key.toLowerCase() === 't') {
+        e.preventDefault()
+        addTab()
+        return
+      }
+      if (mod && e.key.toLowerCase() === 'w') {
+        e.preventDefault()
+        closeTab(activeRef.current)
+        return
+      }
+      if (mod && e.key.toLowerCase() === 'f') {
+        e.preventDefault()
+        setFind({ open: true, text: '' })
+        return
+      }
+      if (typing) return
       // Esc closes the find bar.
       if (e.key === 'Escape' && find.open) {
         e.preventDefault()
@@ -723,9 +765,11 @@ function BrowserPane({ session }: { session: Session }) {
         setFind({ open: true, text: '' })
         return
       }
-      const mod = e.ctrlKey || e.metaKey
       if (!mod) return
-      if (e.key === '=' || e.key === '+') {
+      if (e.key.toLowerCase() === 'r') {
+        e.preventDefault()
+        handles.current.get(activeRef.current)?.reloadOrStop()
+      } else if (e.key === '=' || e.key === '+') {
         e.preventDefault()
         handles.current.get(activeRef.current)?.zoomIn()
       } else if (e.key === '-') {
@@ -738,7 +782,10 @@ function BrowserPane({ session }: { session: Session }) {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [find.open])
+    // addTab/closeTab are stable callbacks declared below; this effect is
+    // intentionally rebuilt only when its find-bar branch changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [find.open, session.id])
 
   const onState = useCallback((id: string, patch: StatePatch) => {
     setTabs((ts) => ts.map((t) => (t.id === id ? { ...t, ...patch } : t)))
@@ -782,9 +829,12 @@ function BrowserPane({ session }: { session: Session }) {
   // `tabs` so a background tab's update can't clobber what the user is typing.
   useEffect(() => {
     const at = tabs.find((t) => t.id === activeId)
-    if (at) setAddress(at.current)
+    if (at) {
+      setAddress(at.current)
+      useSessions.getState().setBrowserUrl(session.id, at.current)
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeId])
+  }, [activeId, session.id])
 
   // Mirror the active tab's title onto the session so the layout tab shows the page.
   // Fall back to the page origin for new/untitled tabs so the tab isn't just "Browser".
@@ -792,6 +842,9 @@ function BrowserPane({ session }: { session: Session }) {
   const { title: activeTabTitle, current: activeTabCurrent } = activeTab ?? {}
   useEffect(() => {
     const fallback = activeTabCurrent ? originOf(activeTabCurrent) : 'Browser'
+    if (activeTabCurrent) {
+      useSessions.getState().setBrowserUrl(session.id, activeTabCurrent)
+    }
     useSessions
       .getState()
       .setTitle(
@@ -823,7 +876,7 @@ function BrowserPane({ session }: { session: Session }) {
   }, [])
 
   return (
-    <div className="browser-pane">
+    <div ref={paneRef} className="browser-pane">
       <div className="browser-tabs">
         {tabs.map((t) => (
           <div
@@ -878,6 +931,7 @@ function BrowserPane({ session }: { session: Session }) {
       </div>
       <BrowserToolbar
         address={address}
+        currentUrl={activeTab?.current ?? HOME_URL}
         loading={loading}
         canBack={activeTab?.canBack ?? false}
         canFwd={activeTab?.canFwd ?? false}
@@ -906,8 +960,8 @@ function BrowserPane({ session }: { session: Session }) {
         {tabs.map((t) => (
           <div
             key={t.id}
-            className="browser-view"
-            style={{ display: t.id === activeId ? 'flex' : 'none' }}
+            className={`browser-view ${t.id === activeId ? 'active' : 'browser-view-hidden'}`}
+            aria-hidden={t.id !== activeId}
           >
             <BrowserTab
               ref={(h) => {
