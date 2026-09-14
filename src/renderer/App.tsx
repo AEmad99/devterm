@@ -53,6 +53,26 @@ import { initAgentHandoff } from './lib/agent-handoff'
 import type { HostContext } from '@shared/types'
 import type { View, BottomPanelMode } from './components/chrome/types'
 
+function restoreStructureKey(): string {
+  const sessions = useSessions
+    .getState()
+    .sessions.filter((s) => !s.id.startsWith('pending-'))
+    .map((s) => ({
+      id: s.id,
+      kind: s.kind,
+      groupId: s.groupId,
+      connectionId: s.connectionId,
+      title: s.customTitle ? s.title : undefined,
+      url: s.kind === 'browser' ? s.url : undefined
+    }))
+  const groups = useLayout.getState().groups.map((g) => ({
+    id: g.id,
+    name: g.name,
+    root: g.root
+  }))
+  return JSON.stringify({ sessions, groups })
+}
+
 export default function App() {
   // Cluster B: narrow selectors so App only re-renders when its own slices move.
   const sessionCount = useSessions((s) => s.sessions.length)
@@ -117,6 +137,10 @@ export default function App() {
   const [showShortcuts, setShowShortcuts] = useState(false)
   const [showAgents, setShowAgents] = useState(false)
   const [restoreNotice, setRestoreNotice] = useState<string | null>(null)
+  const [startupHydrated, setStartupHydrated] = useState(false)
+  const startupHydratedRef = useRef(false)
+  const preserveRestoreSnapshotRef = useRef(false)
+  const hydratedStructureRef = useRef('')
   /**
    * Pending destructive close awaiting confirmation (tab, group, or editor).
    * `reasons` is rendered in the dialog; `run` performs the close on confirm.
@@ -145,37 +169,57 @@ export default function App() {
     //     estate is never silently dropped
     //  3) Empty local shell so the window is never blank
     void (async () => {
-      const wsList = await window.devterm.workspaces.list()
-      const toAutoLaunch = wsList.filter((w) => w.autoLaunch)
-      if (toAutoLaunch.length > 0) {
-        const conns = await window.devterm.connections.list()
-        for (const ws of toAutoLaunch) {
-          // `recordLaunch: false` — auto-launching on app boot doesn't count
-          // as an operator-initiated launch.
-          await launchWorkspaceIntoGroup(ws, conns, { recordLaunch: false })
-        }
-      }
-      if (useSettings.getState().sessionRestore) {
-        try {
-          const snap = await window.devterm.sessionRestore.load()
-          if (snap?.groups?.length) {
-            const conns = await window.devterm.connections.list()
-            const restored = await restoreSessionSnapshot(snap, conns)
-            if (restored > 0) {
-              setRestoreNotice(
-                `Restored ${restored} terminal${restored === 1 ? '' : 's'} from your last session.`
-              )
-            }
+      // Until a complete load/restore proves otherwise, preserve any previous
+      // snapshot. Startup service failures must not turn it into one local tab.
+      let preserveRestoreSnapshot = useSettings.getState().sessionRestore
+      try {
+        // Apply the persisted policy before restored SSH sessions can drop.
+        // Otherwise startup connections briefly use the main process defaults.
+        await window.devterm.ssh
+          .setReconnectPolicy?.(useSettings.getState().autoReconnect)
+          ?.catch(() => undefined)
+
+        const wsList = await window.devterm.workspaces.list()
+        const toAutoLaunch = wsList.filter((w) => w.autoLaunch)
+        if (toAutoLaunch.length > 0) {
+          const conns = await window.devterm.connections.list()
+          for (const ws of toAutoLaunch) {
+            // `recordLaunch: false` — auto-launching on app boot doesn't count
+            // as an operator-initiated launch.
+            await launchWorkspaceIntoGroup(ws, conns, { recordLaunch: false })
           }
-        } catch {
-          /* fall through to empty local */
         }
+        if (useSettings.getState().sessionRestore) {
+          try {
+            const snap = await window.devterm.sessionRestore.load()
+            if (snap?.groups?.length) {
+              const conns = await window.devterm.connections.list()
+              const { opened, attempted } = await restoreSessionSnapshot(snap, conns)
+              preserveRestoreSnapshot = opened < attempted
+              if (opened > 0) {
+                setRestoreNotice(
+                  `Restored ${opened} terminal${opened === 1 ? '' : 's'} from your last session.`
+                )
+              }
+            } else {
+              preserveRestoreSnapshot = false
+            }
+          } catch {
+            /* fall through to empty local */
+          }
+        }
+      } catch (err) {
+        console.error('[startup] failed to restore sessions:', err)
+      } finally {
+        if (useSessions.getState().sessions.length === 0) addLocal()
+        const liveSessions = useSessions.getState().sessions
+        useLayout.getState().sync(liveSessions.map((s) => ({ id: s.id, groupId: s.groupId })))
+        preserveRestoreSnapshotRef.current = preserveRestoreSnapshot
+        hydratedStructureRef.current = restoreStructureKey()
+        startupHydratedRef.current = true
+        setStartupHydrated(true)
       }
-      if (useSessions.getState().sessions.length === 0) addLocal()
     })()
-    window.devterm.ssh
-      .setReconnectPolicy(useSettings.getState().autoReconnect)
-      .catch(() => undefined)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -229,17 +273,33 @@ export default function App() {
 
   // Debounced last-session snapshot so a crash/quit can reopen the layout.
   useEffect(() => {
-    if (!useSettings.getState().sessionRestore) return
+    // Do not overwrite the last complete snapshot with an empty/partial one
+    // while slow SSH sessions are still being restored.
+    if (!startupHydrated || !useSettings.getState().sessionRestore) return
+    if (preserveRestoreSnapshotRef.current) {
+      // If some restored sessions were unreachable, retain the complete prior
+      // snapshot until the operator makes a structural session/layout change.
+      // Status/cwd churn alone must not erase remotes that are temporarily
+      // unavailable (for example, while a VPN is disconnected).
+      if (restoreStructureKey() === hydratedStructureRef.current) return
+      preserveRestoreSnapshotRef.current = false
+    }
     const t = window.setTimeout(() => {
       void persistSessionRestore()
     }, 1500)
     return () => clearTimeout(t)
-  }, [sessionsRef, groups])
+  }, [startupHydrated, sessionsRef, groups])
 
   // Flush restore snapshot on page hide / unload (best-effort).
   useEffect(() => {
     const flush = () => {
-      if (useSettings.getState().sessionRestore) void persistSessionRestore()
+      if (
+        startupHydratedRef.current &&
+        !preserveRestoreSnapshotRef.current &&
+        useSettings.getState().sessionRestore
+      ) {
+        void persistSessionRestore()
+      }
     }
     window.addEventListener('pagehide', flush)
     return () => window.removeEventListener('pagehide', flush)

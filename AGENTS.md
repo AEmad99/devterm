@@ -14,7 +14,7 @@ DevTerm is an Electron 29 desktop terminal: local shells (prebuilt node-pty), SS
 | Dev loop | `npm run dev` (hot-reload) |
 | Required correctness gate | `npm run typecheck` (node + web tsconfigs) — run before finishing any code change |
 | Lint / format | `npm run lint`, `npm run format` (Prettier). Baseline has pre-existing lint findings; fix yours, don't boil the ocean. |
-| Tests | `npm run test` (all `*.test.ts` via tsx, 31 files), `npm run test:grid` (grid-spec validation) |
+| Tests | `npm run test` (all `*.test.ts` via tsx, 38 files), `npm run test:grid` (grid-spec validation) |
 | Smoke | `node scripts/smoke.cjs` (node-pty/ssh2). `electron . --self-test` is the deeper headless check (90s watchdog, needs a build). |
 | Package | `npm run build:win` / `build:linux` → `dist/`. Release flow (typecheck + lint + test + smoke → build → commit to `main` → push → tag `v<version>`) only on explicit request. |
 | Commit target | Commit directly to `main` unless the user asks for a branch or PR. |
@@ -62,7 +62,7 @@ Project skills in `.claude/skills/` (load via the skill tool, they carry the exa
 | Tab labels / status | `src/renderer/lib/{tab-label,tab-status}.ts` |
 | Themes / hotkeys / attention | `src/renderer/lib/{themes,hotkeys,attention}.ts` |
 | Styles | `styles.css` imports `styles/{base,chrome,terminal,panels,motion}.css` |
-| Settings import/export | `src/main/settings-io.ts` (path is `src/main/`, not `ipc/`) |
+| Settings import/export | `src/main/settings/settings-io.ts` |
 
 ## Sessions, layout, and the always-mounted invariant
 
@@ -177,7 +177,7 @@ Project skills in `.claude/skills/` (load via the skill tool, they carry the exa
 
 ## Tests
 
-32 `*.test.ts` files (run via `npm run test`): all eight agent launch modules (`agent-bin`, `launch`, `claude`, `opencode`, `kimi`, `grok`, `antigravity` — note: no `codex-launch.test.ts`), approval-rules, agent context, host-backend, browser control/interact/snapshot/url-guard, MCP policy/tools-agent/tools-register, search ansi/index, ssh detached-session/ssh-config-parse/tmux, shell-quote, history-parse, pty-native-pack, plus renderer-side extractCommandPrefix, markdown-preview, snippets, stt resample, tab-label, tab-status, layout. Large surfaces (layout DnD, SSH reconnect, SFTP queue, multi-window agent) rely on self-test + manual QA — the biggest coverage gap.
+38 `*.test.ts` files (run via `npm run test`): agent launch modules (`agent-bin`, `launch`, `claude`, `opencode`, `kimi`, `grok`, `antigravity` — note: no `codex-launch.test.ts`), approval-rules, agent context, host-backend, browser control/interact/snapshot/url-guard, MCP policy/tools-agent/tools-register, search ansi/index, ssh detached-session/manager lifecycle/OS detection/ssh-config-parse/tmux/windows-host, shell-quote, history-parse, pty-native-pack, plus renderer-side extractCommandPrefix, file sort, markdown-preview, snippets, stt resample, tab-label, tab-status, transfer stats, layout, and SSH session status lifecycle. Large surfaces (layout DnD, live SSH reconnect, SFTP queue, multi-window agent) rely on self-test + manual QA — the biggest coverage gap.
 
 ## Critical rules
 

@@ -520,8 +520,10 @@ export const useSessions = create<SessionState>((set, get) => ({
     })
   },
   markClosed: (id) => {
-    statusDisposers.get(id)?.()
-    statusDisposers.delete(id)
+    // A transport close is transient while the main process auto-reconnects.
+    // Keep the status subscription alive so this session can observe the
+    // following `reconnecting` and `reconnected` events. Explicit tab close is
+    // the owner of listener disposal.
     set((s) => ({
       sessions: s.sessions.map((x) =>
         x.id === id

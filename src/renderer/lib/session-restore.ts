@@ -15,6 +15,22 @@ import { setAgentUiMode } from './agent-ui'
 let itemSeq = 0
 const newItemId = () => `sr-${Date.now()}-${++itemSeq}`
 
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), timeoutMs)
+    void promise.then(
+      (value) => {
+        clearTimeout(timer)
+        resolve(value)
+      },
+      (err) => {
+        clearTimeout(timer)
+        reject(err)
+      }
+    )
+  })
+}
+
 function snapshotNode(
   n: LayoutNode | null,
   items: Map<string, string>
@@ -189,7 +205,14 @@ async function restoreAgentsAndEditors(
       const sid = itemToSession.get(it.id)
       if (!sid) continue
       try {
-        await setAgentUiMode(sid, it.agentUiMode, { kind: it.agentKind })
+        // A floating-window IPC must not hold startup hydration forever. The
+        // agent may still finish opening in the background; restore itself is
+        // best-effort and moves on after this bounded wait.
+        await withTimeout(
+          setAgentUiMode(sid, it.agentUiMode, { kind: it.agentKind }),
+          10_000,
+          'agent restore timed out'
+        )
       } catch {
         /* agent relaunch is best-effort */
       }
@@ -218,10 +241,11 @@ async function restoreAgentsAndEditors(
 export async function restoreSessionSnapshot(
   snap: SessionRestoreSnapshot,
   conns: SavedConnection[]
-): Promise<number> {
-  if (!snap?.groups?.length) return 0
+): Promise<{ opened: number; attempted: number }> {
+  if (!snap?.groups?.length) return { opened: 0, attempted: 0 }
 
   let opened = 0
+  let attempted = 0
   let activeGroupId: string | null = null
   const preferred = snap.activeGroupIndex ?? 0
   const groupSessionMaps: Map<string, string>[] = []
@@ -235,6 +259,7 @@ export async function restoreSessionSnapshot(
         (it.kind === 'remote' && typeof it.connectionId === 'string')
     )
     if (!items.length) continue
+    attempted += items.length
 
     const layout = useLayout.getState()
     const def = layout.groups.find((x) => x.id === DEFAULT_GROUP)
@@ -264,5 +289,5 @@ export async function restoreSessionSnapshot(
 
   await restoreAgentsAndEditors(snap.groups, groupSessionMaps, snap)
   if (activeGroupId) useLayout.getState().setActiveGroup(activeGroupId)
-  return opened
+  return { opened, attempted }
 }

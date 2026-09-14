@@ -64,7 +64,9 @@ export function registerSshIpc(getWindow: () => BrowserWindow | null): SSHManage
     manager.setReconnectPolicy(patch)
     return manager.getReconnectPolicy()
   })
-  ipcMain.handle(IPC.sshListTmux, (_e, id: string) => manager.listTmux(id))
+  ipcMain.handle(IPC.sshListTmux, (_e, id: string, timeoutMs?: number) =>
+    manager.listTmux(id, timeoutMs)
+  )
   ipcMain.handle(IPC.sshAttachTmux, (_e, id: string, req: TmuxAttachRequest) =>
     manager.attachTmux(id, req ?? {})
   )

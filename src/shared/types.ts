@@ -1039,7 +1039,7 @@ export interface DevTermApi {
     onExit(sessionId: string, cb: () => void): () => void
     onStatus(sessionId: string, cb: (s: SSHStatus) => void): () => void
     /** Probe tmux on the remote and list existing sessions (dedicated exec). */
-    listTmux(sessionId: string): Promise<TmuxListing>
+    listTmux(sessionId: string, timeoutMs?: number): Promise<TmuxListing>
     /**
      * Attach the live login shell to a tmux session without `exec`, or record
      * that the operator chose a normal shell. Detach returns to the login shell.

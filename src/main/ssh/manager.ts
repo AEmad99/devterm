@@ -84,6 +84,8 @@ interface Session {
   /** Bounded recovery attempts for repeatedly dropped Windows shell channels. */
   shellRecoveryAttempts?: number
   shellRecoveryWindowStartedAt?: number
+  /** Coalesces shell-channel and transport close into one renderer exit event. */
+  exitReported?: boolean
   context: HostContext
   /**
    * The original profile the session was opened with. Kept so the
@@ -365,14 +367,25 @@ export class SSHManager {
       onStatus
     )
 
+    // Context detection opens short-lived exec channels before the session is
+    // visible to the renderer. Observe the transport during that bootstrap
+    // window so a server/network close cannot be missed and later installed as
+    // an apparently live session.
+    const bootstrapAbort = new AbortController()
+    const onBootstrapClose = () => {
+      bootstrapAbort.abort()
+    }
+    client.once('close', onBootstrapClose)
     try {
-      const context = await detectRemoteContext(client)
+      const context = await detectRemoteContext(client, 6000, bootstrapAbort.signal)
       this.sessions.set(id, { id, client, jump, context, profile })
-      client.on('close', () => this.handleTransportClose(id))
+      client.removeListener('close', onBootstrapClose)
+      client.on('close', () => this.handleTransportClose(id, client))
       return { sessionId: id, context }
     } catch (err) {
       // Detection is part of connecting. A transport that fails before the
       // session is installed has no later disconnect path to release it.
+      client.removeListener('close', onBootstrapClose)
       try {
         client.end()
         jump?.end()
@@ -389,28 +402,28 @@ export class SSHManager {
    * forgetting the profile (so "Reconnect now" still works after permanent
    * failure).
    */
-  private handleTransportClose(sessionId: string): void {
+  private handleTransportClose(sessionId: string, closedClient: Client): void {
     const existing = this.sessions.get(sessionId)
-    if (existing) {
-      existing.tmuxClientRunning = false
-      if (existing.tmuxResumeTimer) {
-        clearTimeout(existing.tmuxResumeTimer)
-        existing.tmuxResumeTimer = undefined
-      }
+    // A reconnect replaces the Client object while preserving the session id.
+    // Late/duplicate close events from an older transport must never reap the
+    // replacement or mark its renderer tab closed.
+    if (!existing || existing.client !== closedClient || existing.closing) return
+    existing.tmuxClientRunning = false
+    if (existing.tmuxResumeTimer) {
+      clearTimeout(existing.tmuxResumeTimer)
+      existing.tmuxResumeTimer = undefined
     }
     this.fireStatus(sessionId, { type: 'closed' })
-    this.handlers.onExit(sessionId)
-    const reaped = this.sessions.get(sessionId)
-    if (!reaped) return
-    this.clearLiveChannels(reaped)
+    this.reportExit(existing)
+    this.clearLiveChannels(existing)
     this.forwardManager.suspendBySession(sessionId)
     // Drop the dead client references but keep the session entry + profile.
-    reaped.client = undefined
-    reaped.jump = undefined
-    if (reaped.reconnect) {
-      void this.runReconnect(sessionId, reaped.reconnect)
+    existing.client = undefined
+    existing.jump = undefined
+    if (existing.reconnect) {
+      void this.runReconnect(sessionId, existing.reconnect)
     } else if (this.policy.enabled) {
-      this.scheduleReconnect(sessionId, reaped.profile, reaped.shellRequest)
+      this.scheduleReconnect(sessionId, existing.profile, existing.shellRequest)
     }
     // else: tombstone remains so a later manual reconnect() can find the profile
   }
@@ -438,6 +451,13 @@ export class SSHManager {
     this.closeWindowsForwardClient(s)
     s.sftp = undefined
     s.sftpInflight = undefined
+  }
+
+  /** Report a shell exit once even when channel and transport close race. */
+  private reportExit(s: Session): void {
+    if (s.exitReported) return
+    s.exitReported = true
+    this.handlers.onExit(s.id)
   }
 
   /** Close a Windows compatibility client without treating it as a session drop. */
@@ -713,7 +733,7 @@ export class SSHManager {
         /* ignore */
       }
       this.fireStatus(sessionId, { type: 'closed' })
-      this.handlers.onExit(sessionId)
+      this.reportExit(s)
     }
     this.scheduleReconnect(sessionId, prof, s?.shellRequest, /*userInitiated*/ true)
   }
@@ -803,8 +823,18 @@ export class SSHManager {
         pendingJump = undefined
         return
       }
-      const context = await detectRemoteContext(pendingClient)
-      if (this.sessions.get(sessionId) !== s || s.reconnect !== state || s.closing) {
+      const bootstrapAbort = new AbortController()
+      const onBootstrapClose = () => {
+        bootstrapAbort.abort()
+      }
+      pendingClient.once('close', onBootstrapClose)
+      const context = await detectRemoteContext(pendingClient, 6000, bootstrapAbort.signal)
+      if (
+        this.sessions.get(sessionId) !== s ||
+        s.reconnect !== state ||
+        s.closing
+      ) {
+        pendingClient.removeListener('close', onBootstrapClose)
         pendingClient.end()
         pendingJump?.end()
         pendingClient = undefined
@@ -813,6 +843,7 @@ export class SSHManager {
       }
       const client = pendingClient
       const jump = pendingJump
+      client.removeListener('close', onBootstrapClose)
       pendingClient = undefined
       pendingJump = undefined
       this.sessions.set(sessionId, {
@@ -824,7 +855,7 @@ export class SSHManager {
         // Clear reconnect bookkeeping on success; the next drop starts a new loop.
         shellRequest: state.shellRequest ?? s.shellRequest
       })
-      client.on('close', () => this.handleTransportClose(sessionId))
+      client.on('close', () => this.handleTransportClose(sessionId, client))
       // Re-establish -L/-D listeners that were suspended on the previous drop.
       try {
         await this.forwardManager.rebind(sessionId)
@@ -933,6 +964,7 @@ export class SSHManager {
         if (err) return reject(err)
         if (!channel) return reject(new Error('no shell channel'))
         s.shell = channel
+        s.exitReported = false
         // Stream every chunk through a per-session UTF-8 decoder so multi-byte
         // codepoints split across ssh2 data events decode correctly instead
         // of turning into U+FFFD. The close handler flushes any trailing bytes
@@ -959,6 +991,10 @@ export class SSHManager {
             console.warn(`[ssh] shell channel error (${sessionId}):`, err.message)
           })
           .on('close', () => {
+            // This channel belongs to the Session object and Client captured
+            // when it was opened. A late close after reconnect must not mark
+            // the replacement shell (same public id) as closed.
+            if (this.sessions.get(sessionId) !== s || s.client !== client || s.closing) return
             s.shell = undefined
             if (s.shellDecoder) {
               const tail = s.shellDecoder.decode()
@@ -981,7 +1017,7 @@ export class SSHManager {
               this.scheduleWindowsShellRecovery(sessionId, s, client)
               return
             }
-            this.handlers.onExit(sessionId)
+            this.reportExit(s)
           })
         channel.stderr.on('data', (d: Buffer) => {
           emitShellData(dec.decode(d, { stream: true }))
@@ -1051,7 +1087,7 @@ export class SSHManager {
     if (s.shellRecoveryTimer || s.closing || s.reconnect || s.client !== client) return
     const request = s.shellRequest
     if (!request) {
-      this.handlers.onExit(sessionId)
+      this.reportExit(s)
       return
     }
     const now = Date.now()
@@ -1069,7 +1105,7 @@ export class SSHManager {
         sessionId,
         '\r\n\x1b[31m[Windows shell repeatedly closed; automatic recovery stopped]\x1b[0m\r\n'
       )
-      this.handlers.onExit(sessionId)
+      this.reportExit(s)
       return
     }
     const delayMs = [250, 1000, 3000][attempt - 1]
@@ -1248,7 +1284,20 @@ export class SSHManager {
         client.exec(command, (err, stream) => {
           if (err) {
             clearTimeout(timer)
-            return reject(err)
+            reject(err)
+            return
+          }
+          // The timeout may fire while ssh2 is still negotiating the channel.
+          // If its callback arrives later, close that stale channel immediately
+          // so it cannot overlap a shell or consume a server MaxSessions slot.
+          if (settled) {
+            stream.on('error', () => undefined)
+            try {
+              stream.close()
+            } catch {
+              /* ignore */
+            }
+            return
           }
           streamRef = stream
           stream
@@ -1294,7 +1343,7 @@ export class SSHManager {
    * the interactive shell / MOTD). Broken binaries (`tmux -V` fails) count
    * as unavailable so we never offer a picker the attach step cannot honor.
    */
-  async listTmux(sessionId: string): Promise<TmuxListing> {
+  async listTmux(sessionId: string, timeoutMs = 12000): Promise<TmuxListing> {
     const s = this.sessions.get(sessionId)
     if (!s) return { available: false, sessions: [], error: 'unknown session' }
     if (!s.client) return { available: false, sessions: [], error: RECONNECTING_ERR }
@@ -1302,7 +1351,8 @@ export class SSHManager {
       return { available: false, sessions: [] }
     }
     try {
-      const result = await this.exec(sessionId, TMUX_PROBE_AND_LIST, 12000)
+      const boundedTimeoutMs = Math.max(250, Math.min(12000, timeoutMs))
+      const result = await this.exec(sessionId, TMUX_PROBE_AND_LIST, boundedTimeoutMs)
       return parseTmuxListing(result.stdout, result.stderr)
     } catch (err) {
       return { available: false, sessions: [], error: (err as Error).message }

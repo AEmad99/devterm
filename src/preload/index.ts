@@ -85,7 +85,8 @@ const api: DevTermApi = {
     onData: (id, cb) => subscribe<string>(`${IPC.sshData}:${id}`, cb),
     onExit: (id, cb) => subscribe<void>(`${IPC.sshExit}:${id}`, () => cb()),
     onStatus: (id, cb) => subscribe<SSHStatus>(`${IPC.sshStatus}:${id}`, cb),
-    listTmux: (id): Promise<TmuxListing> => ipcRenderer.invoke(IPC.sshListTmux, id),
+    listTmux: (id, timeoutMs): Promise<TmuxListing> =>
+      ipcRenderer.invoke(IPC.sshListTmux, id, timeoutMs),
     attachTmux: (id, req: TmuxAttachRequest): Promise<void> =>
       ipcRenderer.invoke(IPC.sshAttachTmux, id, req),
     killTmux: (id, name: string): Promise<void> => ipcRenderer.invoke(IPC.sshKillTmux, id, name)

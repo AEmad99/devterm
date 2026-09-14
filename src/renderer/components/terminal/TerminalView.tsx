@@ -551,7 +551,9 @@ function TerminalView({ session }: { session: Session }) {
         wireResize((c, r) => window.devterm.pty.resize(id, c, r))
         cleanups.push(() => window.devterm.pty.kill(id))
       })().catch((e) => {
-        term.write(`\r\n\x1b[31m[failed to start shell: ${String(e)}]\x1b[0m\r\n`)
+        if (!disposed) {
+          term.write(`\r\n\x1b[31m[failed to start shell: ${String(e)}]\x1b[0m\r\n`)
+        }
       })
     } else {
       const sid = session.id
@@ -575,41 +577,48 @@ function TerminalView({ session }: { session: Session }) {
           window.devterm.ssh.input(sid, `cd "${p}"\r`)
         }
       }
-      window.devterm.ssh
-        .openShell(sid, term.cols, term.rows)
-        .then(async () => {
-          if (disposed) return
-          // `openShell` resolves only after the ssh2 channel exists. Wire the
-          // sender here so input queued during channel negotiation is replayed
-          // instead of being written while `shell` is still undefined.
-          sendInput = (d) => window.devterm.ssh.input(sid, d)
-          for (const d of inputQueue) sendInput(d)
-          inputQueue.length = 0
-          const offerTmux = useSettings.getState().remoteDetachedSessions
-          if (!offerTmux) {
-            applyStartCwd()
-            return
-          }
+      void (async () => {
+        // Probe tmux before opening the long-lived shell. On restrictive POSIX
+        // servers, overlapping this optional exec with the shell can exceed
+        // MaxSessions=1 or trigger a buggy transport reset.
+        const offerTmux = useSettings.getState().remoteDetachedSessions
+        let listing: Awaited<ReturnType<typeof window.devterm.ssh.listTmux>> | undefined
+        if (offerTmux) {
           try {
-            const listing = await window.devterm.ssh.listTmux(sid)
-            if (disposed) return
-            if (!listing.available) {
-              applyStartCwd()
-              return
-            }
-            blockInputRef.current = true
-            setTmuxPicker({
-              sessions: listing.sessions,
-              version: listing.version,
-              mode: 'connect'
-            })
+            listing = await window.devterm.ssh.listTmux(sid, 2500)
           } catch {
-            if (!disposed) applyStartCwd()
+            listing = undefined
           }
-        })
-        .catch((e) => {
+          if (disposed) return
+        }
+
+        await window.devterm.ssh.openShell(sid, term.cols, term.rows)
+        if (disposed) return
+        // `openShell` resolves only after the ssh2 channel exists. Wire the
+        // sender here so input queued during channel negotiation is replayed
+        // instead of being written while `shell` is still undefined.
+        sendInput = (d) => window.devterm.ssh.input(sid, d)
+        if (offerTmux && listing?.available) {
+          // Keystrokes entered while the pane was still probing do not have a
+          // well-defined target once the picker takes over. Discard rather than
+          // unexpectedly execute them in the login shell behind the picker.
+          inputQueue.length = 0
+          blockInputRef.current = true
+          setTmuxPicker({
+            sessions: listing.sessions,
+            version: listing.version,
+            mode: 'connect'
+          })
+          return
+        }
+        for (const d of inputQueue) sendInput(d)
+        inputQueue.length = 0
+        applyStartCwd()
+      })().catch((e) => {
+        if (!disposed) {
           term.write(`\r\n\x1b[31m[failed to open shell: ${String(e)}]\x1b[0m\r\n`)
-        })
+        }
+      })
       wireResize((c, r) => window.devterm.ssh.resize(sid, c, r))
     }
 
