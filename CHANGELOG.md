@@ -3,6 +3,13 @@
 All notable changes to DevTerm are documented here. The most recent section is
 at the top. Dates are ISO `YYYY-MM-DD`.
 
+## Unreleased
+
+### Fixed
+
+- Windows OpenSSH keeps the visible PowerShell terminal isolated from commands, SFTP, and port-forward streams, and performs bounded recovery when an unexpected shell-channel drop leaves the SSH transport alive.
+- Compatibility connections to older Windows OpenSSH servers prefer a faster fixed-group key exchange after the host is identified as Windows, while retaining modern algorithms first.
+
 ## 1.3.24 — 2026-09-14
 
 Windows OpenSSH stability follow-up.

@@ -1,5 +1,5 @@
 /**
- * SSH port forwarding on the existing ssh2 client.
+ * SSH port forwarding on an acquired ssh2 client.
  *
  *  - `local` (-L): one `net.Server` on `127.0.0.1:port`. Each accepted socket
  *    opens a `forwardOut` to the configured remote host:port and pipes
@@ -14,7 +14,7 @@
  * Forward specs are kept in the manager so they survive transport reconnects:
  * listeners are suspended when the session drops and re-bound (via
  * {@link PortForwardManager.rebind}) once SSH is back. The ssh2 client is
- * resolved per accepted connection through the injected `getClient`, never
+ * resolved per accepted connection through an injected lease provider, never
  * captured at add-time.
  *
  * Bytes are counted in both directions and summed in `list()`.
@@ -41,12 +41,23 @@ interface ForwardEntry {
   bytesOut: number
 }
 
+interface ForwardClientLease {
+  client: Client
+  /** Release a compatibility transport dedicated to this forwarded stream. */
+  release?: () => void
+}
+
 export class PortForwardManager {
   private forwards = new Map<string, ForwardEntry>()
-  private getClient: (sessionId: string) => Client | undefined
+  private isConnected: (sessionId: string) => boolean
+  private acquireClient: (sessionId: string) => Promise<ForwardClientLease | undefined>
 
-  constructor(getClient: (sessionId: string) => Client | undefined) {
-    this.getClient = getClient
+  constructor(
+    isConnected: (sessionId: string) => boolean,
+    acquireClient: (sessionId: string) => Promise<ForwardClientLease | undefined>
+  ) {
+    this.isConnected = isConnected
+    this.acquireClient = acquireClient
   }
 
   private makeId(): string {
@@ -60,7 +71,7 @@ export class PortForwardManager {
     remoteHost?: string,
     remotePort?: number
   ): Promise<PortForward> {
-    if (!this.getClient(sessionId)) throw new Error('SSH session not connected')
+    if (!this.isConnected(sessionId)) throw new Error('SSH session not connected')
     if (kind === 'local' && (!remoteHost || remotePort == null)) {
       throw new Error('Local forwards require a remote host and port')
     }
@@ -95,7 +106,9 @@ export class PortForwardManager {
   /**
    * Create the listening server for an entry and start listening. The ssh2
    * client is resolved per accepted connection so a reconnect swaps in the
-   * fresh client without re-creating the server.
+   * fresh client without re-creating the server. Windows remotes acquire a
+   * dedicated transport per forwarded stream because some Win32-OpenSSH servers
+   * reset the visible terminal when a second channel opens on its transport.
    */
   private bindServer(entry: ForwardEntry): Promise<Server> {
     const server =
@@ -110,6 +123,11 @@ export class PortForwardManager {
       server.once('error', reject)
       server.listen(entry.localPort, '127.0.0.1', () => {
         server.off('error', reject)
+        const address = server.address()
+        if (address && typeof address !== 'string') {
+          entry.localPort = address.port
+          entry.forward.localPort = address.port
+        }
         resolve(server)
       })
     })
@@ -117,18 +135,44 @@ export class PortForwardManager {
 
   private createLocalServer(entry: ForwardEntry): Server {
     return createServer((local) => {
-      const client = this.getClient(entry.sessionId)
-      if (!client) {
-        local.end()
-        return
-      }
-      client.forwardOut('127.0.0.1', 0, entry.remoteHost!, entry.remotePort!, (err, stream) => {
-        if (err) {
+      void this.acquireClient(entry.sessionId)
+        .then((lease) => {
+          if (!lease) {
+            local.end()
+            return
+          }
+          if (local.destroyed) {
+            lease.release?.()
+            return
+          }
+          local.once('close', () => lease.release?.())
+          lease.client.forwardOut(
+            '127.0.0.1',
+            0,
+            entry.remoteHost!,
+            entry.remotePort!,
+            (err, stream) => {
+              if (local.destroyed) {
+                try {
+                  stream?.end()
+                } catch {
+                  /* ignore */
+                }
+                lease.release?.()
+                return
+              }
+              if (err) {
+                lease.release?.()
+                local.end()
+                return
+              }
+              this.pipeSocket(entry.forward.id, local, stream, lease.release)
+            }
+          )
+        })
+        .catch(() => {
           local.end()
-          return
-        }
-        this.pipeSocket(entry.forward.id, local, stream)
-      })
+        })
     })
   }
 
@@ -141,25 +185,41 @@ export class PortForwardManager {
             local.end()
             return
           }
-          const client = this.getClient(entry.sessionId)
-          if (!client) {
-            local.write(Buffer.from([0x05, 0x01, 0x00, 0x01, 0, 0, 0, 0, 0, 0]))
-            local.end()
-            return
-          }
-          client.forwardOut('127.0.0.1', 0, target.host, target.port, (err, stream) => {
-            if (err) {
-              // Reply with a generic SOCKS failure (0x05 0x01 0x00 0x01
-              // …) and close. Most clients will surface a clear error.
+          return this.acquireClient(entry.sessionId).then((lease) => {
+            if (!lease) {
               local.write(Buffer.from([0x05, 0x01, 0x00, 0x01, 0, 0, 0, 0, 0, 0]))
               local.end()
               return
             }
-            // Reply success (VER=5, REP=0, RSV=0, ATYP=1 IPv4, 0.0.0.0:0)
-            // before piping — clients won't start sending the proxied
-            // payload until they see this.
-            local.write(Buffer.from([0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0]))
-            this.pipeSocket(entry.forward.id, local, stream)
+            if (local.destroyed) {
+              lease.release?.()
+              return
+            }
+            local.once('close', () => lease.release?.())
+            lease.client.forwardOut('127.0.0.1', 0, target.host, target.port, (err, stream) => {
+              if (local.destroyed) {
+                try {
+                  stream?.end()
+                } catch {
+                  /* ignore */
+                }
+                lease.release?.()
+                return
+              }
+              if (err) {
+                lease.release?.()
+                // Reply with a generic SOCKS failure (0x05 0x01 0x00 0x01
+                // …) and close. Most clients will surface a clear error.
+                local.write(Buffer.from([0x05, 0x01, 0x00, 0x01, 0, 0, 0, 0, 0, 0]))
+                local.end()
+                return
+              }
+              // Reply success (VER=5, REP=0, RSV=0, ATYP=1 IPv4, 0.0.0.0:0)
+              // before piping — clients won't start sending the proxied
+              // payload until they see this.
+              local.write(Buffer.from([0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0]))
+              this.pipeSocket(entry.forward.id, local, stream, lease.release)
+            })
           })
         })
         .catch(() => {
@@ -168,7 +228,12 @@ export class PortForwardManager {
     })
   }
 
-  private pipeSocket(id: string, local: Socket, stream: import('stream').Duplex): void {
+  private pipeSocket(
+    id: string,
+    local: Socket,
+    stream: import('stream').Duplex,
+    release?: () => void
+  ): void {
     const entry = this.forwards.get(id)
     local.on('data', (d) => {
       if (entry) entry.bytesIn += d.length
@@ -177,7 +242,10 @@ export class PortForwardManager {
       if (entry) entry.bytesOut += d.length
     })
     local.pipe(stream).pipe(local)
+    let closed = false
     const closeBoth = () => {
+      if (closed) return
+      closed = true
       try {
         local.end()
       } catch {
@@ -188,6 +256,7 @@ export class PortForwardManager {
       } catch {
         /* ignore */
       }
+      release?.()
     }
     local.on('close', closeBoth)
     stream.on('close', closeBoth)

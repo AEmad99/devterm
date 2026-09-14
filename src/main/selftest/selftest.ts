@@ -3,7 +3,7 @@ import { promises as fsp, writeSync } from 'fs'
 import os from 'os'
 import { join } from 'path'
 import { Server } from 'ssh2'
-import type { AddressInfo } from 'net'
+import { createConnection, type AddressInfo } from 'net'
 import { dialog } from 'electron'
 import { PtyManager, defaultShell } from '../pty/manager'
 import { resolveBundledAgentCli, resolveBundledNodeBin } from '../agent/launch'
@@ -54,7 +54,9 @@ function testLocalShell(): Promise<void> {
     // Strip ANSI/control bytes so the ConPTY pre-shell handshake (pure escape
     // sequences) never counts as "the prompt rendered".
     const printable = () =>
-      buf.replace(/\x1b\][^\x1b]*(?:\x07|\x1b\\)|\x1b\[[0-9;?<=>]*[!-/]*[@-~]|[\x00-\x1f\x7f]/g, '').trim()
+      buf
+        .replace(/\x1b\][^\x1b]*(?:\x07|\x1b\\)|\x1b\[[0-9;?<=>]*[!-/]*[@-~]|[\x00-\x1f\x7f]/g, '')
+        .trim()
     const start = Date.now()
     // Windows PowerShell 5.1 can take ~2-4s to render its first prompt on a
     // loaded machine; typing before PSReadLine is ready races the shell's own
@@ -70,9 +72,14 @@ function testLocalShell(): Promise<void> {
         mgr.input(id, cmd)
         const checkAt = Date.now() + 6000
         const waitForResult = () => {
-          const notRecognized = /not recognized|CommandNotFoundException|command not found/i.test(buf)
+          const notRecognized = /not recognized|CommandNotFoundException|command not found/i.test(
+            buf
+          )
           if ((buf.includes('DEVTERM_CMD_OK') && !notRecognized) || Date.now() > checkAt) {
-            check('cd/ls/pwd/echo run in local shell', buf.includes('DEVTERM_CMD_OK') && !notRecognized)
+            check(
+              'cd/ls/pwd/echo run in local shell',
+              buf.includes('DEVTERM_CMD_OK') && !notRecognized
+            )
             // OSC 7 working-directory reporting (powers the file explorer sidebar).
             const osc7 = /\x1b\]7;file:\/\/[^\x07\x1b]*/.exec(buf)
             check(
@@ -242,7 +249,19 @@ function startMockServer(scenario: Scenario): Promise<{ port: number; close: () 
             // exec channel. Keep it open and echo input until the manager
             // disconnects, just like the real OpenSSH server.
             stream.write('mock-shell-ready\r\n')
-            stream.on('data', (d: Buffer) => stream.write(d))
+            stream.on('data', (d: Buffer) => {
+              const input = d.toString()
+              if (input.includes('DEVTERM_TEST_DROP_SHELL')) {
+                stream.end()
+                return
+              }
+              if (input.includes('DEVTERM_TEST_EXIT_SHELL')) {
+                stream.exit(0)
+                stream.end()
+                return
+              }
+              stream.write(d)
+            })
             return
           }
           if (scenario === 'linux') {
@@ -276,10 +295,13 @@ function startMockServer(scenario: Scenario): Promise<{ port: number; close: () 
 async function testSshScenario(scenario: Scenario): Promise<void> {
   const srv = await startMockServer(scenario)
   let shellData = ''
+  let shellExits = 0
   const statuses: SSHStatus[] = []
   const mgr = new SSHManager({
     onData: (_id, d) => (shellData += d),
-    onExit: () => {},
+    onExit: () => {
+      shellExits += 1
+    },
     onStatus: (_id, s) => statuses.push(s)
   })
 
@@ -302,6 +324,50 @@ async function testSshScenario(scenario: Scenario): Promise<void> {
     mgr.input(sessionId, 'whoami\n')
     await new Promise((r) => setTimeout(r, 400))
     check(`remote shell channel echoes (${scenario})`, shellData.includes('mock-shell-ready'))
+    if (scenario === 'windows') {
+      shellData = ''
+      mgr.input(sessionId, 'DEVTERM_TEST_DROP_SHELL\r')
+      const recoveryDeadline = Date.now() + 3000
+      while (!shellData.includes('mock-shell-ready') && Date.now() < recoveryDeadline) {
+        await new Promise((r) => setTimeout(r, 50))
+      }
+      check(
+        'Windows shell channel recovers without closing the SSH session',
+        shellData.includes('mock-shell-ready') && shellExits === 0
+      )
+      shellData = ''
+      mgr.input(sessionId, 'DEVTERM_TEST_EXIT_SHELL\r')
+      const exitDeadline = Date.now() + 1000
+      while (shellExits === 0 && Date.now() < exitDeadline) {
+        await new Promise((r) => setTimeout(r, 50))
+      }
+      await new Promise((r) => setTimeout(r, 400))
+      check(
+        'Windows shell exit is not automatically recovered',
+        shellExits === 1 && !shellData.includes('mock-shell-ready')
+      )
+
+      await mgr.openShell(sessionId, 80, 24)
+      await new Promise((r) => setTimeout(r, 100))
+      for (let attempt = 2; attempt <= 3; attempt += 1) {
+        shellData = ''
+        mgr.input(sessionId, 'DEVTERM_TEST_DROP_SHELL\r')
+        const retryDeadline = Date.now() + 4000
+        while (!shellData.includes('mock-shell-ready') && Date.now() < retryDeadline) {
+          await new Promise((r) => setTimeout(r, 50))
+        }
+      }
+      shellData = ''
+      mgr.input(sessionId, 'DEVTERM_TEST_DROP_SHELL\r')
+      const exhaustedDeadline = Date.now() + 1000
+      while (shellExits < 2 && Date.now() < exhaustedDeadline) {
+        await new Promise((r) => setTimeout(r, 50))
+      }
+      check(
+        'Windows shell recovery stops after three attempts per minute',
+        shellExits === 2 && !shellData.includes('mock-shell-ready')
+      )
+    }
     mgr.disconnect(sessionId)
   } catch (e) {
     check(`ssh scenario ${scenario}`, false, String((e as Error).message || e))
@@ -320,9 +386,12 @@ async function testLiveWindowsHost(): Promise<void> {
   const port = Number(process.env.DEVTERM_LIVE_WINDOWS_PORT || 22)
   const username = process.env.DEVTERM_LIVE_WINDOWS_USER || 'Administrator'
   let shellData = ''
+  let shellExits = 0
   const mgr = new SSHManager({
     onData: (_id, data) => (shellData += data),
-    onExit: () => {},
+    onExit: () => {
+      shellExits += 1
+    },
     onStatus: () => {}
   })
   let sessionId: string | undefined
@@ -332,14 +401,22 @@ async function testLiveWindowsHost(): Promise<void> {
   try {
     const connected = await mgr.connect({ host, port, username, password })
     sessionId = connected.sessionId
-    check('live Windows host OS detection', connected.context.os === 'windows', connected.context.detail)
+    check(
+      'live Windows host OS detection',
+      connected.context.os === 'windows',
+      connected.context.detail
+    )
 
     await mgr.openShell(sessionId, 100, 30)
     const promptDeadline = Date.now() + 8000
     while (!shellData.includes('PS ') && Date.now() < promptDeadline) {
       await new Promise((r) => setTimeout(r, 100))
     }
-    check('live Windows PowerShell exec channel stays open', shellData.includes('PS '), shellData.slice(-160))
+    check(
+      'live Windows PowerShell exec channel stays open',
+      shellData.includes('PS '),
+      shellData.slice(-160)
+    )
     check(
       'live Windows prompt setup is not echoed into the terminal',
       !shellData.includes('function prompt {')
@@ -353,6 +430,7 @@ async function testLiveWindowsHost(): Promise<void> {
     }
     check('live Windows interactive command executes', shellData.includes('DEVTERM_LIVE_SHELL_OK'))
 
+    const execStartedAt = Date.now()
     const execResult = await mgr.exec(
       sessionId,
       powershellCommand('Write-Output DEVTERM_LIVE_EXEC_OK'),
@@ -361,15 +439,76 @@ async function testLiveWindowsHost(): Promise<void> {
     check(
       'live Windows one-shot PowerShell exec executes',
       execResult.code === 0 && execResult.stdout.includes('DEVTERM_LIVE_EXEC_OK'),
-      JSON.stringify({ code: execResult.code, stdout: execResult.stdout.trim(), stderr: execResult.stderr.trim() })
+      JSON.stringify({
+        code: execResult.code,
+        stdout: execResult.stdout.trim(),
+        stderr: execResult.stderr.trim()
+      })
     )
     check(
       'live Windows one-shot output has no CLIXML marker',
       !execResult.stderr.includes('#< CLIXML')
     )
+    logLine(`INFO live Windows command compatibility connection — ${Date.now() - execStartedAt}ms`)
+    shellData = ''
+    mgr.input(sessionId, 'Write-Output DEVTERM_LIVE_SHELL_AFTER_EXEC\r')
+    const afterExecDeadline = Date.now() + 5000
+    while (!shellData.includes('DEVTERM_LIVE_SHELL_AFTER_EXEC') && Date.now() < afterExecDeadline) {
+      await new Promise((r) => setTimeout(r, 100))
+    }
+    check(
+      'live Windows terminal remains interactive after an app command',
+      shellData.split('DEVTERM_LIVE_SHELL_AFTER_EXEC').length - 1 >= 2
+    )
 
     const listing = await listRemote(await mgr.getSftp(sessionId), '/C/Users/Administrator')
-    check('live Windows SFTP path works', listing.path === '/C/Users/Administrator' && listing.entries.length > 0)
+    check(
+      'live Windows SFTP path works',
+      listing.path === '/C/Users/Administrator' && listing.entries.length > 0
+    )
+    shellData = ''
+    mgr.input(sessionId, 'Write-Output DEVTERM_LIVE_SHELL_AFTER_SFTP\r')
+    const afterSftpDeadline = Date.now() + 5000
+    while (!shellData.includes('DEVTERM_LIVE_SHELL_AFTER_SFTP') && Date.now() < afterSftpDeadline) {
+      await new Promise((r) => setTimeout(r, 100))
+    }
+    check(
+      'live Windows terminal remains interactive after an SFTP action',
+      shellData.split('DEVTERM_LIVE_SHELL_AFTER_SFTP').length - 1 >= 2
+    )
+
+    const forward = await mgr.forwardManager.add(sessionId, 'local', 0, '127.0.0.1', port)
+    const forwardedBanner = await new Promise<string>((resolve, reject) => {
+      const socket = createConnection(forward.localPort, '127.0.0.1')
+      const timer = setTimeout(() => {
+        socket.destroy()
+        reject(new Error('forwarded SSH banner timed out'))
+      }, 10000)
+      socket.once('data', (data) => {
+        clearTimeout(timer)
+        socket.destroy()
+        resolve(data.toString('utf8'))
+      })
+      socket.once('error', (err) => {
+        clearTimeout(timer)
+        reject(err)
+      })
+    }).catch(() => '')
+    await mgr.forwardManager.remove(forward.id)
+    shellData = ''
+    mgr.input(sessionId, 'Write-Output DEVTERM_LIVE_SHELL_AFTER_FORWARD\r')
+    const afterForwardDeadline = Date.now() + 5000
+    while (
+      !shellData.includes('DEVTERM_LIVE_SHELL_AFTER_FORWARD') &&
+      Date.now() < afterForwardDeadline
+    ) {
+      await new Promise((r) => setTimeout(r, 100))
+    }
+    check(
+      'live Windows terminal remains interactive after port forwarding',
+      shellData.split('DEVTERM_LIVE_SHELL_AFTER_FORWARD').length - 1 >= 2,
+      forwardedBanner.startsWith('SSH-') ? 'forward target reached' : 'forward target unavailable'
+    )
 
     const context = mgr.getContext(sessionId)!
     bridge = new McpBridge({
@@ -392,6 +531,18 @@ async function testLiveWindowsHost(): Promise<void> {
       await mcpClient.callTool({ name: 'run_command', arguments: { command: 'hostname' } })
     )
     check('live Windows MCP run_command reaches host', hostResult.includes('exit_code: 0'))
+
+    shellData = ''
+    mgr.input(sessionId, 'exit\r')
+    const liveExitDeadline = Date.now() + 5000
+    while (shellExits === 0 && Date.now() < liveExitDeadline) {
+      await new Promise((r) => setTimeout(r, 100))
+    }
+    await new Promise((r) => setTimeout(r, 500))
+    check(
+      'live Windows exit closes the shell instead of respawning it',
+      shellExits === 1 && !shellData.includes('recovering')
+    )
   } catch (e) {
     check('live Windows host acceptance', false, String((e as Error).message || e))
   } finally {
@@ -860,7 +1011,10 @@ export async function runSelfTest(): Promise<boolean> {
   // (equivalent to clicking "Trust and save"): the TOFU status flow still runs,
   // and each scenario removes its mock entry from known_hosts afterwards.
   const realShowMessageBox = dialog.showMessageBox
-  dialog.showMessageBox = (async () => ({ response: 0, checkboxChecked: false })) as typeof dialog.showMessageBox
+  dialog.showMessageBox = (async () => ({
+    response: 0,
+    checkboxChecked: false
+  })) as typeof dialog.showMessageBox
   void realShowMessageBox
 
   console.log('=== DevTerm self-test ===  defaultShell=' + defaultShell())

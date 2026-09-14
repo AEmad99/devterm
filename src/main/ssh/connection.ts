@@ -1,12 +1,36 @@
 import { dialog } from 'electron'
 import { readFileSync } from 'fs'
 import { Socket } from 'net'
-import { Client, type ConnectConfig } from 'ssh2'
+import { Client, type ConnectConfig, type KexAlgorithm } from 'ssh2'
 import type { SSHHop, SSHStatus } from '@shared/types'
 import { trustHostKey, verifyHostKey } from './knownHosts'
 
 /** How long a bare TCP connect may take before we give up (OS SYN timeouts run ~2min). */
 const TCP_CONNECT_TIMEOUT_MS = 15000
+
+const LEGACY_WINDOWS_KEX: KexAlgorithm[] = [
+  'curve25519-sha256@libssh.org',
+  'curve25519-sha256',
+  'ecdh-sha2-nistp256',
+  'ecdh-sha2-nistp384',
+  'ecdh-sha2-nistp521',
+  'diffie-hellman-group14-sha256',
+  'diffie-hellman-group15-sha512',
+  'diffie-hellman-group16-sha512',
+  'diffie-hellman-group17-sha512',
+  'diffie-hellman-group18-sha512',
+  // Old Win32-OpenSSH releases often offer fixed group14/SHA-1 and the much
+  // slower group-exchange/SHA-256. Keep all modern fixed-group options first,
+  // then narrowly allow group14/SHA-1 on auxiliary transports after the target
+  // is known to be Windows. Never enable group1 or group-exchange/SHA-1.
+  'diffie-hellman-group14-sha1',
+  'diffie-hellman-group-exchange-sha256'
+]
+
+export interface EstablishOptions {
+  /** Use the low-latency KEX order for auxiliary clients on a known Windows host. */
+  preferLegacyWindowsKex?: boolean
+}
 
 function authConfig(hop: SSHHop): Partial<ConnectConfig> {
   const cfg: Partial<ConnectConfig> = {}
@@ -78,7 +102,8 @@ async function promptTrustHostKey(hostId: string, fingerprint: string): Promise<
 async function connectHop(
   hop: SSHHop,
   sock: NodeJS.ReadableStream | undefined,
-  onStatus: (s: SSHStatus) => void
+  onStatus: (s: SSHStatus) => void,
+  options: EstablishOptions = {}
 ): Promise<Client> {
   // Direct hops dial their own TCP_NODELAY socket; tunneled hops reuse the
   // bastion's forwarded stream (whose underlying socket already has NoDelay set).
@@ -105,6 +130,7 @@ async function connectHop(
       // Windows OpenSSH / older servers still offer ssh-rsa (and rarely ssh-dss).
       // Keep modern keys first; omit a category and ssh2 uses its defaults.
       algorithms: {
+        ...(options.preferLegacyWindowsKex ? { kex: LEGACY_WINDOWS_KEX } : {}),
         serverHostKey: [
           'ssh-ed25519',
           'ecdsa-sha2-nistp256',
@@ -164,10 +190,11 @@ export interface EstablishedClient {
  */
 export async function establish(
   profile: { jump?: SSHHop } & SSHHop,
-  onStatus: (s: SSHStatus) => void
+  onStatus: (s: SSHStatus) => void,
+  options: EstablishOptions = {}
 ): Promise<EstablishedClient> {
   if (!profile.jump) {
-    const client = await connectHop(profile, undefined, onStatus)
+    const client = await connectHop(profile, undefined, onStatus, options)
     return { client }
   }
 
@@ -179,7 +206,7 @@ export async function establish(
     })
   })
   try {
-    const client = await connectHop(profile, stream, onStatus)
+    const client = await connectHop(profile, stream, onStatus, options)
     return { client, jump }
   } catch (err) {
     jump.end()

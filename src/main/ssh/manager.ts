@@ -55,6 +55,11 @@ interface Session {
   sftpClient?: Client
   sftpJump?: Client
   sftpClientInflight?: Promise<Client>
+  forwardClient?: Client
+  forwardJump?: Client
+  forwardClientInflight?: Promise<Client>
+  forwardRefs?: number
+  forwardIdleTimer?: NodeJS.Timeout
   shell?: ClientChannel
   /** Last requested terminal channel, retained across transport reconnects. */
   shellRequest?: ShellRequest
@@ -74,6 +79,11 @@ interface Session {
   sftpInflight?: Promise<SFTPWrapper>
   /** In-flight shell open; concurrent openShell callers share this promise. */
   shellInflight?: Promise<void>
+  /** Coalesces recovery when only the Windows interactive channel closes. */
+  shellRecoveryTimer?: NodeJS.Timeout
+  /** Bounded recovery attempts for repeatedly dropped Windows shell channels. */
+  shellRecoveryAttempts?: number
+  shellRecoveryWindowStartedAt?: number
   context: HostContext
   /**
    * The original profile the session was opened with. Kept so the
@@ -251,9 +261,43 @@ export class SSHManager {
    */
   private statusListeners = new Map<string, Set<SSHStatusListener>>()
   /** Port forwards bound to live SSH sessions. */
-  forwardManager = new PortForwardManager((sessionId) => this.sessions.get(sessionId)?.client)
+  forwardManager = new PortForwardManager(
+    (sessionId) => Boolean(this.sessions.get(sessionId)?.client),
+    (sessionId) => this.acquirePortForwardClient(sessionId)
+  )
 
   constructor(private handlers: SSHHandlers) {}
+
+  private async acquirePortForwardClient(
+    sessionId: string
+  ): Promise<{ client: Client; release?: () => void } | undefined> {
+    const s = this.sessions.get(sessionId)
+    if (!s?.client || s.closing || s.reconnect) return undefined
+    if (s.context.os !== 'windows') return { client: s.client }
+
+    const client = await this.ensureWindowsForwardClient(sessionId)
+    if (this.sessions.get(sessionId) !== s || s.forwardClient !== client) return undefined
+    if (s.forwardIdleTimer) {
+      clearTimeout(s.forwardIdleTimer)
+      s.forwardIdleTimer = undefined
+    }
+    s.forwardRefs = (s.forwardRefs ?? 0) + 1
+    let released = false
+    return {
+      client,
+      release: () => {
+        if (released) return
+        released = true
+        if (s.forwardClient !== client) return
+        s.forwardRefs = Math.max(0, (s.forwardRefs ?? 1) - 1)
+        if (s.forwardRefs > 0 || s.forwardIdleTimer) return
+        s.forwardIdleTimer = setTimeout(() => {
+          s.forwardIdleTimer = undefined
+          if (s.forwardClient === client && !s.forwardRefs) this.closeWindowsForwardClient(s)
+        }, 30_000)
+      }
+    }
+  }
 
   /**
    * Subscribe to status events for a single SSH session. Returns a disposer.
@@ -381,12 +425,17 @@ export class SSHManager {
       clearTimeout(s.tmuxResumeTimer)
       s.tmuxResumeTimer = undefined
     }
+    if (s.shellRecoveryTimer) {
+      clearTimeout(s.shellRecoveryTimer)
+      s.shellRecoveryTimer = undefined
+    }
     s.tmuxClientRunning = false
     s.shell = undefined
     s.shellDecoder = undefined
     s.shellInflight = undefined
     this.closeAuxClient(s, 'exec')
     this.closeAuxClient(s, 'sftp')
+    this.closeWindowsForwardClient(s)
     s.sftp = undefined
     s.sftpInflight = undefined
   }
@@ -408,6 +457,25 @@ export class SSHManager {
     if (!client) return
     // The auxiliary close listener only clears auxiliary state. Removing it
     // here avoids a late `close` event touching a session being torn down.
+    client.removeAllListeners('close')
+    try {
+      client.end()
+      jump?.end()
+    } catch {
+      /* ignore */
+    }
+  }
+
+  private closeWindowsForwardClient(s: Session): void {
+    const client = s.forwardClient
+    const jump = s.forwardJump
+    if (s.forwardIdleTimer) clearTimeout(s.forwardIdleTimer)
+    s.forwardClient = undefined
+    s.forwardJump = undefined
+    s.forwardClientInflight = undefined
+    s.forwardRefs = 0
+    s.forwardIdleTimer = undefined
+    if (!client) return
     client.removeAllListeners('close')
     try {
       client.end()
@@ -441,7 +509,8 @@ export class SSHManager {
       },
       () => {
         /* Auxiliary connection failures belong to the operation, not the shell. */
-      }
+      },
+      { preferLegacyWindowsKex: true }
     ).then(({ client, jump }) => {
       const current = this.sessions.get(sessionId)
       if (current !== s || s.closing || s.client !== primary) {
@@ -497,7 +566,8 @@ export class SSHManager {
       },
       () => {
         /* Auxiliary connection failures belong to the operation, not the shell. */
-      }
+      },
+      { preferLegacyWindowsKex: true }
     ).then(({ client, jump }) => {
       const current = this.sessions.get(sessionId)
       if (current !== s || s.closing || s.client !== primary) {
@@ -528,6 +598,72 @@ export class SSHManager {
       },
       () => {
         if (s.sftpClientInflight === inflight) s.sftpClientInflight = undefined
+      }
+    )
+    return inflight
+  }
+
+  /**
+   * Keep one bounded forwarding transport per Windows session. Unlike shell
+   * session channels, direct-tcpip channels are intended to multiplex. If a
+   * particular server rejects them it may reset this pool, but never the
+   * operator's visible terminal transport.
+   */
+  private ensureWindowsForwardClient(sessionId: string): Promise<Client> {
+    const s = this.sessions.get(sessionId)
+    if (!s) return Promise.reject(new Error('unknown session'))
+    if (s.forwardClient) return Promise.resolve(s.forwardClient)
+    if (s.forwardClientInflight) return s.forwardClientInflight
+    if (!s.client) return Promise.reject(new Error(RECONNECTING_ERR))
+
+    const primary = s.client
+    const inflight = establish(
+      {
+        host: s.profile.host,
+        port: s.profile.port,
+        username: s.profile.username,
+        password: s.profile.password,
+        privateKeyPath: s.profile.privateKeyPath,
+        passphrase: s.profile.passphrase,
+        jump: s.profile.jump
+      },
+      () => {
+        /* Forwarding failures belong to the local stream, not the shell. */
+      },
+      { preferLegacyWindowsKex: true }
+    ).then(({ client, jump }) => {
+      const current = this.sessions.get(sessionId)
+      if (current !== s || s.closing || s.client !== primary) {
+        client.end()
+        jump?.end()
+        throw new Error(RECONNECTING_ERR)
+      }
+      s.forwardClient = client
+      s.forwardJump = jump
+      s.forwardRefs = 0
+      client.on('close', () => {
+        if (s.forwardClient === client) {
+          if (s.forwardIdleTimer) clearTimeout(s.forwardIdleTimer)
+          s.forwardClient = undefined
+          s.forwardJump = undefined
+          s.forwardRefs = 0
+          s.forwardIdleTimer = undefined
+          try {
+            jump?.end()
+          } catch {
+            /* ignore */
+          }
+        }
+      })
+      return client
+    })
+    s.forwardClientInflight = inflight
+    void inflight.then(
+      () => {
+        if (s.forwardClientInflight === inflight) s.forwardClientInflight = undefined
+      },
+      () => {
+        if (s.forwardClientInflight === inflight) s.forwardClientInflight = undefined
       }
     )
     return inflight
@@ -760,17 +896,6 @@ export class SSHManager {
     return Math.min(policy.maxDelayMs, Math.max(0, Math.floor(raw)))
   }
 
-  /**
-   * Return the session's live ssh2 client (looked up, never instantiated). The
-   * caller MUST NOT cache the result across reconnects — the client object is
-   * replaced by the auto-reconnect loop, and features bound to a session
-   * (SFTP, port forwards, agent tools) re-fetch this each time. Used by
-   * `port-forward.ts` to open `forwardOut` channels on the existing client.
-   */
-  getClient(sessionId: string): Client | undefined {
-    return this.sessions.get(sessionId)?.client
-  }
-
   openShell(
     sessionId: string,
     cols: number,
@@ -822,9 +947,16 @@ export class SSHManager {
           }
           this.handlers.onData(sessionId, chunk)
         }
+        let receivedExit = false
         channel
           .on('data', (d: Buffer) => {
             emitShellData(dec.decode(d, { stream: true }))
+          })
+          .on('exit', () => {
+            receivedExit = true
+          })
+          .on('error', (err: Error) => {
+            console.warn(`[ssh] shell channel error (${sessionId}):`, err.message)
           })
           .on('close', () => {
             s.shell = undefined
@@ -838,6 +970,15 @@ export class SSHManager {
             // renderer the connection died — resume a login shell instead.
             if (s.tmuxClientRunning && s.client && !s.closing && !s.reconnect) {
               this.scheduleResumeAfterTmux(sessionId)
+              return
+            }
+            // Win32-OpenSSH can drop the long-lived PowerShell exec channel
+            // without closing the SSH transport. Do not report the whole
+            // connection dead: reopen the shell and preserve input typed while
+            // the replacement channel is negotiating. A real `exit` event is
+            // still treated as the operator/process intentionally leaving.
+            if (s.context.os === 'windows' && !receivedExit) {
+              this.scheduleWindowsShellRecovery(sessionId, s, client)
               return
             }
             this.handlers.onExit(sessionId)
@@ -904,6 +1045,65 @@ export class SSHManager {
     })
     s.shellInflight = inflight
     return inflight
+  }
+
+  private scheduleWindowsShellRecovery(sessionId: string, s: Session, client: Client): void {
+    if (s.shellRecoveryTimer || s.closing || s.reconnect || s.client !== client) return
+    const request = s.shellRequest
+    if (!request) {
+      this.handlers.onExit(sessionId)
+      return
+    }
+    const now = Date.now()
+    if (
+      s.shellRecoveryWindowStartedAt === undefined ||
+      now - s.shellRecoveryWindowStartedAt > 60_000
+    ) {
+      s.shellRecoveryWindowStartedAt = now
+      s.shellRecoveryAttempts = 0
+    }
+    const attempt = (s.shellRecoveryAttempts ?? 0) + 1
+    s.shellRecoveryAttempts = attempt
+    if (attempt > 3) {
+      this.handlers.onData(
+        sessionId,
+        '\r\n\x1b[31m[Windows shell repeatedly closed; automatic recovery stopped]\x1b[0m\r\n'
+      )
+      this.handlers.onExit(sessionId)
+      return
+    }
+    const delayMs = [250, 1000, 3000][attempt - 1]
+    s.shellRecoveryTimer = setTimeout(() => {
+      s.shellRecoveryTimer = undefined
+      if (
+        this.sessions.get(sessionId) !== s ||
+        s.closing ||
+        s.reconnect ||
+        s.client !== client ||
+        s.shell
+      ) {
+        return
+      }
+      this.handlers.onData(
+        sessionId,
+        `\r\n\x1b[90m[DevTerm: Windows shell channel closed; recovering (${attempt}/3)…]\x1b[0m\r\n`
+      )
+      void this.openShell(sessionId, request.cols, request.rows, {
+        detached: request.detached,
+        tmuxSession: request.tmuxSession
+      }).catch((err) => {
+        if (this.sessions.get(sessionId) !== s || s.closing || s.reconnect || s.client !== client) {
+          return
+        }
+        this.handlers.onData(
+          sessionId,
+          `\r\n\x1b[31m[Windows shell recovery failed: ${(err as Error).message}; reconnecting SSH]\x1b[0m\r\n`
+        )
+        // A client that cannot open a replacement shell is no longer useful.
+        // Ending it drives the normal transport-close/reconnect path.
+        client.end()
+      })
+    }, delayMs)
   }
 
   /**
@@ -1291,6 +1491,10 @@ export class SSHManager {
       clearTimeout(s.tmuxResumeTimer)
       s.tmuxResumeTimer = undefined
     }
+    if (s.shellRecoveryTimer) {
+      clearTimeout(s.shellRecoveryTimer)
+      s.shellRecoveryTimer = undefined
+    }
     // Cancel any pending shell-setup timers so they don't write to a closed channel.
     if (s.setupTimers) {
       for (const t of s.setupTimers) clearTimeout(t)
@@ -1307,6 +1511,7 @@ export class SSHManager {
     // but auxiliary Windows clients may still be finishing a command.
     this.closeAuxClient(s, 'exec')
     this.closeAuxClient(s, 'sftp')
+    this.closeWindowsForwardClient(s)
     if (s.client) {
       try {
         s.shell?.close()
