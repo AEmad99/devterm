@@ -3,6 +3,14 @@
 All notable changes to DevTerm are documented here. The most recent section is
 at the top. Dates are ISO `YYYY-MM-DD`.
 
+## 1.3.28 — 2026-09-15
+
+### Fixed
+
+- Muse agent panes inherit the operator's safe model, reasoning, and TUI theme preferences while keeping permissions, hooks, and unrelated MCP servers isolated.
+- Embedded agent terminals use the complete application ANSI palette, restoring provider syntax highlighting and consistent colors.
+- Qualified DevTerm Agent model selections no longer conflict with a separate provider flag and fall back to the wrong model.
+
 ## 1.3.27 — 2026-09-15
 
 ### Added
