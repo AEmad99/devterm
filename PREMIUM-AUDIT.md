@@ -4,7 +4,7 @@ Date: 2026-09-08. Full competitive + UI/UX audit with gap analysis and 30/60/90-
 
 **Verdict: strong prosumer terminal with a real moat, not premium/enterprise-grade yet.**
 The zero-install remote agent (self-hosted MCP bridge, nothing installed on the remote,
-no remote internet needed) plus a built-in multi-provider agent with 7 CLI fallbacks is
+no remote internet needed) plus a built-in multi-provider agent with 8 CLI fallbacks is
 genuinely differentiated. But MFA/OTP, SSO, audit, sync, SSH certificates, and RBAC are
 absent in code — not just undocumented — and those are enterprise deal-blockers.
 
@@ -60,8 +60,8 @@ checkout/branch/fetch/pull/push/commit/stage/discard/tag/remote/merge), remote o
 the session exec channel, 5s poll, status-cache invalidation, graph view. Caveat: all in
 one `git/index.ts` — a depth/maintainability flag.
 
-**Agent bridge.** Bundled multi-provider agent + 7 external CLI fallbacks (pi, claude,
-opencode, kimi, grok, codex, antigravity), each in a local PTY reaching the remote only
+**Agent bridge.** Bundled multi-provider agent + 8 external CLI fallbacks (pi, claude,
+opencode, kimi, grok, codex, antigravity, muse), each in a local PTY reaching the remote only
 through the in-process MCP bridge on 127.0.0.1 with a random bearer token. Remote agents
 get host tools (`ping`, `get_host_context`, `run_command`, `list_dir`, `read_file`,
 `write_file`); local agents use CLI-native tools. 11 browser tools with agent-owned vs

@@ -7,6 +7,7 @@ import { resolveKimiBin } from './kimi-launch'
 import { resolveGrokBin } from './grok-launch'
 import { resolveCodexBin } from './codex-launch'
 import { resolveAntigravityBin } from './antigravity-launch'
+import { resolveMuseBin } from './muse-launch'
 
 function agentBinLabel(kind: AgentKind): string {
   switch (kind) {
@@ -24,6 +25,8 @@ function agentBinLabel(kind: AgentKind): string {
       return 'Codex'
     case 'antigravity':
       return 'Antigravity'
+    case 'muse':
+      return 'Muse Code'
     default:
       return 'Pi'
   }
@@ -52,6 +55,8 @@ export async function resolveAgentBin(kind: AgentKind): Promise<string | undefin
       return resolveCodexBin()
     case 'antigravity':
       return resolveAntigravityBin()
+    case 'muse':
+      return resolveMuseBin()
   }
 }
 
@@ -76,7 +81,10 @@ export interface NormalizedHandoffModel {
  * takes free-form model ids/aliases and validates them visibly itself, so the
  * value passes through untouched.
  */
-export function normalizeHandoffModel(kind: AgentKind, model: string | undefined): NormalizedHandoffModel {
+export function normalizeHandoffModel(
+  kind: AgentKind,
+  model: string | undefined
+): NormalizedHandoffModel {
   if (!model) return { model: undefined, warnings: [] }
   if (kind === 'opencode' && !isOpencodeModelRef(model)) {
     return {

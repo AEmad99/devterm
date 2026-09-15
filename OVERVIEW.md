@@ -2,7 +2,7 @@
 
 **DevTerm** is a cross-platform desktop application that combines an SSH/SFTP terminal,
 a tiling pane workspace, a file editor, an in-app browser, and a built-in multi-provider
-**DevTerm Agent** (plus Claude / Codex / Grok / OpenCode / Kimi / pi / Antigravity CLIs)
+**DevTerm Agent** (plus Claude / Codex / Grok / OpenCode / Kimi / pi / Antigravity / Muse Code CLIs)
 that can operate on connected remote hosts *or* in a local folder. Remote work goes
 through an MCP bridge the app hosts locally, so the remote host needs nothing installed
 and no outbound internet connection.
@@ -60,7 +60,7 @@ Model Context Protocol SDK for the agent bridge.
 
 ### 🤖 DevTerm Agent (MCP bridge)
 - Default bundled multi-provider runtime, plus external CLIs: Claude, Codex, Grok,
-  OpenCode, Kimi, pi, Antigravity. Open Agent from the pane tab strip; dock, float,
+  OpenCode, Kimi, pi, Antigravity, Muse Code. Open Agent from the pane tab strip; dock, float,
   or hide without killing the process.
 - **Remote:** host tools (`run_command`, `read_file`, `write_file`, `list_dir`,
   `get_host_context`) over a per-session MCP server on the **same** SSH connection.

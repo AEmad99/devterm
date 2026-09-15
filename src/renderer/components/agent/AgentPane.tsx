@@ -101,9 +101,7 @@ export default function AgentPane({
   const storeRestartNonce = useSessions(
     (s) => s.sessions.find((x) => x.id === sessionId)?.agentRestartNonce ?? 0
   )
-  const restartNonce = mirrorToStore
-    ? storeRestartNonce
-    : localRestartNonce + (restartSignal ?? 0)
+  const restartNonce = mirrorToStore ? storeRestartNonce : localRestartNonce + (restartSignal ?? 0)
   const hostClosed = useSessions((s) => s.sessions.find((x) => x.id === sessionId)?.closed ?? false)
   const storeSessionKind = useSessions(
     (s) => s.sessions.find((x) => x.id === sessionId)?.kind ?? 'remote'
@@ -269,7 +267,9 @@ export default function AgentPane({
                         ? 'built-in tools off, MCP devterm server'
                         : kind === 'antigravity'
                           ? 'use mcp__devterm__* tools for host work'
-                          : 'built-in tools off'
+                          : kind === 'muse'
+                            ? 'Muse --yolo; built-in shell and writes off, MCP devterm server'
+                            : 'built-in tools off'
           term.write(
             isLocal
               ? `\x1b[90m${toolNote}${url ? ` | browser MCP: ${url}` : ''}\x1b[0m\r\n`
@@ -317,9 +317,8 @@ export default function AgentPane({
               // A crash while the operator is elsewhere should surface like a
               // finished turn; an intentional Stop unmounts first, so this
               // only fires for genuine exits.
-              const stillOwned = !!useSessions
-                .getState()
-                .sessions.find((x) => x.id === sessionId)?.agentUiMode
+              const stillOwned = !!useSessions.getState().sessions.find((x) => x.id === sessionId)
+                ?.agentUiMode
               if (stillOwned) {
                 signalAttention(
                   sessionId,
@@ -439,9 +438,20 @@ export default function AgentPane({
               : bridge === 'exited'
                 ? { tone: 'idle', text: 'Agent exited' }
                 : { tone: 'down', text: 'Failed to start' }
-  // Restart is available whenever the agent is alive (not only on failure):
-  // a CLI stuck on "Waiting for agent" can be recovered without docking first.
-  const canRestart = !hostClosed
+  // Restart is a recovery action, not a manual control for a healthy agent.
+  // During an SSH reconnect the bridge reports "disconnected" while the main
+  // process is already recovering it; a force restart here would interrupt
+  // that recovery and can strand the agent. Waiting, failed, and exited
+  // states still expose retry because the agent has no live connection there.
+  const sshReconnectInProgress =
+    bridge === 'disconnected' &&
+    /^SSH (?:disconnected; )?reconnecting/.test(bridgeMessage ?? '')
+  const canRestart =
+    !hostClosed &&
+    bridge !== 'connecting' &&
+    bridge !== 'starting' &&
+    bridge !== 'connected' &&
+    !sshReconnectInProgress
   const statusTitle = [
     bridgeMessage,
     mcpUrl,

@@ -224,6 +224,8 @@ export function agentKindLabel(kind: AgentKind): string {
       return 'Codex'
     case 'antigravity':
       return 'Antigravity'
+    case 'muse':
+      return 'Muse Code'
     default:
       return 'Pi'
   }
@@ -246,6 +248,8 @@ export function agentKindGlyph(kind: AgentKind): string {
       return 'CX'
     case 'antigravity':
       return 'AG'
+    case 'muse':
+      return 'MU'
     default:
       return 'π'
   }
@@ -255,6 +259,6 @@ export const AGENT_KIND_MENU: { group: string; kinds: AgentKind[] }[] = [
   { group: 'Built in', kinds: ['devterm'] },
   {
     group: 'External CLI',
-    kinds: ['claude', 'pi', 'opencode', 'kimi', 'grok', 'codex', 'antigravity']
+    kinds: ['claude', 'pi', 'opencode', 'kimi', 'grok', 'codex', 'antigravity', 'muse']
   }
 ]

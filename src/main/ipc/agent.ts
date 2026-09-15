@@ -46,6 +46,7 @@ import { buildOpencodeMd, prepareOpencodeLaunch } from '../agent/opencode-launch
 import { buildGrokMd, prepareGrokLaunch } from '../agent/grok-launch'
 import { buildCodexMd, prepareCodexLaunch } from '../agent/codex-launch'
 import { buildAntigravityMd, prepareAntigravityLaunch } from '../agent/antigravity-launch'
+import { buildMuseMd, prepareMuseLaunch } from '../agent/muse-launch'
 import {
   LocalHostBackend,
   SshHostBackend,
@@ -128,7 +129,8 @@ const AGENT_KINDS: readonly AgentOpenOpts['kind'][] = [
   'kimi',
   'grok',
   'codex',
-  'antigravity'
+  'antigravity',
+  'muse'
 ]
 
 function sleep(ms: number): Promise<void> {
@@ -151,6 +153,8 @@ function agentKindLabel(kind: AgentOpenOpts['kind']): string {
       return 'Codex'
     case 'antigravity':
       return 'Antigravity'
+    case 'muse':
+      return 'Muse Code'
     default:
       return 'Pi'
   }
@@ -312,8 +316,7 @@ export function registerAgentIpc(
       }
       const focused = BrowserWindow.getFocusedWindow()
       const isOurs =
-        !!focused &&
-        (focused === getWindow() || [...agentWindows.values()].includes(focused))
+        !!focused && (focused === getWindow() || [...agentWindows.values()].includes(focused))
       if (focused && isOurs && !focused.isDestroyed()) {
         focused.webContents.send(IPC.agentConfirm, req)
       } else {
@@ -742,6 +745,7 @@ export function registerAgentIpc(
       : undefined
     const extras: AgentLaunchExtras = {
       model: opts.model,
+      preferences: opts.preferences,
       effort: opts.effort,
       initialPrompt: opts.initialPrompt,
       resumeSessions: opts.preferences?.resumeSessions !== false,
@@ -837,10 +841,12 @@ export function registerAgentIpc(
                           info,
                           extras
                         )
-                      : await (async () => {
-                          mkdirSync(piOpts.sessionDir, { recursive: true })
-                          return prepareAgentLaunch(remoteBriefing(buildAgentsMd), info, piOpts)
-                        })()
+                      : opts.kind === 'muse'
+                        ? await prepareMuseLaunch(remoteBriefing(buildMuseMd), info, extras)
+                        : await (async () => {
+                            mkdirSync(piOpts.sessionDir, { recursive: true })
+                            return prepareAgentLaunch(remoteBriefing(buildAgentsMd), info, piOpts)
+                          })()
       const { id: ptyId } = pty.create(
         {
           shell: spec.bin,
@@ -1095,7 +1101,8 @@ export function registerAgentIpc(
     // Same hardening as the main window: the float carries the full preload
     // bridge, so its top frame must never navigate away from the app bundle.
     const floatIsAppUrl = (url: string): boolean => {
-      if (process.env.ELECTRON_RENDERER_URL) return url.startsWith(process.env.ELECTRON_RENDERER_URL)
+      if (process.env.ELECTRON_RENDERER_URL)
+        return url.startsWith(process.env.ELECTRON_RENDERER_URL)
       return url.startsWith('file://')
     }
     win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))

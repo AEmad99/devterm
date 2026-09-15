@@ -12,7 +12,8 @@ const AGENT_DISPLAY: Record<AgentKind, string> = {
   kimi: 'Kimi',
   grok: 'Grok',
   codex: 'Codex',
-  antigravity: 'Antigravity'
+  antigravity: 'Antigravity',
+  muse: 'Muse Code'
 }
 
 function agentName(kind: AgentKind | undefined): string {
@@ -170,8 +171,7 @@ export default function ConfirmActionModal() {
 
   const session = sessions.find((x) => x.id === top.sessionId)
   // The floating window has no session store; main supplies a label there.
-  const host =
-    session?.context?.hostname || session?.title || top.sessionLabel || top.sessionId
+  const host = session?.context?.hostname || session?.title || top.sessionLabel || top.sessionId
   const name = agentName(session?.agentKind)
 
   return (

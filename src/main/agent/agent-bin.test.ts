@@ -44,7 +44,16 @@ describe('agent handoff binary pre-check', () => {
   })
 
   it('leaves other CLIs free-form model ids alone', () => {
-    for (const kind of ['kimi', 'antigravity', 'claude', 'codex', 'grok', 'pi', 'devterm'] as const) {
+    for (const kind of [
+      'kimi',
+      'antigravity',
+      'muse',
+      'claude',
+      'codex',
+      'grok',
+      'pi',
+      'devterm'
+    ] as const) {
       assert.deepEqual(normalizeHandoffModel(kind, 'muse spark 1.3 free'), {
         model: 'muse spark 1.3 free',
         warnings: []

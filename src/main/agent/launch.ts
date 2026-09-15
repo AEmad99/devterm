@@ -23,7 +23,7 @@ import type {
 import { buildAgentsMd } from './context'
 import { PI_EXTENSION_SOURCE } from './extension'
 
-/** Extra spawn behavior. Remote launches omit this (temp cwd, MCP host tools). */
+/** Extra spawn behavior. Remote launches omit `nativeLocal` (temp cwd, MCP host tools). */
 export interface AgentLaunchExtras {
   /** Enable the CLI's own fs/shell tools and run in `spawnCwd`. */
   nativeLocal?: boolean
@@ -33,6 +33,8 @@ export interface AgentLaunchExtras {
   appendSystemPrompt?: string
   /** Explicit model override for a one-shot delegated launch. */
   model?: string
+  /** Persisted provider/model selection for CLIs with their own runtime. */
+  preferences?: AgentPreferences
   /** Explicit reasoning effort for a one-shot delegated launch. */
   effort?: AgentEffort
   /** First user message for launchers that accept a trailing prompt. */
@@ -563,7 +565,8 @@ export { buildAgentsMd }
 export function sweepStaleAgentTempDirs(maxAgeMs = 24 * 60 * 60 * 1000): void {
   try {
     for (const entry of readdirSync(tmpdir())) {
-      if (!/^devterm-(agent|pi|claude|kimi|opencode|grok|codex|antigravity)-/.test(entry)) continue
+      if (!/^devterm-(agent|pi|claude|kimi|opencode|grok|codex|antigravity|muse)-/.test(entry))
+        continue
       const full = join(tmpdir(), entry)
       try {
         const stat = statSync(full)

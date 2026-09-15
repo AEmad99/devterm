@@ -2,7 +2,7 @@
 
 A cross-platform desktop **SSH/SFTP terminal** with tiling panes, a file editor, an in-app
 browser, saved connections & workspaces, and a built-in multi-provider **DevTerm Agent** (plus
-optional Claude / Codex / Grok / OpenCode / Kimi / pi / Antigravity CLIs) that can operate on the
+optional Claude / Codex / Grok / OpenCode / Kimi / pi / Antigravity / Muse Code CLIs) that can operate on the
 connected remote host — through an MCP bridge the app hosts itself, so the remote needs nothing
 installed and no internet.
 
@@ -34,7 +34,7 @@ installed and no internet.
 - 🔀 **Git panel** — Warp-style status, stage/commit/push/pull, branches, stash, tags, remotes,
   and a commit graph. Remote repos reuse the session's SSH exec channel.
 - 🤖 **DevTerm Agent** — bundled multi-provider agent (or Claude / Codex / Grok / OpenCode /
-  Kimi / pi / Antigravity). **Remote:** host work goes through MCP tools on the **same** SSH
+  Kimi / pi / Antigravity / Muse Code). **Remote:** host work goes through MCP tools on the **same** SSH
   connection. **Local:** native Read/Write/Bash in the operator's folder; MCP is browser +
   local handoff (`agent_list` / `agent_delegate` / `agent_message`). Open Agent from the pane
   tab strip; dock, float, or hide without killing the process. Permission prompts belong to

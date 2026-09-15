@@ -332,7 +332,9 @@ export type PolicyMode = 'read_only' | 'confirm' | 'full'
  * HTTP MCP entry; `codex` runs the OpenAI Codex CLI wired through a per-session
  * isolated `CODEX_HOME/config.toml` HTTP MCP entry; `antigravity` runs the Google
  * Antigravity CLI (agy) wired through a per-session `.antigravity/mcp.json` HTTP MCP
- * entry. Every agent reaches this host only through DevTerm's MCP bridge.
+ * entry; `muse` runs Meta's Muse Code CLI with an isolated settings file and
+ * streamable HTTP MCP entry. Every agent reaches this host only through DevTerm's
+ * MCP bridge.
  */
 export type AgentKind =
   | 'devterm'
@@ -343,6 +345,7 @@ export type AgentKind =
   | 'grok'
   | 'codex'
   | 'antigravity'
+  | 'muse'
 
 export interface AgentTrustedSkill {
   name: string

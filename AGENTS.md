@@ -2,7 +2,7 @@
 
 Guidance for coding agents working in the DevTerm repository. Read this first; prefer the code over any doc when they disagree, and update this file in the same change when you find drift.
 
-DevTerm is an Electron 29 desktop terminal: local shells (prebuilt node-pty), SSH/SFTP sessions, tiling workspaces, file browsing/editing (CodeMirror 6), an in-app browser, snippets, a Warp-style Git panel, a persistent transfer queue, offline Whisper dictation, global terminal search, and an embedded multi-provider **DevTerm Agent** with seven external CLI fallbacks (`pi`, `claude`, `opencode`, `kimi`, `grok`, `codex`, `antigravity`). Every agent runs in a local PTY and reaches the remote host only through DevTerm's in-process MCP bridge. Stack: electron-vite, TypeScript strict, React 18, Zustand, xterm.js, ssh2, marked + DOMPurify, `@huggingface/transformers`, `@earendil-works/pi-coding-agent` (bundled runtime), a dedicated `node` binary for the agent, electron-updater, zod.
+DevTerm is an Electron 29 desktop terminal: local shells (prebuilt node-pty), SSH/SFTP sessions, tiling workspaces, file browsing/editing (CodeMirror 6), an in-app browser, snippets, a Warp-style Git panel, a persistent transfer queue, offline Whisper dictation, global terminal search, and an embedded multi-provider **DevTerm Agent** with eight external CLI fallbacks (`pi`, `claude`, `opencode`, `kimi`, `grok`, `codex`, `antigravity`, `muse`). Every agent runs in a local PTY and reaches the remote host only through DevTerm's in-process MCP bridge. Stack: electron-vite, TypeScript strict, React 18, Zustand, xterm.js, ssh2, marked + DOMPurify, `@huggingface/transformers`, `@earendil-works/pi-coding-agent` (bundled runtime), a dedicated `node` binary for the agent, electron-updater, zod.
 
 **Version:** `package.json` (currently `1.3.26`). Top-level views: **Terminals** (the always-mounted workspace: group tabs, split panes, local/remote/browser sessions), **Connections**, **Workspaces**, **Snippets**. DevTerm is a normal framed desktop app; the first screen is the terminal, not a marketing page. Release history lives in `CHANGELOG.md` — do not duplicate it here.
 
@@ -49,7 +49,7 @@ Project skills in `.claude/skills/` (load via the skill tool, they carry the exa
 | MCP server / policy | `src/main/mcp/{server,policy}.ts` |
 | MCP tools: host / browser / handoff | `src/main/mcp/{tools,tools-browser,tools-agent}.ts` |
 | Agent browser control | `src/main/browser/*` (control registry, snapshot refs, URL guard), IPC `src/main/ipc/browser-control.ts` |
-| Agent launch (bundled + 7 fallbacks) | `src/main/agent/{launch,context,extension,agent-bin,host-backend}-*.ts` (`claude-`, `codex-`, `opencode-`, `kimi-`, `grok-`, `antigravity-launch.ts`) |
+| Agent launch (bundled + 8 fallbacks) | `src/main/agent/{launch,context,extension,agent-bin,host-backend}-*.ts` (`claude-`, `codex-`, `opencode-`, `kimi-`, `grok-`, `antigravity-`, `muse-launch.ts`) |
 | Agent UI + IPC + broadcast | `AgentPane.tsx`, `agent-window.{html,tsx}`, `lib/agent-ui.ts`, main `src/main/ipc/{agent,broadcast}.ts` |
 | Approval rules & activity | `src/main/agent/{approval-rules,bridge-activity}.ts`, UI `AgentActivityPanel.tsx`, IPC `src/main/ipc/foundation.ts` |
 | Search index | `src/main/search/*` (ANSI strip at ingest) |
@@ -83,9 +83,9 @@ Project skills in `.claude/skills/` (load via the skill tool, they carry the exa
 - **Autosuggest** (`lib/autosuggest.ts` + `Autosuggest.tsx`, history-driven) uses OSC 133 `;B` as the command-input anchor; accepting sends keystrokes to the shell, never writes into the buffer. Requires working prompt hooks.
 - **Find:** per-pane SearchAddon bar via `SearchBar`, opened from the xterm key handler **and** the App global hotkey through `openTerminalFind` / `registerFindOpener` in `lib/terms.ts`. Per-pane find is Ctrl/Cmd+Shift+F; global search is Ctrl/Cmd+Alt+F.
 
-## Agent bridge (DevTerm Agent + 7 fallbacks)
+## Agent bridge (DevTerm Agent + 8 fallbacks)
 
-**Product default:** `agentKind: 'devterm'` — the bundled multi-provider agent (`@earendil-works/pi-coding-agent` + packaged `node` binary), not an external CLI. `AgentKind = 'devterm' | 'claude' | 'pi' | 'opencode' | 'kimi' | 'grok' | 'codex' | 'antigravity'`.
+**Product default:** `agentKind: 'devterm'` — the bundled multi-provider agent (`@earendil-works/pi-coding-agent` + packaged `node` binary), not an external CLI. `AgentKind = 'devterm' | 'claude' | 'pi' | 'opencode' | 'kimi' | 'grok' | 'codex' | 'antigravity' | 'muse'`.
 
 | Kind | Prep | How it reaches MCP |
 | --- | --- | --- |
@@ -97,12 +97,13 @@ Project skills in `.claude/skills/` (load via the skill tool, they carry the exa
 | `grok` | `grok-launch.ts` | Per-session `.grok/config.toml` HTTP MCP; tools as `devterm__*` |
 | `codex` | `codex-launch.ts` | Isolated `CODEX_HOME/config.toml` HTTP MCP; tools as `mcp__devterm__*` |
 | `antigravity` | `antigravity-launch.ts` | Per-session `.antigravity/mcp.json` HTTP MCP for Google `agy` |
+| `muse` | `muse-launch.ts` | Isolated `%LOCALAPPDATA%\\Programs\\muse\\muse.cmd`/PATH launcher, temporary `settings.json` streamable HTTP MCP, `--yolo`; remote native shell/workspace writes disabled |
 
 - MCP bridge (`src/main/mcp/server.ts`) on `127.0.0.1:<random-port>` gated by a random Bearer [REDACTED] MCP launch uses policy mode `full` (no DevTerm confirm modal) — permission prompts belong to the agent CLI. Approval rules (`approval-rules.ts`, `userData/approval-rules.json`, UI under Settings → Agent guardrails) remain a **PRE-CHECK** allow/deny/ask at the MCP boundary. There is no per-session policy picker.
 - **Host tools** (`tools.ts`, remote only, against `SshHostBackend`): `ping`, `get_host_context`, `run_command`, `list_dir`, `read_file`, `write_file`. Local agents do **not** register these (`hostTools: false`); they use the CLI's own tools in the operator folder (`resolveLocalSpawnCwd`). Relative paths and `run_command` on POSIX remotes honor the live POSIX cwd from OSC 7; Windows remotes use the Windows compatibility clients and Windows path wrappers.
 - **Browser tools** (`tools-browser.ts`, Settings → DevTerm Agent toggle, default on — 11 tools): `browser_list/open/navigate/snapshot/click/type/press_key/screenshot/attach/detach/close`. Agent-owned tabs (badged `AGT`) are freely drivable; operator tabs need one-time per-tab confirm (`browser_attach`, in-memory grants cleared on Stop/close). Snapshots inject ref tags (`data-dt-ref`); results carry an UNTRUSTED banner (prompt-injection defense). Navigation reuses the guest URL guard — http(s)/about:blank only. Password fields follow the policy ladder; approval-rule prefixes match URLs/origins.
 - **Local handoff** (`tools-agent.ts`, local-only, default on): `agent_list`, `agent_delegate`, `agent_message` — visible sibling tabs, source cwd/leaf preserved, per-source delegate cap, never registered on remote bridges. Close the target tab to stop only that agent.
-- Briefings: remote writes per-session `AGENTS.md` in a temp overlay (`buildAgentsMd`); local appends `buildLocalNativeMd` via `--append-system-prompt` without planting files in the project.
+- Briefings: remote writes per-session `AGENTS.md` in a temp overlay (`buildAgentsMd`); local appends `buildLocalNativeMd` via provider-specific prompt flags without planting files in the project. Muse uses its temporary remote `AGENTS.md`; local Muse native-tool guidance comes from the visible MCP/tool descriptions.
 - Bridge status over `agent:bridge-status:<id>`; MCP `notifications/message` heartbeat every 25s; renderer pushes live cwd via `agent:set-cwd`; confirmations (`agent:confirm`) time out after 120s as `'timeout'`. Confirms and PTY data are **broadcast** to every `BrowserWindow` so a floating agent window can approve and stream.
 - **Agent PTY is not killed on its own exit** — bridge + temp dir stay up for auto-restart after SSH reconnect; cleanup only on explicit **Stop** / session close / quit. Activity log: `bridge-activity.ts` → `AgentActivityPanel.tsx` (filterable, exportable JSONL).
 - Resume keys: remote `deriveAgentSessionId` (saved connection or `user@host:port`); local `deriveLocalAgentSessionId(cwd)` so two folders never share a transcript. When `resumeSessions` is on, launch uses `--session-dir <userData>/agent-sessions --session-id <stable-id>`, else `--no-session`.
@@ -177,7 +178,7 @@ Project skills in `.claude/skills/` (load via the skill tool, they carry the exa
 
 ## Tests
 
-38 `*.test.ts` files (run via `npm run test`): agent launch modules (`agent-bin`, `launch`, `claude`, `opencode`, `kimi`, `grok`, `antigravity` — note: no `codex-launch.test.ts`), approval-rules, agent context, host-backend, browser control/interact/snapshot/url-guard, MCP policy/tools-agent/tools-register, search ansi/index, ssh detached-session/manager lifecycle/OS detection/ssh-config-parse/tmux/windows-host, shell-quote, history-parse, pty-native-pack, plus renderer-side extractCommandPrefix, file sort, markdown-preview, snippets, stt resample, tab-label, tab-status, transfer stats, layout, and SSH session status lifecycle. Large surfaces (layout DnD, live SSH reconnect, SFTP queue, multi-window agent) rely on self-test + manual QA — the biggest coverage gap.
+39 `*.test.ts` files (run via `npm run test`): agent launch modules (`agent-bin`, `launch`, `claude`, `opencode`, `kimi`, `grok`, `antigravity`, `muse` — note: no `codex-launch.test.ts`), approval-rules, agent context, host-backend, browser control/interact/snapshot/url-guard, MCP policy/tools-agent/tools-register, search ansi/index, ssh detached-session/manager lifecycle/OS detection/ssh-config-parse/tmux/windows-host, shell-quote, history-parse, pty-native-pack, plus renderer-side extractCommandPrefix, file sort, markdown-preview, snippets, stt resample, tab-label, tab-status, transfer stats, layout, and SSH session status lifecycle. Large surfaces (layout DnD, live SSH reconnect, SFTP queue, multi-window agent) rely on self-test + manual QA — the biggest coverage gap.
 
 ## Critical rules
 

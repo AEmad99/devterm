@@ -5,6 +5,10 @@ at the top. Dates are ISO `YYYY-MM-DD`.
 
 ## Unreleased
 
+### Added
+
+- **Meta Muse Code provider.** DevTerm can launch the installed Windows Muse Code CLI through an isolated per-session MCP settings home, temporary auth copy, and the Muse `--yolo` unattended mode. Remote sessions keep host work on the DevTerm bridge with Muse's native shell and workspace writes disabled.
+
 ## 1.3.26 — 2026-09-14
 
 ### Fixed

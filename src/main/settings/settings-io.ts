@@ -228,7 +228,8 @@ function isAgentKind(value: unknown): value is AgentKind {
     value === 'kimi' ||
     value === 'grok' ||
     value === 'codex' ||
-    value === 'antigravity'
+    value === 'antigravity' ||
+    value === 'muse'
   )
 }
 

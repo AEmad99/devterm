@@ -27,11 +27,29 @@ function windowsRemoteSection(context: HostContext): string {
   return [
     '## Windows host',
     'This is a **Windows** machine. Host tools run through **PowerShell**, not bash.',
-    '- Use PowerShell in ' + q('run_command') + ' (' + q('Get-ChildItem') + ', ' + q('Get-Content') + ', ' + q('Set-Content') + ').',
+    '- Use PowerShell in ' +
+      q('run_command') +
+      ' (' +
+      q('Get-ChildItem') +
+      ', ' +
+      q('Get-Content') +
+      ', ' +
+      q('Set-Content') +
+      ').',
     '- Windows PowerShell 5.x does not accept ' + q('&&') + ' — chain with ' + q(';') + ' instead.',
     '- ' + q('run_command') + " already Set-Locations into the operator's current directory.",
-    '- Relative ' + q('read_file') + ' / ' + q('write_file') + ' / ' + q('list_dir') + ' paths resolve against that directory.',
-    '- Absolute paths may be ' + q('C:\\Users\\...') + ' or OpenSSH SFTP form ' + q('/C/Users/...') + ' — both work.',
+    '- Relative ' +
+      q('read_file') +
+      ' / ' +
+      q('write_file') +
+      ' / ' +
+      q('list_dir') +
+      ' paths resolve against that directory.',
+    '- Absolute paths may be ' +
+      q('C:\\Users\\...') +
+      ' or OpenSSH SFTP form ' +
+      q('/C/Users/...') +
+      ' — both work.',
     '- Do not assume GNU coreutils unless they are installed.',
     ''
   ].join('\n')
@@ -612,5 +630,71 @@ This host has outbound internet, but prefer local/organisational mirrors when av
 ## Safety
 Permission prompts for host tools come from this agent. Explain what a command
 does before running anything that changes state.
+`
+}
+
+/**
+ * Per-session AGENTS.md describing the host for Meta's Muse Code CLI.
+ *
+ * Muse namespaces MCP tools by server and exposes the DevTerm bridge as
+ * `mcp__devterm__*`. Remote launches also disable Muse's native shell and
+ * workspace writes, so the bridge is the only route to the connected host.
+ */
+export function buildMuseMd(context: HostContext, airGapped: boolean, cwd?: string): string {
+  const osName =
+    context.os === 'windows'
+      ? 'Windows'
+      : context.os === 'mac'
+        ? 'macOS'
+        : context.os === 'linux'
+          ? 'Linux'
+          : 'unknown OS'
+
+  return `# Connected host: ${context.hostname}
+
+You are operating on ${hostIntro(context)} through DevTerm's MCP bridge.
+
+- Host: \`${context.hostname}\`
+- OS: ${osName}
+- Details: ${context.detail || '(unknown)'}
+
+## How to act on this host
+Muse exposes the bridge's tools through the \`devterm\` MCP server. Use the
+available \`mcp__devterm__*\` tools — they run on THIS host over the existing
+SSH connection. Do not \`ssh\` elsewhere, do not use the local throwaway
+directory as a checkout, and do not attempt host work with native shell or file
+tools.
+- \`mcp__devterm__run_command\` — run a shell command here.
+- \`mcp__devterm__read_file\` / \`mcp__devterm__write_file\` / \`mcp__devterm__list_dir\` — files on this host.
+- \`mcp__devterm__get_host_context\` — re-read these facts.
+- \`mcp__devterm__ping\` — confirm the bridge is still alive.
+${browserToolsSection('mcp__devterm__')}
+
+The DevTerm MCP bridge is a real HTTP server on localhost; its bearer token is
+in the temporary Muse settings loaded for this session. Muse runs with its
+own approval and sandbox disabled for this trusted DevTerm session. DevTerm
+Settings approval rules may still allow or deny a tool before it runs.
+
+${workingDirSection(cwd)}${windowsRemoteSection(context)}
+## Your working directory is a throwaway
+The path you see on launch is a temp dir DevTerm uses only for the Muse config
+and this briefing — it is **not** a checkout of the remote host. Anything that
+looks like a local path is on your machine, not the host; use the
+\`mcp__devterm__*\` tools for everything on the connected host.
+
+${
+  airGapped
+    ? `## ⚠ AIR-GAPPED HOST — NO INTERNET
+This host has **no outbound internet**. NEVER run \`yum\`/\`dnf\`/\`apt\`/\`pip\`/\`npm\`
+against internet repos, and never \`curl\`/\`wget\` from the internet. Use the
+**local mirrors only**: Harbor registry, Skopeo, \`oc mirror\`, and pre-staged
+local repos. If something isn't mirrored, say so rather than attempting an
+internet fetch.`
+    : `## Network
+This host has outbound internet, but prefer local/organisational mirrors when available.`
+}
+
+## Safety
+Explain what a command does before running anything that changes state.
 `
 }

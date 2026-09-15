@@ -7,12 +7,14 @@ import kimi from '../assets/agents/kimi.svg'
 import grok from '../assets/agents/grok.svg'
 import codex from '../assets/agents/codex.svg'
 import antigravity from '../assets/agents/antigravity.png'
+import muse from '../assets/agents/muse.svg'
 
 /**
  * Bundled brand icons for the agent kind picker. Sources are the official
  * marks: the DevTerm app icon, simple-icons renditions of Claude/Kimi/OpenCode,
  * the pi.dev π mark, the xAI Grok tile, the OpenAI Codex mark from the
- * official OAI_Codex lockup, and Google's Antigravity logo from antigravity.google.
+ * official OAI_Codex lockup, Google's Antigravity logo from antigravity.google,
+ * and Meta's Muse Code mark.
  * Monochrome marks are baked white for the dark UI; undefined kinds fall back
  * to the letter glyph in agent-ui.ts.
  */
@@ -24,7 +26,8 @@ const AGENT_ICONS: Partial<Record<AgentKind, string>> = {
   kimi,
   grok,
   codex,
-  antigravity
+  antigravity,
+  muse
 }
 
 export function agentKindIcon(kind: AgentKind): string | undefined {

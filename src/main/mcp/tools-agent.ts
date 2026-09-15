@@ -35,7 +35,8 @@ const AGENT_KINDS = [
   'kimi',
   'grok',
   'codex',
-  'antigravity'
+  'antigravity',
+  'muse'
 ] as const
 
 const AGENT_EFFORTS = ['low', 'medium', 'high', 'max'] as const
@@ -48,6 +49,7 @@ const errorText = (value: string) => ({
 
 function cliLabel(kind: AgentKind): string {
   if (kind === 'devterm') return 'DevTerm Agent'
+  if (kind === 'muse') return 'Muse Code'
   return kind[0].toUpperCase() + kind.slice(1)
 }
 
@@ -122,7 +124,7 @@ export function registerAgentHandoffTools(
         'CLI, and delivers the prompt, then returns JSON {sessionId, kind, cwd, title, ' +
         'promptDelivered, warnings} immediately (fire-and-forget: report these and stop — do NOT ' +
         'wait, poll, or re-check). kinds: devterm, pi, claude, opencode, kimi, grok, codex, ' +
-        'antigravity. model is passed to the target CLI as-is, except opencode which needs ' +
+        'antigravity, muse. model is passed to the target CLI as-is, except opencode which needs ' +
         'provider/model (anything else starts the default model with a warning); omit when unsure. ' +
         'cwd defaults to your directory. NEVER launch agent CLIs yourself via the shell and NEVER ' +
         'read or write agent config files (opencode.json, .grok, CODEX_HOME, mcp.json) — just call ' +

@@ -229,6 +229,7 @@ const AGENT_COMMAND_NAMES = new Set([
   'grok', // xAI Grok CLI
   'antigravity', // Google Antigravity CLI (agy)
   'agy', // Google Antigravity CLI alias
+  'muse', // Meta Muse Code CLI
   'goose', // Block Goose (@block/goose)
   'crush', // Charm Crush (@charmland/crush)
   'kiro' // AWS Kiro CLI (rebranded from Amazon Q Developer)
@@ -355,7 +356,8 @@ export function createIdleChime(opts: {
       // Only fire for a sustained burst that has now gone quiet — filters the
       // quick echo of a launch command and short, non-agent output.
       if (lastOutputAt - burstStart >= minBurstMs) {
-        const notify = opts.notify ?? ((notice: AttentionNotice) => signalAttention(sessionId, notice))
+        const notify =
+          opts.notify ?? ((notice: AttentionNotice) => signalAttention(sessionId, notice))
         notify(makeNotice())
       }
     }, IDLE_QUIET_MS)
