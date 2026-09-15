@@ -45,12 +45,9 @@ export default function FileFilterSortBar({
   total: number
   /** Entries in the folder after filtering. */
   shown: number
-  // NOTE: `RefObject<HTMLInputElement>`, not `RefObject<HTMLInputElement | null>`.
-  // Same-target generic relations are variance-only in tsc, so the nullable
-  // argument is rejected at `ref={inputRef}` even though `current` already
-  // includes `| null`. This matches exactly what `useRef<HTMLInputElement>(null)`
-  // returns at the call site.
-  inputRef?: RefObject<HTMLInputElement>
+  // Nullable-parameterized: React 19's `useRef<HTMLInputElement>(null)` returns
+  // `RefObject<HTMLInputElement | null>`, which the `ref` attribute accepts.
+  inputRef?: RefObject<HTMLInputElement | null>
   /** Fired on Enter — the parent opens the first visible match. */
   onEnterFirst?: () => void
 }) {

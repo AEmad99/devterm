@@ -366,6 +366,21 @@ export default function App() {
     }
   }
 
+  const requestCloseSession = (sid: string) => {
+    const s = useSessions.getState().sessions.find((x) => x.id === sid)
+    const guard = sessionCloseGuard(s)
+    if (!guard.needed) {
+      doCloseSession(sid)
+      return
+    }
+    setPendingClose({
+      title: 'Close terminal?',
+      message: `Closing this terminal stops ${guard.reasons.join(' and ')}.`,
+      confirmLabel: 'Close',
+      run: () => doCloseSession(sid)
+    })
+  }
+
   const isTerminalHostFocused = (): boolean => {
     if (typeof document === 'undefined') return false
     const el = document.activeElement as HTMLElement | null
@@ -672,20 +687,6 @@ export default function App() {
       }.`,
       confirmLabel: 'Close group',
       run: () => closeGroupNow(gid)
-    })
-  }
-  const requestCloseSession = (sid: string) => {
-    const s = useSessions.getState().sessions.find((x) => x.id === sid)
-    const guard = sessionCloseGuard(s)
-    if (!guard.needed) {
-      doCloseSession(sid)
-      return
-    }
-    setPendingClose({
-      title: 'Close terminal?',
-      message: `Closing this terminal stops ${guard.reasons.join(' and ')}.`,
-      confirmLabel: 'Close',
-      run: () => doCloseSession(sid)
     })
   }
 

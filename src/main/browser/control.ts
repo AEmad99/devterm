@@ -1,4 +1,5 @@
 import { webContents } from 'electron'
+import { randomUUID } from 'crypto'
 import type { BrowserControlTabInfo, BrowserOpenRequest } from '@shared/types'
 
 /**
@@ -107,8 +108,12 @@ export class BrowserControlService {
    * registration. The tabKey is generated here and travels with the request
    * so registration is deterministic (no polling heuristics).
    */
-  async openTab(req: { url: string; groupId?: string; ownerAgentSessionId: string }): Promise<BrowserTabEntry> {
-    const tabKey = `agt-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+  async openTab(req: {
+    url: string
+    groupId?: string
+    ownerAgentSessionId: string
+  }): Promise<BrowserTabEntry> {
+    const tabKey = `agt-${randomUUID()}`
     const pending = new Promise<BrowserTabEntry>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.waiters.delete(tabKey)
@@ -231,14 +236,16 @@ export class BrowserControlService {
   /** Run a script inside the guest; clean error when the guest is gone. */
   async executeJs<T = unknown>(entry: BrowserTabEntry, script: string): Promise<T> {
     const wc = webContents.fromId(entry.wcId)
-    if (!wc || wc.isDestroyed()) throw new Error('the tab\'s page is no longer running (was it closed?)')
+    if (!wc || wc.isDestroyed())
+      throw new Error("the tab's page is no longer running (was it closed?)")
     return (await wc.executeJavaScript(script, false)) as T
   }
 
   /** PNG bytes of the current viewport. */
   async capturePage(entry: BrowserTabEntry): Promise<Buffer> {
     const wc = webContents.fromId(entry.wcId)
-    if (!wc || wc.isDestroyed()) throw new Error('the tab\'s page is no longer running (was it closed?)')
+    if (!wc || wc.isDestroyed())
+      throw new Error("the tab's page is no longer running (was it closed?)")
     const image = await wc.capturePage()
     return image.toPNG()
   }
@@ -248,12 +255,10 @@ export class BrowserControlService {
    * post-load paints land, capped at `timeoutMs`. Returns what actually
    * happened so tools can tell the model "page may still be loading".
    */
-  async waitForSettle(
-    entry: BrowserTabEntry,
-    timeoutMs = 8000
-  ): Promise<'settled' | 'timeout'> {
+  async waitForSettle(entry: BrowserTabEntry, timeoutMs = 8000): Promise<'settled' | 'timeout'> {
     const wc = webContents.fromId(entry.wcId)
-    if (!wc || wc.isDestroyed()) throw new Error('the tab\'s page is no longer running (was it closed?)')
+    if (!wc || wc.isDestroyed())
+      throw new Error("the tab's page is no longer running (was it closed?)")
     const script = `(function(){return new Promise(function(res){
 var n=0;function done(){if(++n>=2)res('s')}
 function raf(){requestAnimationFrame(done)}

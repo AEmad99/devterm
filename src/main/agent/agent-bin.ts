@@ -135,7 +135,7 @@ export async function assertAgentBinAvailable(kind: AgentKind): Promise<void> {
   try {
     isFile = statSync(bin).isFile()
   } catch {
-    isFile = false
+    // not stat-able — isFile stays false
   }
   if (!isFile) {
     throw new Error(

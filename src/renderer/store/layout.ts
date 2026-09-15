@@ -43,8 +43,7 @@ export interface Rect {
   h: number
 }
 
-let seq = 0
-const nid = (p: string) => `${p}-${++seq}-${Date.now()}`
+const nid = (p: string) => `${p}-${crypto.randomUUID()}`
 const mkLeaf = (tabs: string[]): LeafNode => ({
   type: 'leaf',
   id: nid('leaf'),
@@ -432,7 +431,7 @@ export const useLayout = create<LayoutState>((set) => ({
     ),
 
   createGroup: (name) => {
-    const id = `grp-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+    const id = `grp-${crypto.randomUUID()}`
     set((s) => {
       const n = s.groups.filter((g) => g.id !== DEFAULT_GROUP).length + 1
       const group: Group = { id, name: name ?? `Group ${n}`, root: null, activeLeaf: null }

@@ -8,10 +8,9 @@
     "strict": true,
     "skipLibCheck": true,
     "resolveJsonModule": true,
-    "baseUrl": ".",
     "paths": {
-      "@shared/*": ["src/shared/*"],
-      "node-pty": ["src/main/pty/node-pty.d.ts"]
+      "@shared/*": ["./src/shared/*"],
+      "node-pty": ["./src/main/pty/node-pty.d.ts"]
     },
     "types": ["node"]
   },

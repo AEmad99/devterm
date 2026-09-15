@@ -14,8 +14,7 @@ import { useSessions } from '../store/sessions'
  * saved connection are skipped (we have no way to reconnect them).
  */
 
-let itemSeq = 0
-const newItemId = () => `wi-${Date.now()}-${++itemSeq}`
+const newItemId = () => `wi-${crypto.randomUUID()}`
 
 /** Map a live layout tree → an item-id snapshot, keeping only sessions present in `items`. */
 function snapshotNode(

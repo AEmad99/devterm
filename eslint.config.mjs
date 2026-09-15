@@ -28,7 +28,15 @@ export default tseslint.config(
     files: ['src/renderer/**/*.tsx'],
     plugins: { 'react-hooks': reactHooks },
     rules: {
-      ...reactHooks.configs.recommended.rules,
+      // Pinned to the classic hooks surface (the v5 `recommended` set), not
+      // the v7 `recommended` spread: v7 adds React Compiler-era rules
+      // (set-state-in-effect, refs, immutability, purity,
+      // preserve-manual-memoization, ...) that forbid this codebase's
+      // deliberate patterns (zustand getState sync effects, the []-deps
+      // keydown handler, ref reads in selectors). Revisit when adopting the
+      // React Compiler; until then these stay off by explicit choice.
+      'react-hooks/rules-of-hooks': 'error',
+      'react-hooks/exhaustive-deps': 'warn',
     },
   },
   {

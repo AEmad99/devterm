@@ -161,7 +161,7 @@ function runLocalGit(path: string): Promise<GitStatus> {
       settled = true
       resolve(s)
     }
-    let proc: ReturnType<typeof spawn> | null = null
+    let proc: ReturnType<typeof spawn>
     try {
       proc = spawn('git', ['-C', path, 'status', '--porcelain=1', '--branch'], {
         windowsHide: true
@@ -229,7 +229,7 @@ export async function gitStatusRemote(
   // `cd` first so the porcelain output is path-relative (which the parser
   // expects). The path is untrusted (it follows the remote shell cwd), so it
   // must be airtight-quoted — double quotes alone leave `$(...)`/backticks live.
-  const cmd = remoteGit(path, "status --porcelain=1 --branch")
+  const cmd = remoteGit(path, 'status --porcelain=1 --branch')
   const res = await exec(cmd, 30000)
   if (res.code !== 0) return notARepo()
   return parsePorcelain(res.stdout)
@@ -245,7 +245,7 @@ export function gitDiffLocal(path: string, file: string): Promise<string> {
       settled = true
       resolve(s)
     }
-    let proc: ReturnType<typeof spawn> | null = null
+    let proc: ReturnType<typeof spawn>
     try {
       proc = spawn('git', ['-C', path, 'diff', '--', file], { windowsHide: true })
     } catch {
@@ -264,7 +264,7 @@ export async function gitDiffRemote(
   file: string
 ): Promise<string> {
   // Airtight-quote both the directory and the filename (both untrusted).
-  const cmd = remoteGit(path, "diff -- " + quoteRemotePath(file))
+  const cmd = remoteGit(path, 'diff -- ' + quoteRemotePath(file))
   const res = await exec(cmd, 30000)
   return res.code === 0 ? res.stdout : ''
 }
@@ -294,7 +294,7 @@ export async function gitStatusViaClient(
   ) => Promise<{ stdout: string; code: number | null }>,
   path: string
 ): Promise<GitStatus> {
-  const cmd = remoteGit(path, "status --porcelain=1 --branch")
+  const cmd = remoteGit(path, 'status --porcelain=1 --branch')
   const res = await execOnClient(client, cmd, 30000)
   if (res.code !== 0) return notARepo()
   return parsePorcelain(res.stdout)
@@ -384,7 +384,9 @@ function buildRemoteGit(cwd: string, args: string[]): string {
   // so plain quoting with single-quote escaping is enough. Anything that
   // arrives from the renderer as a file path must already have been wrapped
   // with `quoteRemotePath` by the caller.
-  const quoted = args.map((a) => (isWindowsRemotePath(cwd) ? quoteRemotePath(a) : shQuote(a))).join(' ')
+  const quoted = args
+    .map((a) => (isWindowsRemotePath(cwd) ? quoteRemotePath(a) : shQuote(a)))
+    .join(' ')
   return remoteGit(cwd, quoted)
 }
 

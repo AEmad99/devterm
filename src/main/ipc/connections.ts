@@ -136,7 +136,7 @@ export function registerConnectionsIpc(): void {
           typeof opts?.path === 'string' && opts.path.trim()
             ? opts.path.trim()
             : join(homedir(), '.ssh', 'config')
-        let text = ''
+        let text: string
         try {
           text = await fs.readFile(configPath, 'utf8')
         } catch {
@@ -162,7 +162,9 @@ export function registerConnectionsIpc(): void {
 
         const list = await readAll()
         const existingKeys = new Set(
-          list.map((c) => `${(c.username || '').toLowerCase()}@${c.host.toLowerCase()}:${c.port || 22}`)
+          list.map(
+            (c) => `${(c.username || '').toLowerCase()}@${c.host.toLowerCase()}:${c.port || 22}`
+          )
         )
         const existingNames = new Set(list.map((c) => c.name.toLowerCase()))
 

@@ -206,7 +206,7 @@ export class TransferQueue {
     const id = item.id
     const isDownload = item.direction === 'download'
     let total = 0
-    let sftp: SFTPWrapper | null = null
+    let sftp: SFTPWrapper
     try {
       sftp = await this.getSftp(item.sessionId)
       total = isDownload

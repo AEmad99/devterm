@@ -12,8 +12,7 @@ import { useEditors } from '../store/editors'
 import { toLiveSnapshot } from './workspace'
 import { setAgentUiMode } from './agent-ui'
 
-let itemSeq = 0
-const newItemId = () => `sr-${Date.now()}-${++itemSeq}`
+const newItemId = () => `sr-${crypto.randomUUID()}`
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -72,9 +71,7 @@ export function restorableSessions(sessions: Session[], groupId: string): Sessio
       (s.groupId || DEFAULT_GROUP) === groupId &&
       !s.closed &&
       !s.id.startsWith('pending-') &&
-      (s.kind === 'local' ||
-        s.kind === 'browser' ||
-        (s.kind === 'remote' && !!s.connectionId))
+      (s.kind === 'local' || s.kind === 'browser' || (s.kind === 'remote' && !!s.connectionId))
   )
 }
 
@@ -267,8 +264,7 @@ export async function restoreSessionSnapshot(
       (!def?.root || (def.root.type === 'leaf' && def.root.tabs.length === 0)) &&
       useSessions.getState().sessions.length === 0
 
-    const groupId =
-      i === 0 && defEmpty ? DEFAULT_GROUP : `sr-${Date.now()}-${i}-${Math.random().toString(36).slice(2, 6)}`
+    const groupId = i === 0 && defEmpty ? DEFAULT_GROUP : `sr-${crypto.randomUUID()}`
     const name = g.name || (i === 0 ? 'Terminals' : `Group ${i + 1}`)
     useLayout.getState().ensureGroup(groupId, name)
 

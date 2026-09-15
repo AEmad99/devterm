@@ -9,7 +9,7 @@
 //
 // Run with: npm run setup   (after `npm install --ignore-scripts`)
 
-import { execSync } from 'node:child_process'
+import { execFileSync, execSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import {
   existsSync,
@@ -26,6 +26,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const require = createRequire(import.meta.url)
+const { resetExecutableLabel, queryIntegrityLabel } = require('./win-exe-label.cjs')
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const nm = join(root, 'node_modules')
@@ -212,6 +213,11 @@ if (process.platform === 'win32') {
           mkdirSync(conptyDest, { recursive: true })
           copyFileSync(srcDll, join(conptyDest, 'conpty.dll'))
           copyFileSync(srcExe, join(conptyDest, 'OpenConsole.exe'))
+          try {
+            resetExecutableLabel(join(conptyDest, 'OpenConsole.exe'))
+          } catch (err) {
+            console.warn(`! Could not reset integrity label on OpenConsole.exe: ${err.message}`)
+          }
           installed = true
           console.log(`✓ ConPTY bundled dll installed (win10-${arch}, ${ver})`)
           break
@@ -275,8 +281,19 @@ if (process.platform === 'win32') {
 //    runtime and hang.
 const nodeName = process.platform === 'win32' ? 'node.exe' : 'node'
 const bundledNode = join(nm, 'node', 'bin', nodeName)
-if (existsSync(bundledNode)) {
-  console.log(`✓ Bundled Node runtime present (${nodeName})`)
+const wantNodeVersion =
+  'v' + JSON.parse(readFileSync(join(nm, 'node', 'package.json'), 'utf8')).version
+let haveNodeVersion = null
+try {
+  haveNodeVersion = execFileSync(bundledNode, ['--version'], {
+    stdio: 'pipe',
+    encoding: 'utf8'
+  }).trim()
+} catch {
+  // missing or not executable — fall through to download
+}
+if (haveNodeVersion === wantNodeVersion) {
+  console.log(`✓ Bundled Node runtime present (${nodeName} ${haveNodeVersion})`)
 } else {
   const nodePkg = JSON.parse(readFileSync(join(nm, 'node', 'package.json'), 'utf8'))
   const nodeVer = nodePkg.version
@@ -340,10 +357,29 @@ if (existsSync(bundledNode)) {
     }
     mkdirSync(join(nm, 'node', 'bin'), { recursive: true })
     copyFileSync(srcBin, bundledNode)
+    try {
+      if (resetExecutableLabel(bundledNode)) {
+        console.log('✓ Bundled Node runtime integrity label reset to Medium')
+      }
+    } catch (err) {
+      console.warn(`! Could not reset integrity label on ${nodeName}: ${err.message}`)
+    }
     console.log(`✓ Bundled Node runtime installed (${nodeName} v${nodeVer}, sha256 verified)`)
   } finally {
     rmSync(tmp, { recursive: true, force: true })
   }
+}
+
+// 6) Integrity-label sanity: a Low mandatory label on the repo root makes every
+//    binary executed from the tree (bundled node, electron, tests) fail all file
+//    writes with EPERM. The resets above cover binaries setup installs; warn here
+//    so the operator can reset the root itself.
+if (process.platform === 'win32' && queryIntegrityLabel(root) === 'low') {
+  console.warn(
+    '! The repo folder carries a Low mandatory-integrity label; binaries run from\n' +
+      '  this tree will fail all file writes with EPERM.\n' +
+      `  Reset it with: icacls ${JSON.stringify(root)} /setintegritylevel (OI)(CI)M`
+  )
 }
 
 console.log('Native setup complete. Next: npm run dev')

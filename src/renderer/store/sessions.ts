@@ -217,7 +217,7 @@ export const useSessions = create<SessionState>((set, get) => ({
     )
     let n = 1
     while (used.has(n)) n++
-    const id = opts?.id ?? `local-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
+    const id = opts?.id ?? `local-${crypto.randomUUID()}`
     if (get().sessions.some((x) => x.id === id))
       throw new Error(`Session id is already active: ${id}`)
     const session: Session = {
@@ -244,7 +244,7 @@ export const useSessions = create<SessionState>((set, get) => ({
   },
 
   connectSsh: async (profile, meta) => {
-    const tempId = `pending-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
+    const tempId = `pending-${crypto.randomUUID()}`
     set((s) => ({
       sessions: [
         ...s.sessions,
@@ -289,8 +289,7 @@ export const useSessions = create<SessionState>((set, get) => ({
             )
           }))
           get().setStatus(sessionId, `reconnected (attempt ${st.attempt})`)
-        }
-        else if (st.type === 'reconnect-failed')
+        } else if (st.type === 'reconnect-failed')
           get().setStatus(sessionId, `reconnect failed after ${st.attempts} attempts: ${st.reason}`)
       })
       statusDisposers.set(sessionId, dispose)
@@ -337,7 +336,7 @@ export const useSessions = create<SessionState>((set, get) => ({
   },
 
   addBrowser: (opts) => {
-    const id = `browser-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
+    const id = `browser-${crypto.randomUUID()}`
     const session: Session = {
       id,
       kind: 'browser',

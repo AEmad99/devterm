@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
+import { createRequire } from 'node:module'
 import { createHash } from 'node:crypto'
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { describe, it } from 'node:test'
 import {
   deriveAgentSessionId,
@@ -16,6 +18,8 @@ import {
 import { PI_EXTENSION_SOURCE } from './extension'
 import { homedir } from 'node:os'
 
+const require = createRequire(import.meta.url)
+
 describe('bundled DevTerm Agent launch', () => {
   it('resolves the packaged provider-agnostic CLI', () => {
     const cli = resolveBundledAgentCli()
@@ -25,9 +29,27 @@ describe('bundled DevTerm Agent launch', () => {
 
   it('discovers the offline provider/model catalog without credentials', async () => {
     const capabilities = await getBuiltinAgentCapabilities(true)
-    assert.match(capabilities.runtimeVersion, /^0\.80\./)
+    const pkg = JSON.parse(
+      readFileSync(join(dirname(dirname(resolveBundledAgentCli())), 'package.json'), 'utf8')
+    ) as { version: string }
+    assert.equal(capabilities.runtimeVersion, pkg.version)
     assert.ok(capabilities.models.length > 0)
     assert.ok(capabilities.providers.length > 0)
+  })
+
+  it('ships a bundled node runtime matching the pinned version', () => {
+    // Resolve the `node` package directly: outside Electron,
+    // resolveBundledNodeBin() intentionally returns the current process.
+    const nodePkgPath = require.resolve('node/package.json')
+    const pkg = JSON.parse(readFileSync(nodePkgPath, 'utf8')) as { version: string }
+    const bin = join(
+      dirname(nodePkgPath),
+      'bin',
+      process.platform === 'win32' ? 'node.exe' : 'node'
+    )
+    assert.equal(existsSync(bin), true)
+    const reported = execFileSync(bin, ['--version'], { encoding: 'utf8' }).trim()
+    assert.equal(reported, `v${pkg.version}`)
   })
 
   it('disables every ambient tool/resource discovery path', async () => {
