@@ -3,6 +3,18 @@
 All notable changes to DevTerm are documented here. The most recent section is
 at the top. Dates are ISO `YYYY-MM-DD`.
 
+## 1.3.29 — 2026-09-15
+
+### Changed
+
+- **Dependency-stack audit.** React 19, Vite 7, TypeScript 6, ESLint 10, zod 4, marked 18, electron-builder, the bundled Node runtime, and the DevTerm Agent runtime (pi-coding-agent 0.85). Electron, xterm, and TS 7 stay pinned — blocked by the node-pty prebuilt ABI and peer constraints.
+- `npm audit` is clean: `overrides` pin the `adm-zip` and `sharp` transitives above their vulnerable ranges.
+
+### Fixed
+
+- Packaged builds ship the agent's full nested dependency closure (`afterPack` mirrors `pi-coding-agent/node_modules` into `app.asar.unpacked`) — the bundled agent previously failed to boot with `ERR_MODULE_NOT_FOUND`.
+- `npm run setup` hardens native-binary setup (integrity-label resets, ABI marker).
+
 ## 1.3.28 — 2026-09-15
 
 ### Fixed
