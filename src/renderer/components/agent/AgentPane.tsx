@@ -14,7 +14,7 @@ import {
 } from '../../lib/attention'
 import { useBridgeActivity } from '../../lib/bridge-activity'
 import { AGENT_BRIDGE_POLICY, agentKindLabel, injectAgentPrompt } from '../../lib/agent-ui'
-import { getTheme } from '../../lib/themes'
+import { getTheme, xtermTheme } from '../../lib/themes'
 
 /** Live state of the agent's link to this host (what the status pill reflects). */
 type BridgeState = AgentBridgeStatus['state'] | 'connecting' | 'exited'
@@ -88,8 +88,11 @@ export default function AgentPane({
 }) {
   const label = agentKindLabel(kind).replace(/ Agent$/, '')
   const hostRef = useRef<HTMLDivElement>(null)
+  const terminalRef = useRef<Terminal | null>(null)
   const activeRef = useRef(active)
   activeRef.current = active
+  const themeId = useSettings((s) => s.themeId)
+  const terminalBg = useSettings((s) => s.terminalBg)
   const [bridge, setBridge] = useState<BridgeState>('connecting')
   const [bridgeMessage, setBridgeMessage] = useState<string | undefined>()
   const [mcpUrl, setMcpUrl] = useState<string | undefined>()
@@ -152,6 +155,15 @@ export default function AgentPane({
     if (cwd) window.devterm.agent.setCwd(sessionId, cwd)
   }, [sessionId, cwd])
 
+  // Theme changes must not recreate the terminal or agent process. This also
+  // updates an already-open floating AgentWindow after its settings store
+  // receives the cross-window localStorage event.
+  useEffect(() => {
+    const term = terminalRef.current
+    if (!term) return
+    term.options.theme = xtermTheme(getTheme(themeId), terminalBg)
+  }, [terminalBg, themeId])
+
   useEffect(() => {
     const host = hostRef.current
     if (!host) return
@@ -167,14 +179,11 @@ export default function AgentPane({
       cursorInactiveStyle: 'outline',
       allowProposedApi: true,
       theme: (() => {
-        const t = getTheme(useSettings.getState().themeId)
-        return {
-          background: t.glass ? 'transparent' : t.terminal.background,
-          foreground: t.terminal.foreground,
-          cursor: t.chrome.accent
-        }
+        const { themeId: initialThemeId, terminalBg: initialBg } = useSettings.getState()
+        return xtermTheme(getTheme(initialThemeId), initialBg)
       })()
     })
+    terminalRef.current = term
     const fit = new FitAddon()
     term.loadAddon(fit)
     term.open(host)
@@ -403,6 +412,7 @@ export default function AgentPane({
           setAgentTask(sessionId, undefined, kind)
         }
       }
+      if (terminalRef.current === term) terminalRef.current = null
       term.dispose()
     }
     // restartNonce intentionally triggers a full relaunch with forceRestart.
@@ -444,8 +454,7 @@ export default function AgentPane({
   // that recovery and can strand the agent. Waiting, failed, and exited
   // states still expose retry because the agent has no live connection there.
   const sshReconnectInProgress =
-    bridge === 'disconnected' &&
-    /^SSH (?:disconnected; )?reconnecting/.test(bridgeMessage ?? '')
+    bridge === 'disconnected' && /^SSH (?:disconnected; )?reconnecting/.test(bridgeMessage ?? '')
   const canRestart =
     !hostClosed &&
     bridge !== 'connecting' &&

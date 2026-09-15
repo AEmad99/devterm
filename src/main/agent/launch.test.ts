@@ -107,7 +107,7 @@ describe('bundled DevTerm Agent launch', () => {
         spec.args.slice(spec.args.indexOf('--session-dir'), spec.args.indexOf('--session-dir') + 4),
         ['--session-dir', sessionDir, '--session-id', 'remote-123']
       )
-      assert.equal(spec.args[spec.args.indexOf('--provider') + 1], 'anthropic')
+      assert.equal(spec.args.includes('--provider'), false)
       assert.equal(spec.args[spec.args.indexOf('--model') + 1], 'anthropic/claude-sonnet-4.6')
       assert.equal(
         spec.args[spec.args.indexOf('--models') + 1],
@@ -121,6 +121,48 @@ describe('bundled DevTerm Agent launch', () => {
     } finally {
       spec.cleanup()
       rmSync(sessionDir, { recursive: true, force: true })
+    }
+  })
+
+  it('adds --provider only when the selected model is bare', async () => {
+    const bridge = {
+      url: 'http://127.0.0.1:12345/mcp',
+      token: 'test-token',
+      port: 12345
+    }
+    const preferences = {
+      provider: 'anthropic',
+      model: 'claude-sonnet-4.6',
+      fallbackModels: [],
+      resumeSessions: false,
+      browserTools: true,
+      agentHandoff: true,
+      trustedSkills: []
+    }
+    const bare = await prepareBuiltinAgentLaunch('host briefing', bridge, { preferences })
+    const mismatchedQualified = await prepareBuiltinAgentLaunch('host briefing', bridge, {
+      preferences: { ...preferences, model: 'openai/gpt-5' }
+    })
+    const delegatedBare = await prepareBuiltinAgentLaunch('host briefing', bridge, {
+      preferences,
+      model: 'claude-opus-4.6'
+    })
+    try {
+      assert.equal(bare.args[bare.args.indexOf('--provider') + 1], 'anthropic')
+      assert.equal(bare.args[bare.args.indexOf('--model') + 1], 'claude-sonnet-4.6')
+
+      assert.equal(mismatchedQualified.args.includes('--provider'), false)
+      assert.equal(
+        mismatchedQualified.args[mismatchedQualified.args.indexOf('--model') + 1],
+        'openai/gpt-5'
+      )
+
+      assert.equal(delegatedBare.args[delegatedBare.args.indexOf('--provider') + 1], 'anthropic')
+      assert.equal(delegatedBare.args[delegatedBare.args.indexOf('--model') + 1], 'claude-opus-4.6')
+    } finally {
+      bare.cleanup()
+      mismatchedQualified.cleanup()
+      delegatedBare.cleanup()
     }
   })
 

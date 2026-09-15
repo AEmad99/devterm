@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, it } from 'node:test'
 import {
+  buildMuseSettings,
   MUSE_PROMPT_ARG_LIMIT,
   museReasoningEffort,
   prepareMuseLaunch,
@@ -42,6 +43,41 @@ describe('Muse Code CLI launch', () => {
     }
   })
 
+  it('inherits only safe Muse UI/model preferences', () => {
+    const settings = buildMuseSettings(
+      {
+        url: 'http://127.0.0.1:12345/mcp',
+        token: 'test-token',
+        port: 12345
+      },
+      {
+        provider: 'meta',
+        model: 'muse-spark-1.3',
+        reasoning_effort: 'max',
+        tui: { theme: 'one-dark-pro' },
+        permissions: { default_profile: ':unrestricted' },
+        hooks: { before_tool: ['unsafe-command'] },
+        mcp_servers: { personal: { command: 'other-server' } }
+      }
+    )
+
+    assert.equal(settings.provider, 'meta')
+    assert.equal(settings.model, 'muse-spark-1.3')
+    assert.equal(settings.reasoning_effort, 'max')
+    assert.deepEqual(settings.tui, { theme: 'one-dark-pro' })
+    assert.equal(settings.permissions, undefined)
+    assert.equal(settings.hooks, undefined)
+    assert.deepEqual(Object.keys(settings.mcp_servers as object), ['devterm'])
+
+    const echoSettings = buildMuseSettings(
+      { url: 'http://127.0.0.1:12345/mcp', token: 'test-token', port: 12345 },
+      { provider: 'echo', model: 'echo-model', tui: { theme: 'one-dark-pro' } }
+    )
+    assert.equal(echoSettings.provider, 'meta')
+    assert.equal(echoSettings.model, undefined)
+    assert.deepEqual(echoSettings.tui, { theme: 'one-dark-pro' })
+  })
+
   it('maps reasoning effort and keeps an interactive positional prompt', async () => {
     assert.equal(museReasoningEffort('low'), 'low')
     assert.equal(museReasoningEffort('medium'), 'medium')
@@ -72,7 +108,7 @@ describe('Muse Code CLI launch', () => {
     }
   })
 
-  it('uses a persisted Meta model without importing global Muse settings', async () => {
+  it('uses a persisted Meta model without importing unsafe global Muse settings', async () => {
     const spec = await prepareMuseLaunch(
       'host briefing',
       {

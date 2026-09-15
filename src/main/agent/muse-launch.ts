@@ -1,4 +1,12 @@
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync
+} from 'fs'
 import { execSync } from 'child_process'
 import { homedir, tmpdir } from 'os'
 import { join } from 'path'
@@ -64,14 +72,16 @@ export async function resolveMuseBin(): Promise<string> {
   return resolveCached('muse', 'muse.cmd', 'muse')
 }
 
-function copyMuseAuth(destConfigHome: string): string | undefined {
-  const sourceConfigHomes = [
+function museConfigHomes(): string[] {
+  return [
     process.env.XDG_CONFIG_HOME?.trim(),
     join(homedir(), '.config'),
     process.env.APPDATA?.trim()
   ].filter((path): path is string => Boolean(path))
+}
 
-  const source = sourceConfigHomes
+function copyMuseAuth(destConfigHome: string): string | undefined {
+  const source = museConfigHomes()
     .map((configHome) => join(configHome, 'muse', 'auth.json'))
     .find((path) => existsSync(path))
   if (!source) return undefined
@@ -87,26 +97,64 @@ function copyMuseAuth(destConfigHome: string): string | undefined {
   }
 }
 
-function museSettings(bridge: BridgeInfo): string {
-  return JSON.stringify(
-    {
-      schema_version: 1,
-      provider: 'meta',
-      mcp_servers: {
-        devterm: {
-          transport: 'streamable_http',
-          url: bridge.url,
-          headers: {
-            Authorization: `Bearer ${bridge.token}`
-          },
-          enabled: true,
-          mode: 'required'
-        }
+type MuseSettings = Record<string, unknown>
+
+function readMuseSettings(path: string): MuseSettings {
+  try {
+    const parsed = JSON.parse(readFileSync(path, 'utf8')) as unknown
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as MuseSettings)
+      : {}
+  } catch {
+    return {}
+  }
+}
+
+/**
+ * Only UI/model preferences cross the isolation boundary. In particular,
+ * permissions, hooks, and global MCP servers must never enter a DevTerm agent
+ * session; remote host access remains scoped to the per-session bridge.
+ */
+export function safeMusePreferences(value: unknown): MuseSettings {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+  const source = value as MuseSettings
+  const safe: MuseSettings = {}
+  const provider =
+    typeof source.provider === 'string' ? source.provider.trim().toLowerCase() : 'meta'
+  if (provider === 'meta' && typeof source.model === 'string') safe.model = source.model
+  if (provider === 'meta' && typeof source.reasoning_effort === 'string') {
+    safe.reasoning_effort = source.reasoning_effort
+  }
+  if (source.tui && typeof source.tui === 'object' && !Array.isArray(source.tui)) {
+    // Clone so the generated bridge settings never retain a mutable reference
+    // to the parsed user document.
+    safe.tui = JSON.parse(JSON.stringify(source.tui)) as MuseSettings
+  }
+  return safe
+}
+
+export function buildMuseSettings(bridge: BridgeInfo, userSettings?: unknown): MuseSettings {
+  return {
+    schema_version: 1,
+    ...safeMusePreferences(userSettings),
+    provider: 'meta',
+    mcp_servers: {
+      devterm: {
+        transport: 'streamable_http',
+        url: bridge.url,
+        headers: {
+          Authorization: `Bearer ${bridge.token}`
+        },
+        enabled: true,
+        mode: 'required'
       }
-    },
-    null,
-    2
-  )
+    }
+  }
+}
+
+function findMuseSettingsPath(): string {
+  const candidates = museConfigHomes().map((home) => join(home, 'muse', 'settings.json'))
+  return candidates.find((path) => existsSync(path)) ?? candidates[0]
 }
 
 function configuredMuseModel(extras?: AgentLaunchExtras): string | undefined {
@@ -130,10 +178,11 @@ function normalizeMuseModel(value: string): string {
  * Prepare an isolated Muse Code configuration with the DevTerm MCP bridge.
  *
  * The config home is temporary so global Muse MCP servers and permission
- * profiles cannot leak into a DevTerm session. The operator's Muse auth file
- * is copied when available, never moved or modified. `--yolo` disables Muse's
- * own approval/sandbox layer as requested; DevTerm's MCP approval rules remain
- * enforced by the bridge before any host tool runs.
+ * profiles cannot leak into a DevTerm session. Safe model/TUI preferences are
+ * copied in, while the operator's Muse auth file is copied when available,
+ * never moved or modified. `--yolo` disables Muse's own approval/sandbox layer
+ * as requested; DevTerm's MCP approval rules remain enforced by the bridge
+ * before any host tool runs.
  *
  * Remote sessions additionally disable Muse's native shell and workspace
  * writes. Host work therefore goes through the DevTerm MCP bridge. Local
@@ -153,7 +202,10 @@ export async function prepareMuseLaunch(
   if (!extras?.nativeLocal) {
     writeFileSync(join(overlay, 'AGENTS.md'), hostContextMd, { mode: 0o600 })
   }
-  writeFileSync(join(museConfigDir, 'settings.json'), museSettings(bridge), { mode: 0o600 })
+  const sourceSettingsPath = findMuseSettingsPath()
+  const isolatedSettingsPath = join(museConfigDir, 'settings.json')
+  const isolatedSettings = buildMuseSettings(bridge, readMuseSettings(sourceSettingsPath))
+  writeFileSync(isolatedSettingsPath, JSON.stringify(isolatedSettings, null, 2), { mode: 0o600 })
   const authPath = copyMuseAuth(configHome)
 
   const args = ['--yolo']

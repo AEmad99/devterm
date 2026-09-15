@@ -244,9 +244,20 @@ function isolatedAgentArgs(
   } else {
     args.unshift('--no-session')
   }
-  if (preferences?.provider.trim()) args.push('--provider', preferences.provider.trim())
-  const selectedModel = options?.model?.trim() || preferences?.model.trim()
-  if (selectedModel) args.push('--model', selectedModel)
+  const configuredProvider = preferences?.provider?.trim()
+  const selectedModel = options?.model?.trim() || preferences?.model?.trim()
+  if (selectedModel) {
+    // A qualified provider/model reference is self-describing. Combining it
+    // with --provider makes Pi search that provider for a literal
+    // "provider/model" id and fall back to its saved default. A bare model still
+    // needs the configured provider to disambiguate it.
+    if (configuredProvider && !selectedModel.includes('/')) {
+      args.push('--provider', configuredProvider)
+    }
+    args.push('--model', selectedModel)
+  } else if (configuredProvider) {
+    args.push('--provider', configuredProvider)
+  }
   const modelCycle = [selectedModel, ...(preferences?.fallbackModels ?? [])]
     .map((value) => value?.trim() ?? '')
     .filter(Boolean)

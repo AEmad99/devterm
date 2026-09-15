@@ -97,7 +97,7 @@ Project skills in `.claude/skills/` (load via the skill tool, they carry the exa
 | `grok` | `grok-launch.ts` | Per-session `.grok/config.toml` HTTP MCP; tools as `devterm__*` |
 | `codex` | `codex-launch.ts` | Isolated `CODEX_HOME/config.toml` HTTP MCP; tools as `mcp__devterm__*` |
 | `antigravity` | `antigravity-launch.ts` | Per-session `.antigravity/mcp.json` HTTP MCP for Google `agy` |
-| `muse` | `muse-launch.ts` | Isolated `%LOCALAPPDATA%\\Programs\\muse\\muse.cmd`/PATH launcher, temporary `settings.json` streamable HTTP MCP, `--yolo`; remote native shell/workspace writes disabled |
+| `muse` | `muse-launch.ts` | Isolated `%LOCALAPPDATA%\\Programs\\muse\\muse.cmd`/PATH launcher, temporary `settings.json` streamable HTTP MCP, `--yolo`; safe model/reasoning/TUI preferences are copied in while permissions/hooks/global MCP stay excluded; remote native shell/workspace writes disabled |
 
 - MCP bridge (`src/main/mcp/server.ts`) on `127.0.0.1:<random-port>` gated by a random Bearer [REDACTED] MCP launch uses policy mode `full` (no DevTerm confirm modal) — permission prompts belong to the agent CLI. Approval rules (`approval-rules.ts`, `userData/approval-rules.json`, UI under Settings → Agent guardrails) remain a **PRE-CHECK** allow/deny/ask at the MCP boundary. There is no per-session policy picker.
 - **Host tools** (`tools.ts`, remote only, against `SshHostBackend`): `ping`, `get_host_context`, `run_command`, `list_dir`, `read_file`, `write_file`. Local agents do **not** register these (`hostTools: false`); they use the CLI's own tools in the operator folder (`resolveLocalSpawnCwd`). Relative paths and `run_command` on POSIX remotes honor the live POSIX cwd from OSC 7; Windows remotes use the Windows compatibility clients and Windows path wrappers.
