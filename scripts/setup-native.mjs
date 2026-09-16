@@ -186,10 +186,11 @@ if (nativesPresent) {
   console.log(`✓ node-pty native binary installed (Electron ABI ${ELECTRON_ABI})`)
 }
 
-// 3) Bundled ConPTY dll (Windows only). PtyManager forks with `useConptyDll`
-//    to dodge the in-box conhost ConPTY's TUI repaint/teardown bugs. The native
-//    conpty.node hard-throws "Cannot find conpty.dll" unless conpty.dll (and the
-//    OpenConsole.exe it launches) sit in build/Release/conpty/. The package
+// 3) Optional bundled ConPTY dll (Windows only). PtyManager defaults to the
+//    in-box ConPTY because OpenConsole.exe can crash during teardown, but keeps
+//    DEVTERM_USE_BUNDLED_CONPTY=1 as a diagnostic escape hatch. The native
+//    conpty.node hard-throws "Cannot find conpty.dll" in that mode unless
+//    conpty.dll (and OpenConsole.exe) sit in build/Release/conpty/. The package
 //    ships those binaries under third_party/conpty/<version>/win10-<arch>/, but
 //    the prebuilt .node tarball doesn't include the folder and the package's own
 //    copy step is a postinstall that never runs under `--ignore-scripts`. Lay it
@@ -226,10 +227,9 @@ if (process.platform === 'win32') {
     }
     if (!installed) {
       console.warn(
-        '! Could not find bundled ConPTY binaries under third_party/conpty.\n' +
-          '  PtyManager forks with useConptyDll, so without these the local shell\n' +
-          '  fails to spawn. Reinstall node-pty, or copy conpty.dll + OpenConsole.exe\n' +
-          '  into node_modules/node-pty/build/Release/conpty/.'
+        '! Could not find optional bundled ConPTY binaries under third_party/conpty.\n' +
+          '  The default in-box ConPTY remains available. DEVTERM_USE_BUNDLED_CONPTY=1\n' +
+          '  requires conpty.dll + OpenConsole.exe under build/Release/conpty/.'
       )
     }
   }

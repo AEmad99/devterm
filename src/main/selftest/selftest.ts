@@ -181,7 +181,11 @@ function testBundledAgentRuntime(): Promise<void> {
         clearTimeout(timeout)
         check(
           'bundled DevTerm Agent runtime starts in ConPTY',
-          exitCode === 0 && /\b\d+\.\d+\.\d+\b/.test(buf),
+          // ConPTY may place the version immediately after an ANSI final byte
+          // such as `h` (a word character), so a leading `\b` is not reliable
+          // until the terminal stream is stripped. Matching the numeric shape
+          // is sufficient for this offline `--version` smoke check.
+          exitCode === 0 && /\d+\.\d+\.\d+\b/.test(buf),
           `exit=${String(exitCode)} output=${buf.replace(/\s+/g, ' ').trim()}`
         )
         mgr.killAll()

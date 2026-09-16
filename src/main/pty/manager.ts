@@ -6,6 +6,7 @@ import { dirname, join } from 'path'
 import { createRequire } from 'node:module'
 import * as pty from 'node-pty'
 import type { IPty, IWindowsPtyForkOptions } from 'node-pty'
+import { shouldUseBundledConpty } from './conpty-policy'
 import type {
   DefaultShellPref,
   PtyCreateOptions,
@@ -114,15 +115,9 @@ function pwshCandidatePaths(): string[] {
 }
 
 /**
- * Whether node-pty's bundled ConPTY dll is actually on disk. We prefer it (the
- * Windows Terminal ConPTY) over the in-box conhost copy for its TUI repaint /
- * teardown fixes, but the native conpty.node hard-throws "Cannot find
- * conpty.dll" if `build/Release/conpty/conpty.dll` is missing (e.g. a prebuilt
- * that didn't ship the folder, or a setup that didn't copy it). Resolve it via
- * node-pty's own module location so this is correct in dev and the asarUnpacked
- * packaged build alike, and degrade to the in-box ConPTY instead of crashing
- * every local-terminal spawn. `npm run setup` lays the dll down; this is the
- * runtime backstop.
+ * Whether node-pty's optional bundled ConPTY dll is actually on disk. Resolve
+ * it through node-pty's module location so diagnostics behave the same in dev
+ * and in an asarUnpacked build.
  */
 function bundledConptyAvailable(): boolean {
   if (process.platform !== 'win32') return false
@@ -134,15 +129,14 @@ function bundledConptyAvailable(): boolean {
   }
 }
 
-// Resolved once — the dll is present (or not) for the whole process lifetime,
-// and pty.create is hot.
-const USE_CONPTY_DLL = bundledConptyAvailable()
-if (process.platform === 'win32' && !USE_CONPTY_DLL) {
-  console.warn(
-    '[pty] bundled ConPTY dll not found (node-pty/build/Release/conpty/conpty.dll); ' +
-      'falling back to the in-box ConPTY. Run `npm run setup` to restore it.'
-  )
-}
+// The bundled path launches OpenConsole.exe, which is currently unstable on
+// Windows 11 teardown. The in-box ConPTY is therefore the safe default. Keep a
+// narrow opt-in for diagnosis/comparison without exposing it as an app setting.
+const USE_CONPTY_DLL = shouldUseBundledConpty(
+  process.platform,
+  bundledConptyAvailable(),
+  process.env.DEVTERM_USE_BUNDLED_CONPTY
+)
 
 /**
  * Whether a PTY data chunk carries actual shell output, as opposed to just the
@@ -245,12 +239,11 @@ export class PtyManager {
       rows: opts.rows || 24,
       cwd,
       env: { ...baseEnv, ...(opts.env ?? {}) },
-      // Use the ConPTY bundled with node-pty (the Windows Terminal one) instead
-      // of the in-box conhost ConPTY: the OS copy has known TUI repaint
-      // corruption and teardown bugs, and the bundled-dll path also skips the
-      // console-list agent that crashes when the console is already gone.
-      // Falls back to the in-box ConPTY (USE_CONPTY_DLL=false) when the bundled
-      // dll isn't on disk, rather than throwing. Ignored on non-Windows.
+      // Default to the in-box ConPTY. node-pty's bundled path launches
+      // OpenConsole.exe, which can access-violate during teardown on current
+      // Windows 11 builds and make an SSH-backed agent look disconnected.
+      // DEVTERM_USE_BUNDLED_CONPTY=1 retains an explicit diagnostic escape
+      // hatch when the packaged dll is present. Ignored on non-Windows.
       useConptyDll: USE_CONPTY_DLL
     }
     const proc = (() => {
@@ -315,16 +308,22 @@ export class PtyManager {
       // process for this id, this exit belongs to the old process — it must not
       // fire events against, or delete, the live replacement.
       if (this.ptys.get(id) !== proc) return
+      // Mark the PTY dead before invoking external callbacks. Some cleanup
+      // callbacks call kill()/killAll(); leaving this process in the map until
+      // after those callbacks makes node-pty kill an already-exited ConPTY.
+      // The bundled path can crash OpenConsole.exe there, while the in-box path
+      // launches conpty_console_list_agent after the console is already gone
+      // and throws "AttachConsole failed" as a JavaScript process error.
+      this.ptys.delete(id)
+      this.dataListeners.delete(id)
+      const set = this.exitListeners.get(id)
+      this.exitListeners.delete(id)
       // If we never saw real output, this is a startup failure — surface it.
       if (!healthHealthy && this.handlers.onStartupFailure) {
         this.handlers.onStartupFailure(id, { shell, exitCode, signal })
       }
       this.handlers.onExit(id, exitCode, signal)
-      this.ptys.delete(id)
-      this.dataListeners.delete(id)
-      const set = this.exitListeners.get(id)
       if (set) {
-        this.exitListeners.delete(id)
         for (const cb of set) {
           try {
             cb(exitCode, signal)

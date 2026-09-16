@@ -3,6 +3,12 @@
 All notable changes to DevTerm are documented here. The most recent section is
 at the top. Dates are ISO `YYYY-MM-DD`.
 
+## 1.3.30 — 2026-09-16
+
+### Fixed
+
+- Windows terminals and SSH-backed agent panes use the in-box ConPTY by default, avoiding access-violation crashes in node-pty's bundled `OpenConsole.exe` helper that surfaced as main-process JavaScript errors and dropped sessions.
+
 ## 1.3.29 — 2026-09-15
 
 ### Changed
@@ -65,7 +71,7 @@ Windows OpenSSH stability follow-up.
 
 ### Added
 
-- **Windows OpenSSH agent host tools.** Remote `run_command` on Windows now runs in PowerShell at the operator cwd, and file tools resolve `C:\\Users\\...` against Win32-OpenSSH SFTP (`/C/Users/...`). Interactive Windows remotes open PowerShell with OSC 7/133. Saved connections can also launch **RDP** via Microsoft Remote Desktop.
+- **Windows OpenSSH agent host tools.** Remote `run_command` on Windows now runs in PowerShell at the operator cwd, and file tools resolve `C:\\Users\\...` against Win32-OpenSSH SFTP (`/C/Users/...`). Interactive Windows remotes open PowerShell with OSC 7/133.
 - **Legacy SSH host keys.** `ssh-rsa` / `ssh-dss` remain offered so older Windows OpenSSH servers can connect.
 
 ## 1.3.22 — 2026-09-12
