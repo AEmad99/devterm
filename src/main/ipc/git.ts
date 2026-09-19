@@ -7,7 +7,9 @@
 //     remove, merge).
 //   * `git:on-change:<l:/r: cache key>` — main→renderer push; polled on a 5s
 //     timer. Watchers register via the fire-and-forget `git:on-change:add` /
-//     `git:on-change:remove` channels (ipcRenderer.send → ipcMain.on).
+//     `git:on-change:remove` channels (ipcRenderer.send → ipcMain.on). A
+//     hidden group can pause one target without dropping its subscription;
+//     resuming requests one immediate sweep.
 //
 // Results are cached for 5s per (sessionId, path) so a busy file tree that
 // re-asks for the same directory doesn't spawn a fresh git process each frame.
@@ -566,24 +568,44 @@ export function registerGitIpc(ssh: SSHManager, getWindow: () => BrowserWindow |
   )
 
   // ---------------------------------------------------------------------
-  // Live status push (unchanged behavior)
+  // Live status push, with visibility-aware polling.
   // ---------------------------------------------------------------------
 
-  const watched = new Map<string, { sessionId?: string; path: string }>()
+  const watched = new Map<
+    string,
+    { target: { sessionId?: string; path: string }; paused: boolean }
+  >()
   const lastPushed = new Map<string, string>()
   // A tick awaits one remote exec per target (up to 30s); never let ticks
-  // overlap — skip the interval if the previous sweep is still running.
+  // overlap — queue one immediate sweep if focus arrives while the previous
+  // sweep is still running.
   let tickInFlight = false
-  const interval = setInterval(() => void tick(), POLL_MS)
+  let tickPending = false
+  const requestTick = () => {
+    if (tickInFlight) {
+      tickPending = true
+      return
+    }
+    void tick()
+  }
+  const interval = setInterval(requestTick, POLL_MS)
   const tick = async () => {
-    if (tickInFlight || watched.size === 0) return
+    if (tickInFlight) {
+      tickPending = true
+      return
+    }
+    const active = [...watched].filter(([, watch]) => !watch.paused)
+    if (active.length === 0) return
     tickInFlight = true
     try {
       await Promise.allSettled(
-        [...watched].map(async ([key, target]) => {
+        active.map(async ([key, watch]) => {
+          if (watch.paused || !watched.has(key)) return
+          const { target } = watch
           const next = target.sessionId
             ? await resolveRemote(ssh, target.sessionId, target.path)
             : await resolveLocal(target.path)
+          if (watch.paused || watched.get(key) !== watch) return
           const sig = signature(next)
           if (lastPushed.get(key) !== sig) {
             lastPushed.set(key, sig)
@@ -593,16 +615,32 @@ export function registerGitIpc(ssh: SSHManager, getWindow: () => BrowserWindow |
       )
     } finally {
       tickInFlight = false
+      if (tickPending) {
+        tickPending = false
+        requestTick()
+      }
     }
   }
   ipcMain.on(IPC.gitOnChangeAdd, (_e, target: { sessionId?: string; path: string }) => {
-    watched.set(cacheKey(target.sessionId, target.path), target)
+    watched.set(cacheKey(target.sessionId, target.path), { target, paused: false })
   })
   ipcMain.on(IPC.gitOnChangeRemove, (_e, target: { sessionId?: string; path: string }) => {
     const k = cacheKey(target.sessionId, target.path)
     watched.delete(k)
     lastPushed.delete(k)
   })
+  ipcMain.on(
+    IPC.gitOnChangeSetPaused,
+    (_e, target: { sessionId?: string; path: string }, paused: boolean) => {
+      const watch = watched.get(cacheKey(target.sessionId, target.path))
+      if (!watch || watch.paused === paused) return
+      const wasPaused = watch.paused
+      watch.paused = paused
+      // The next sweep is immediate when a hidden group is focused again. If
+      // another sweep is already running, requestTick queues exactly one more.
+      if (wasPaused && !paused) requestTick()
+    }
+  )
 
   const cleanup = () => clearInterval(interval)
   process.once('before-quit', cleanup)

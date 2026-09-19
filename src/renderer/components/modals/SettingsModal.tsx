@@ -58,14 +58,7 @@ const FONT_PRESETS = [
 const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n))
 
 type SettingsTab =
-  | 'general'
-  | 'appearance'
-  | 'terminal'
-  | 'layout'
-  | 'agent'
-  | 'hotkeys'
-  | 'dictation'
-  | 'system'
+  'general' | 'appearance' | 'terminal' | 'layout' | 'agent' | 'hotkeys' | 'dictation' | 'system'
 
 const TAB_TITLES: Record<SettingsTab, string> = {
   general: 'General & Shell',
@@ -220,6 +213,16 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
   const setRemoteDetachedSessions = useSettings((s) => s.setRemoteDetachedSessions)
   const sessionRestore = useSettings((s) => s.sessionRestore)
   const setSessionRestore = useSettings((s) => s.setSessionRestore)
+  const remoteConnectMode = useSettings((s) => s.remoteConnectMode)
+  const setRemoteConnectMode = useSettings((s) => s.setRemoteConnectMode)
+  const hibernateEnabled = useSettings((s) => s.hibernateEnabled)
+  const setHibernateEnabled = useSettings((s) => s.setHibernateEnabled)
+  const keepSessionsInTray = useSettings((s) => s.keepSessionsInTray)
+  const setKeepSessionsInTray = useSettings((s) => s.setKeepSessionsInTray)
+  const hibernateAfterMs = useSettings((s) => s.hibernateAfterMs)
+  const setHibernateAfterMs = useSettings((s) => s.setHibernateAfterMs)
+  const outputRingLines = useSettings((s) => s.outputRingLines)
+  const setOutputRingLines = useSettings((s) => s.setOutputRingLines)
   const density = useSettings((s) => s.density)
   const setDensity = useSettings((s) => s.setDensity)
 
@@ -639,6 +642,20 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                     </p>
                   </div>
                   <div className="settings-card-body">
+                    <label className="settings-row-grid">
+                      <span className="settings-label">Keep sessions running in the tray</span>
+                      <span className="settings-control">
+                        <input
+                          type="checkbox"
+                          checked={keepSessionsInTray}
+                          onChange={(e) => setKeepSessionsInTray(e.target.checked)}
+                        />
+                      </span>
+                    </label>
+                    <p className="settings-hint">
+                      Closing the window hides DevTerm without stopping local shells, SSH sessions,
+                      or agents. Use Quit DevTerm to stop everything.
+                    </p>
                     <label className="settings-row-grid">
                       <span className="settings-label">Default shell</span>
                       <span className="settings-control">
@@ -1172,6 +1189,25 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                       Reopens local shells, saved SSH connections, browser panes, editors, and
                       agents with their split layout. Workspace auto-launch still takes priority
                       when enabled. Ad-hoc SSH (not saved) is skipped.
+                    </p>
+                    <label className="settings-row-grid">
+                      <span className="settings-label">Background remote connections</span>
+                      <span className="settings-control">
+                        <select
+                          className="settings-select"
+                          value={remoteConnectMode}
+                          onChange={(e) =>
+                            setRemoteConnectMode(e.target.value as typeof remoteConnectMode)
+                          }
+                        >
+                          <option value="focus">Connect when group is focused</option>
+                          <option value="stagger">Stagger after the active group</option>
+                        </select>
+                      </span>
+                    </label>
+                    <p className="settings-hint">
+                      Local shells start immediately. Remote tabs are painted first so a large
+                      restore does not open every SSH client in the same tick.
                     </p>
                   </div>
                 </div>
@@ -1830,6 +1866,69 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
             {/* 8. System & Backup */}
             {activeTab === 'system' && (
               <div className="settings-tab-pane">
+                <div className="settings-card">
+                  <div className="settings-card-header">
+                    <h4>Terminal Performance</h4>
+                    <p className="settings-card-subtitle">
+                      Reclaim renderer memory for inactive groups without stopping shells, SSH
+                      sessions, or agents.
+                    </p>
+                  </div>
+                  <div className="settings-card-body">
+                    <label className="settings-row-grid">
+                      <span className="settings-label">Hibernate hidden-group terminals</span>
+                      <span className="settings-control">
+                        <input
+                          type="checkbox"
+                          checked={hibernateEnabled}
+                          onChange={(e) => setHibernateEnabled(e.target.checked)}
+                        />
+                      </span>
+                    </label>
+                    <label className="settings-row-grid">
+                      <span className="settings-label">Hibernate after</span>
+                      <span className="settings-control">
+                        <input
+                          className="text-input num-input"
+                          type="number"
+                          min={1}
+                          max={86400}
+                          step={1}
+                          value={Math.round(hibernateAfterMs / 1000)}
+                          disabled={!hibernateEnabled}
+                          onChange={(e) =>
+                            setHibernateAfterMs(
+                              clamp(Number(e.target.value) || 30, 1, 86400) * 1000
+                            )
+                          }
+                        />
+                        <span className="settings-hint">seconds</span>
+                      </span>
+                    </label>
+                    <label className="settings-row-grid">
+                      <span className="settings-label">Output replay ring</span>
+                      <span className="settings-control">
+                        <input
+                          className="text-input num-input"
+                          type="number"
+                          min={100}
+                          max={100000}
+                          step={500}
+                          value={outputRingLines}
+                          onChange={(e) =>
+                            setOutputRingLines(clamp(Number(e.target.value) || 10000, 100, 100000))
+                          }
+                        />
+                        <span className="settings-hint">lines</span>
+                      </span>
+                    </label>
+                    <p className="settings-hint">
+                      Attention-needed sessions and unsaved editor sessions stay mounted. Returning
+                      to a group replays its retained ANSI output.
+                    </p>
+                  </div>
+                </div>
+
                 <div className="settings-card">
                   <div className="settings-card-header">
                     <h4>About &amp; Updates</h4>

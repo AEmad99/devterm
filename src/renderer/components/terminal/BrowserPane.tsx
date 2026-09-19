@@ -21,7 +21,7 @@ import {
   reportTabUrl
 } from '../../lib/browser-control'
 import { formatBytes } from '../../lib/format'
-import type { BrowserDownloadItem } from '@shared/types'
+import type { BrowserDownloadItem, SessionRestoreBrowserTab } from '@shared/types'
 import {
   IconArrowDown,
   IconArrowLeft,
@@ -95,21 +95,32 @@ interface TabState {
   findActive: number
 }
 
-function makeTab(url: string, zoom = 1, presetId?: string): TabState {
+function makeTab(
+  url: string,
+  zoom = 1,
+  presetId?: string,
+  snapshot?: SessionRestoreBrowserTab
+): TabState {
   return {
     id: presetId ?? newTabId(),
     initialUrl: url,
-    title: 'New Tab',
+    title: snapshot?.title || 'New Tab',
     current: url,
     loading: false,
     canBack: false,
     canFwd: false,
-    zoom,
-    muted: false,
+    zoom: snapshot?.zoom ?? zoom,
+    muted: snapshot?.muted ?? false,
     webContentsId: null,
     findMatches: 0,
     findActive: 0
   }
+}
+
+function initialTabsFor(session: Session): TabState[] {
+  const saved = session.browserTabs?.filter((tab) => tab.url.trim())
+  if (saved?.length) return saved.map((tab) => makeTab(tab.url, tab.zoom ?? 1, undefined, tab))
+  return [makeTab(session.url ?? HOME_URL, undefined, session.firstTabKey)]
 }
 
 /** Imperative surface the pane toolbar drives on the active tab. */
@@ -387,8 +398,7 @@ const BrowserTab = memo(
         })
         const mod = input.control || input.meta
         const browserShortcut =
-          mod &&
-          ['l', 't', 'w', 'r', 'f', '=', '+', '-', '0'].includes(input.key.toLowerCase())
+          mod && ['l', 't', 'w', 'r', 'f', '=', '+', '-', '0'].includes(input.key.toLowerCase())
         if (input.alt && input.key === 'Left') {
           e.preventDefault()
           if (wv.canGoBack()) wv.goBack()
@@ -684,10 +694,13 @@ const BrowserFindBar = memo(function BrowserFindBar({
 function BrowserPane({ session }: { session: Session }) {
   // An agent-created pane's first tab must carry the pre-agreed tabKey from
   // the browser_open request so its registration resolves the pending waiter.
-  const [tabs, setTabs] = useState<TabState[]>(() => [
-    makeTab(session.url ?? HOME_URL, undefined, session.firstTabKey)
-  ])
-  const [activeId, setActiveId] = useState(tabs[0].id)
+  // Restored panes deliberately generate fresh tab ids, so an old AGT tab is
+  // an ordinary operator tab unless a live agent opens it again.
+  const [tabs, setTabs] = useState<TabState[]>(() => initialTabsFor(session))
+  const [activeId, setActiveId] = useState(() => {
+    const index = Math.max(0, Math.min(tabs.length - 1, session.browserActiveTab ?? 0))
+    return tabs[index]?.id ?? tabs[0].id
+  })
   const [address, setAddress] = useState(tabs[0].current)
   const [dlDrawerOpen, setDlDrawerOpen] = useState(false)
   const [downloads, setDownloads] = useState<BrowserDownloadItem[]>([])
@@ -835,6 +848,22 @@ function BrowserPane({ session }: { session: Session }) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeId, session.id])
+
+  // Keep the full in-pane tab list in the session store. The main process
+  // persists this metadata with the normal last-session snapshot path.
+  useEffect(() => {
+    const activeIndex = Math.max(
+      0,
+      tabs.findIndex((tab) => tab.id === activeId)
+    )
+    const snapshots: SessionRestoreBrowserTab[] = tabs.map((tab) => ({
+      url: tab.current || tab.initialUrl,
+      title: tab.title,
+      zoom: tab.zoom,
+      muted: tab.muted || undefined
+    }))
+    useSessions.getState().setBrowserTabs(session.id, snapshots, activeIndex)
+  }, [tabs, activeId, session.id])
 
   // Mirror the active tab's title onto the session so the layout tab shows the page.
   // Fall back to the page origin for new/untitled tabs so the tab isn't just "Browser".

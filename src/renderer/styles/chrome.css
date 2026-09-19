@@ -1923,3 +1923,31 @@ button.danger:hover:not(:disabled) {
   box-shadow: var(--shadow-2, 0 12px 32px color-mix(in srgb, #000 28%, transparent));
   pointer-events: none;
 }
+.restore-progress-toast {
+  min-width: min(420px, 80vw);
+  border-radius: var(--radius-md, 8px);
+  pointer-events: auto;
+  line-height: 1.35;
+}
+.restore-progress-toast strong {
+  font-variant-numeric: tabular-nums;
+}
+.restore-progress-errors {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 6px;
+  color: var(--danger);
+  font-size: 11px;
+}
+.restore-progress-errors button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+}

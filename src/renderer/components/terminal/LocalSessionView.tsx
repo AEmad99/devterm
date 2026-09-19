@@ -13,7 +13,7 @@ import { useBridgeActivity } from '../../lib/bridge-activity'
  * tab strip (icon cluster). The agent occupies this pane — not a side split,
  * not an ask bar. The shell stays mounted and hidden so its PTY survives Stop.
  */
-function LocalSessionView({ session }: { session: Session }) {
+function LocalSessionView({ session, hibernated }: { session: Session; hibernated?: boolean }) {
   const [agentKind, setAgentKind] = useState<AgentKind>(
     () => session.agentKind ?? useSettings.getState().agentKind
   )
@@ -46,7 +46,7 @@ function LocalSessionView({ session }: { session: Session }) {
     <div className="remote-view">
       <div className="view-body">
         <div className={`view-layer${agentDocked ? ' term-hidden' : ''}`}>
-          <TerminalView session={session} />
+          <TerminalView session={session} hibernated={hibernated} />
         </div>
         {agentAlive && (
           <div

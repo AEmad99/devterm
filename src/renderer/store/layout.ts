@@ -125,6 +125,18 @@ function removeTab(root: LayoutNode | null, sid: string): LayoutNode | null {
   return prune(updated)
 }
 
+function replaceTabId(n: LayoutNode, oldId: string, newId: string): LayoutNode {
+  if (n.type === 'leaf') {
+    if (!n.tabs.includes(oldId)) return n
+    return {
+      ...n,
+      tabs: n.tabs.map((id) => (id === oldId ? newId : id)),
+      active: n.active === oldId ? newId : n.active
+    }
+  }
+  return { ...n, children: n.children.map((child) => replaceTabId(child, oldId, newId)) }
+}
+
 /** Compute pane rects and split-divider handles from the tree (fractions). */
 export function computeLayout(root: LayoutNode | null): {
   leaves: Array<{ leaf: LeafNode; rect: Rect }>
@@ -205,18 +217,27 @@ function reconcile(prev: RootState, ids: string[]): RootState {
   let root = prev.root
   let activeLeaf = prev.activeLeaf
 
-  // Common case: a pending session's id was swapped for its real id — rename in
-  // place so the tab keeps its position. Gate on the pending- prefix: a genuine
-  // close-A/open-B pair batched by React 18 must not be treated as a rename.
-  if (removed.length === 1 && added.length === 1 && removed[0].startsWith('pending-')) {
-    const owner = leafOf(root, removed[0])
-    if (owner) {
-      root = updateLeaf(root!, owner.id, (l) => ({
-        ...l,
-        tabs: l.tabs.map((t) => (t === removed[0] ? added[0] : t)),
-        active: l.active === removed[0] ? added[0] : l.active
-      }))
-      return { root, activeLeaf: activeLeaf ?? owner.id }
+  // Common case: pending session ids are swapped for their real ids — rename
+  // them in place so restored/grid tabs keep their snapshot positions. Gate on
+  // the pending prefix: a genuine close-A/open-B batch must not be treated as
+  // a rename. Multiple SSH handshakes can settle in one React render, so pair
+  // the stable session-array order rather than handling only one replacement.
+  const pendingRemoved = removed.filter((id) => id.startsWith('pending-'))
+  if (pendingRemoved.length > 0 && pendingRemoved.length === added.length) {
+    const owners = pendingRemoved.map((id) => leafOf(root, id))
+    if (owners.every((owner): owner is LeafNode => !!owner)) {
+      for (let i = 0; i < pendingRemoved.length; i++) {
+        const oldId = pendingRemoved[i]
+        const newId = added[i]
+        const owner = owners[i]!
+        root = updateLeaf(root!, owner.id, (l) => ({
+          ...l,
+          tabs: l.tabs.map((t) => (t === oldId ? newId : t)),
+          active: l.active === oldId ? newId : l.active
+        }))
+        activeLeaf = activeLeaf ?? owner.id
+      }
+      return { root, activeLeaf }
     }
   }
 
@@ -298,6 +319,8 @@ interface LayoutState {
   /** Create a fresh empty group on demand, make it active, and return its id. */
   createGroup: (name?: string) => string
   setActiveGroup: (id: string) => void
+  /** Rename a pending session in place when its SSH transport becomes live. */
+  replaceSessionId: (oldId: string, newId: string) => void
   setActiveTab: (leafId: string, sid: string) => void
   focusLeaf: (leafId: string) => void
   /** Reorder/move a tab into a leaf at a given index (drag within a strip). */
@@ -319,8 +342,8 @@ interface LayoutState {
   equalize: () => void
   /** Adjust a split divider; delta is a fraction of the container. */
   resize: (splitId: string, index: number, delta: number) => void
-  /** Set a group's tree from a workspace snapshot (fresh node ids) and focus it. */
-  restoreGroup: (id: string, name: string, snap: LayoutSnapshot | null) => void
+  /** Set a group's tree from a workspace snapshot (fresh node ids). */
+  restoreGroup: (id: string, name: string, snap: LayoutSnapshot | null, activate?: boolean) => void
   /** Tag a group as launched from a given workspace (so the "save back" action shows). */
   flagGroupLaunched: (groupId: string, workspaceId: string) => void
   /** Drop the launched-from flag once the user has saved back. */
@@ -444,6 +467,18 @@ export const useLayout = create<LayoutState>((set) => ({
     set((s) => {
       if (!s.groups.some((g) => g.id === id)) return s
       return { activeGroupId: id, focusedId: null }
+    }),
+
+  replaceSessionId: (oldId, newId) =>
+    set((s) => {
+      if (oldId === newId) return s
+      let changed = false
+      const groups = s.groups.map((g) => {
+        if (!g.root || !allLeaves(g.root).some((leaf) => leaf.tabs.includes(oldId))) return g
+        changed = true
+        return { ...g, root: replaceTabId(g.root, oldId, newId) }
+      })
+      return changed ? { groups, focusedId: s.focusedId === oldId ? newId : s.focusedId } : s
     }),
 
   setActiveTab: (leafId, sid) =>
@@ -693,14 +728,14 @@ export const useLayout = create<LayoutState>((set) => ({
       })
     ),
 
-  restoreGroup: (id, name, snap) =>
+  restoreGroup: (id, name, snap, activate = true) =>
     set((s) => {
       const built = buildSnapshot(snap)
       const exists = s.groups.some((g) => g.id === id)
       const groups = exists
         ? s.groups.map((g) => (g.id === id ? { ...g, name, ...built } : g))
         : [...s.groups, { id, name, ...built }]
-      return { groups, activeGroupId: id, focusedId: null }
+      return { groups, activeGroupId: activate ? id : s.activeGroupId, focusedId: null }
     }),
 
   flagGroupLaunched: (groupId, workspaceId) =>

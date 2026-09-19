@@ -40,11 +40,22 @@ import {
   openTmuxPicker,
   revealTerminalLine
 } from './lib/terms'
-import { capturableSessions, captureWorkspace, launchWorkspaceIntoGroup } from './lib/workspace'
-import { persistSessionRestore, restoreSessionSnapshot } from './lib/session-restore'
+import {
+  activateWorkspaceGroup,
+  capturableSessions,
+  captureWorkspace,
+  launchWorkspaceIntoGroup
+} from './lib/workspace'
+import {
+  activateRestoredGroup,
+  persistSessionRestore,
+  restoreSessionSnapshot,
+  type RestoreProgress
+} from './lib/session-restore'
 import { sessionCloseGuard, hasUnsavedEditors } from './lib/close-guard'
 import { dictation } from './lib/stt/dictation'
 import { useDictation } from './store/dictation'
+import { REMOTE_CONNECT_STAGGER_MS } from './lib/remote-connect'
 import DictationStatus from './components/dictation/DictationStatus'
 import Toasts from './components/common/Toasts'
 import GitPanel from './components/git/GitPanel'
@@ -56,14 +67,33 @@ import type { View, BottomPanelMode } from './components/chrome/types'
 function restoreStructureKey(): string {
   const sessions = useSessions
     .getState()
-    .sessions.filter((s) => !s.id.startsWith('pending-'))
+    .sessions.filter((s) => !s.id.startsWith('pending-') || (s.deferredRemote && !s.closed))
     .map((s) => ({
       id: s.id,
       kind: s.kind,
       groupId: s.groupId,
       connectionId: s.connectionId,
       title: s.customTitle ? s.title : undefined,
-      url: s.kind === 'browser' ? s.url : undefined
+      url: s.kind === 'browser' ? s.url : undefined,
+      browserTabs: s.kind === 'browser' ? s.browserTabs : undefined,
+      browserActiveTab: s.kind === 'browser' ? s.browserActiveTab : undefined,
+      sshDraft:
+        s.kind === 'remote' && !s.connectionId && s.restoreProfile
+          ? {
+              host: s.restoreProfile.host,
+              port: s.restoreProfile.port,
+              username: s.restoreProfile.username,
+              privateKeyPath: s.restoreProfile.privateKeyPath,
+              jump: s.restoreProfile.jump
+                ? {
+                    host: s.restoreProfile.jump.host,
+                    port: s.restoreProfile.jump.port,
+                    username: s.restoreProfile.jump.username,
+                    privateKeyPath: s.restoreProfile.jump.privateKeyPath
+                  }
+                : undefined
+            }
+          : undefined
     }))
   const groups = useLayout.getState().groups.map((g) => ({
     id: g.id,
@@ -137,6 +167,7 @@ export default function App() {
   const [showShortcuts, setShowShortcuts] = useState(false)
   const [showAgents, setShowAgents] = useState(false)
   const [restoreNotice, setRestoreNotice] = useState<string | null>(null)
+  const [restoreProgress, setRestoreProgress] = useState<RestoreProgress | null>(null)
   const [startupHydrated, setStartupHydrated] = useState(false)
   const startupHydratedRef = useRef(false)
   const preserveRestoreSnapshotRef = useRef(false)
@@ -183,10 +214,28 @@ export default function App() {
         const toAutoLaunch = wsList.filter((w) => w.autoLaunch)
         if (toAutoLaunch.length > 0) {
           const conns = await window.devterm.connections.list()
-          for (const ws of toAutoLaunch) {
+          let firstAutoGroupId: string | null = null
+          for (const [index, ws] of toAutoLaunch.entries()) {
             // `recordLaunch: false` — auto-launching on app boot doesn't count
             // as an operator-initiated launch.
-            await launchWorkspaceIntoGroup(ws, conns, { recordLaunch: false })
+            const launched = await launchWorkspaceIntoGroup(ws, conns, {
+              recordLaunch: false,
+              activate: index === 0
+            })
+            firstAutoGroupId ??= launched.groupId
+            if (firstAutoGroupId) {
+              useLayout.getState().setActiveGroup(firstAutoGroupId)
+              const firstSession = groupActiveSession(
+                useLayout.getState().groups.find((g) => g.id === firstAutoGroupId)
+              )
+              if (firstSession) useSessions.getState().setActive(firstSession)
+            }
+            if (index > 0 && useSettings.getState().remoteConnectMode === 'stagger') {
+              window.setTimeout(
+                () => void activateWorkspaceGroup(launched.groupId),
+                index * REMOTE_CONNECT_STAGGER_MS
+              )
+            }
           }
         }
         if (useSettings.getState().sessionRestore) {
@@ -194,12 +243,16 @@ export default function App() {
             const snap = await window.devterm.sessionRestore.load()
             if (snap?.groups?.length) {
               const conns = await window.devterm.connections.list()
-              const { opened, attempted } = await restoreSessionSnapshot(snap, conns)
-              preserveRestoreSnapshot = opened < attempted
+              const { opened, attempted, incomplete } = await restoreSessionSnapshot(snap, conns, {
+                onProgress: setRestoreProgress
+              })
+              preserveRestoreSnapshot = incomplete || opened < attempted
               if (opened > 0) {
-                setRestoreNotice(
-                  `Restored ${opened} terminal${opened === 1 ? '' : 's'} from your last session.`
-                )
+                if (!useSessions.getState().sessions.some((s) => s.kind === 'remote')) {
+                  setRestoreNotice(
+                    `Restored ${opened} terminal${opened === 1 ? '' : 's'} from your last session.`
+                  )
+                }
               }
             } else {
               preserveRestoreSnapshot = false
@@ -222,6 +275,14 @@ export default function App() {
     })()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // A group tab can be selected by the group bar, a tray notification, or a
+  // keyboard action. Whichever surface wins, focusing the group is the single
+  // trigger for its painted remote tabs to start connecting.
+  useEffect(() => {
+    void activateRestoredGroup(activeGroupId)
+    void activateWorkspaceGroup(activeGroupId)
+  }, [activeGroupId])
 
   // Agent UI modes can change from a floating OS window; apply locally so the
   // main session store (docked/hidden/floating chrome) stays in sync.
@@ -270,6 +331,20 @@ export default function App() {
     const t = window.setTimeout(() => setRestoreNotice(null), 6000)
     return () => window.clearTimeout(t)
   }, [restoreNotice])
+
+  useEffect(() => {
+    if (!restoreProgress?.activeSettled) return
+    const t = window.setTimeout(
+      () => setRestoreProgress(null),
+      restoreProgress.failures.length ? 12_000 : 6_000
+    )
+    return () => window.clearTimeout(t)
+  }, [
+    restoreProgress?.activeSettled,
+    restoreProgress?.failures.length,
+    restoreProgress?.ready,
+    restoreProgress?.total
+  ])
 
   // Debounced last-session snapshot so a crash/quit can reopen the layout.
   useEffect(() => {
@@ -657,6 +732,15 @@ export default function App() {
     const sid = groupActiveSession(groups.find((g) => g.id === gid))
     if (sid) setSessionActive(sid)
   }
+  const focusRestoreFailure = (failure: RestoreProgress['failures'][number]) => {
+    if (!failure.sessionId) return
+    const session = useSessions.getState().sessions.find((s) => s.id === failure.sessionId)
+    if (!session) return
+    setActiveGroup(failure.groupId)
+    setSessionActive(failure.sessionId)
+    setView('terminals')
+    focusTerminal(failure.sessionId)
+  }
   const editorCloseForSession = useEditors((s) => s.closeForSession)
   const doCloseSession = (sid: string) => {
     editorCloseForSession(sid)
@@ -1038,7 +1122,40 @@ export default function App() {
         </button>
       )}
       <DictationStatus />
-      {restoreNotice && (
+      {restoreProgress && restoreProgress.total > 0 && (
+        <div className="app-toast restore-progress-toast" role="status">
+          <div>
+            {restoreProgress.activeSettled ? 'Restore' : 'Restoring'} remotes:{' '}
+            <strong>
+              {restoreProgress.ready}/{restoreProgress.total} hosts up
+            </strong>
+            {restoreProgress.pending > 0 && (
+              <span> · {restoreProgress.pending} connect when focused</span>
+            )}
+          </div>
+          {restoreProgress.failures.length > 0 && (
+            <div className="restore-progress-errors">
+              {restoreProgress.failures.map((failure, index) =>
+                failure.sessionId ? (
+                  <button
+                    key={`${failure.sessionId}-${index}`}
+                    type="button"
+                    onClick={() => focusRestoreFailure(failure)}
+                    title="Focus failed remote tab"
+                  >
+                    {failure.title}: {failure.message}
+                  </button>
+                ) : (
+                  <span key={`${failure.groupId}-${index}`}>
+                    {failure.title}: {failure.message}
+                  </span>
+                )
+              )}
+            </div>
+          )}
+        </div>
+      )}
+      {restoreNotice && !restoreProgress && (
         <div className="app-toast" role="status">
           {restoreNotice}
         </div>

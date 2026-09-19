@@ -1,10 +1,11 @@
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { FileEntry } from '@shared/types'
 import FilePane from './FilePane'
 import Splitter from '../common/Splitter'
 import { localFsApi, remoteFsApi, type FsApi } from '../../lib/fsapi'
 import { useEditors } from '../../store/editors'
 import { useSessions } from '../../store/sessions'
+import { DEFAULT_GROUP, useLayout } from '../../store/layout'
 
 const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n))
 const MIN_PANE_FRAC = 0.28
@@ -16,11 +17,30 @@ const MIN_PANE_FRAC = 0.28
  * multi-selection becomes one `TransferItemV2` enqueued through
  * `window.devterm.transfers.*`.
  */
-export default function SftpBrowser({ sessionId }: { sessionId: string }) {
+export default function SftpBrowser({
+  sessionId,
+  hibernated = false
+}: {
+  sessionId: string
+  hibernated?: boolean
+}) {
   const localSep = window.devterm.platform === 'win32' ? '\\' : '/'
 
   const localApi = useMemo<FsApi>(() => localFsApi(), [])
   const remoteApi = useMemo<FsApi>(() => remoteFsApi(sessionId), [sessionId])
+
+  const groupId = useSessions(
+    (s) => s.sessions.find((session) => session.id === sessionId)?.groupId ?? DEFAULT_GROUP
+  )
+  const activeGroupId = useLayout((s) => s.activeGroupId)
+  const pollPaused = hibernated || groupId !== activeGroupId
+
+  // FilePane/FileTree keep their watches mounted with the remote terminal, so
+  // group visibility is pushed into the watch manager instead of tearing down
+  // the SFTP browser or its transfer-capable UI.
+  useEffect(() => {
+    remoteApi.setWatchPaused(pollPaused)
+  }, [remoteApi, pollPaused])
 
   const openEditor = useEditors((s) => s.open)
   // The remote shell's working directory (reported via OSC 7) so the remote pane

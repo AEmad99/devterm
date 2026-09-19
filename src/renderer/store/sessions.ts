@@ -6,11 +6,23 @@ import type {
   AgentUiMode,
   HostContext,
   PolicyMode,
-  SSHProfile
+  SSHProfile,
+  SessionRestoreBrowserTab
 } from '@shared/types'
 import { useLayout } from './layout'
 
 const statusDisposers = new Map<string, () => void>()
+/** Profiles for remote tabs that have been painted but not connected yet. */
+const deferredRemoteProfiles = new Map<string, SSHProfile>()
+/** De-duplicate focus/restore clicks while one deferred connection is opening. */
+const deferredRemoteConnects = new Map<string, Promise<string | null>>()
+
+type DeferredCredentials = {
+  password?: string
+  passphrase?: string
+  jumpPassword?: string
+  jumpPassphrase?: string
+}
 
 export interface Session {
   id: string
@@ -24,6 +36,8 @@ export interface Session {
   cwd?: string
   /** For remote sessions opened from a saved connection: that connection's id. */
   connectionId?: string
+  /** True while a saved remote is represented by a painted, not-yet-connected tab. */
+  deferredRemote?: boolean
   /** Display number for local terminals ("Local N"); reused as terminals close. */
   localNum?: number
   /**
@@ -68,6 +82,10 @@ export interface Session {
   groupId?: string
   /** Browser panes only: initial URL to load on mount (consumed once, like startCwd). */
   url?: string
+  /** Browser panes only: restorable in-pane tabs, mirrored by BrowserPane. */
+  browserTabs?: SessionRestoreBrowserTab[]
+  /** Zero-based active browser tab index for restore. */
+  browserActiveTab?: number
   /**
    * Browser panes created by an agent (browser_* MCP tools): the owning
    * agent's session id. Drives the AGENT tab chip and lets open requests
@@ -110,6 +128,14 @@ export interface Session {
   processRunning?: boolean
   /** Last shell exit code, if known. null for remote closes without a code. */
   exitCode?: number | null
+  /** Ad-hoc SSH profile retained in memory for last-session restore. */
+  restoreProfile?: SSHProfile
+  /** Opaque safeStorage id for an ad-hoc restore credential. */
+  restoreSecretId?: string
+  /** Raw ANSI tail loaded from the previous process, consumed by TerminalView. */
+  restoreScrollback?: string
+  /** A restored ad-hoc remote cannot connect until the operator supplies a secret. */
+  needsAuth?: boolean
 }
 
 interface SessionState {
@@ -120,12 +146,42 @@ interface SessionState {
    * Open a local shell; returns the new session id. `cwd` sets its starting
    * directory, `groupId` its terminal group (defaults to the active group).
    */
-  addLocal: (opts?: { id?: string; cwd?: string; groupId?: string; title?: string }) => string
+  addLocal: (opts?: {
+    id?: string
+    cwd?: string
+    groupId?: string
+    title?: string
+    restoreScrollback?: string
+  }) => string
+  /** Paint a remote tab without opening its SSH transport yet. */
+  addDeferredRemote: (opts: {
+    profile: SSHProfile
+    connectionId?: string
+    startCwd?: string
+    groupId?: string
+    title?: string
+    restoreScrollback?: string
+    needsAuth?: boolean
+    restoreSecretId?: string
+  }) => string
   /** Connect a remote session; resolves to the real session id (or null on failure). */
   connectSsh: (
     profile: SSHProfile,
-    meta?: { connectionId?: string; startCwd?: string; groupId?: string }
+    meta?: {
+      connectionId?: string
+      startCwd?: string
+      groupId?: string
+      title?: string
+      /** Replace an already-painted pending tab in place. */
+      replaceId?: string
+      /** Do not steal the active tab while a hidden group connects. */
+      activate?: boolean
+    }
   ) => Promise<string | null>
+  /** Start a painted remote tab when its group is focused. */
+  connectDeferred: (id: string) => Promise<string | null>
+  /** Supply missing credentials for a restored ad-hoc SSH tab. */
+  setDeferredCredentials: (id: string, credentials: DeferredCredentials) => void
   /** Cancel any in-flight auto-reconnect loop for the given session. */
   cancelSshReconnect: (sessionId: string) => void
   /** Open an in-app browser pane; returns the new session id. Spawns no pty/ssh. */
@@ -134,6 +190,8 @@ interface SessionState {
     groupId?: string
     agentOwnedBy?: string
     firstTabKey?: string
+    browserTabs?: SessionRestoreBrowserTab[]
+    browserActiveTab?: number
   }) => string
   setActive: (id: string) => void
   /** Move a session into another terminal group (the layout sync reconciles trees). */
@@ -143,6 +201,10 @@ interface SessionState {
   setTitle: (id: string, title: string) => void
   /** Keep a browser pane's restorable URL aligned with its active in-pane tab. */
   setBrowserUrl: (id: string, url: string) => void
+  /** Mirror every browser tab into the session snapshot state. */
+  setBrowserTabs: (id: string, tabs: SessionRestoreBrowserTab[], activeIndex: number) => void
+  /** Drop a disk-restored ANSI tail after TerminalView has delivered it. */
+  clearRestoreScrollback: (id: string) => void
   /** Set a user-chosen tab title and mark it custom so dynamic labels don't overwrite it. */
   setCustomTitle: (id: string, title: string) => void
   setCwd: (id: string, cwd: string) => void
@@ -231,7 +293,8 @@ export const useSessions = create<SessionState>((set, get) => ({
       // before the first OSC 7 prompt reports; OSC 7 overwrites this later.
       cwd: opts?.cwd,
       groupId: opts?.groupId ?? useLayout.getState().activeGroupId,
-      context: { kind: 'local', os: 'unknown', detail: '', hostname: '' }
+      context: { kind: 'local', os: 'unknown', detail: '', hostname: '' },
+      restoreScrollback: opts?.restoreScrollback
     }
     set((s) => ({ sessions: [...s.sessions, session], activeId: id }))
     // Enrich with the real local context.
@@ -244,23 +307,30 @@ export const useSessions = create<SessionState>((set, get) => ({
   },
 
   connectSsh: async (profile, meta) => {
-    const tempId = `pending-${crypto.randomUUID()}`
+    const tempId = meta?.replaceId ?? `pending-${crypto.randomUUID()}`
+    const existing = get().sessions.find((x) => x.id === tempId)
+    const pending: Session = {
+      id: tempId,
+      kind: 'remote',
+      title: meta?.title ?? `${profile.username}@${profile.host}`,
+      status: 'connecting…',
+      connectionId: meta?.connectionId,
+      startCwd: meta?.startCwd,
+      // Provisional cwd for workspace restore / reconnect; OSC 7 confirms.
+      cwd: meta?.startCwd,
+      groupId: meta?.groupId ?? existing?.groupId ?? useLayout.getState().activeGroupId,
+      customTitle: meta?.title ? true : existing?.customTitle,
+      deferredRemote: existing?.deferredRemote,
+      restoreProfile: existing?.restoreProfile ?? (!meta?.connectionId ? profile : undefined),
+      restoreSecretId: existing?.restoreSecretId,
+      restoreScrollback: existing?.restoreScrollback,
+      needsAuth: existing?.needsAuth
+    }
     set((s) => ({
-      sessions: [
-        ...s.sessions,
-        {
-          id: tempId,
-          kind: 'remote',
-          title: `${profile.username}@${profile.host}`,
-          status: 'connecting…',
-          connectionId: meta?.connectionId,
-          startCwd: meta?.startCwd,
-          // Provisional cwd for workspace restore / reconnect; OSC 7 confirms.
-          cwd: meta?.startCwd,
-          groupId: meta?.groupId ?? useLayout.getState().activeGroupId
-        }
-      ],
-      activeId: tempId
+      sessions: s.sessions.some((x) => x.id === tempId)
+        ? s.sessions.map((x) => (x.id === tempId ? { ...x, ...pending, closed: false } : x))
+        : [...s.sessions, pending],
+      activeId: meta?.activate === false ? s.activeId : tempId
     }))
     try {
       const { sessionId, context } = await window.devterm.ssh.connect(profile)
@@ -293,15 +363,20 @@ export const useSessions = create<SessionState>((set, get) => ({
           get().setStatus(sessionId, `reconnect failed after ${st.attempts} attempts: ${st.reason}`)
       })
       statusDisposers.set(sessionId, dispose)
+      const pendingBeforeSwap = get().sessions.some((x) => x.id === tempId)
+      if (pendingBeforeSwap) useLayout.getState().replaceSessionId(tempId, sessionId)
       set((s) => {
         const stillPending = s.sessions.some((x) => x.id === tempId)
-        const activeId = stillPending
-          ? s.activeId === tempId
-            ? sessionId
-            : s.activeId
-          : s.sessions.some((x) => x.id === s.activeId)
+        const activeId =
+          meta?.activate === false
             ? s.activeId
-            : (s.sessions[0]?.id ?? null)
+            : stillPending
+              ? s.activeId === tempId
+                ? sessionId
+                : s.activeId
+              : s.sessions.some((x) => x.id === s.activeId)
+                ? s.activeId
+                : (s.sessions[0]?.id ?? null)
         if (!stillPending) {
           // The tab was closed while connect was in flight (pending- close skips
           // disconnect): tear down the ssh2 client we just established.
@@ -315,9 +390,13 @@ export const useSessions = create<SessionState>((set, get) => ({
               ? {
                   ...x,
                   id: sessionId,
-                  title: `${profile.username}@${context.hostname || profile.host}`,
+                  title: x.customTitle
+                    ? x.title
+                    : `${profile.username}@${context.hostname || profile.host}`,
                   context,
-                  status: `connected · ${context.os}`
+                  status: `connected · ${context.os}`,
+                  deferredRemote: undefined,
+                  closed: false
                 }
               : x
           ),
@@ -328,11 +407,101 @@ export const useSessions = create<SessionState>((set, get) => ({
     } catch (e) {
       set((s) => ({
         sessions: s.sessions.map((x) =>
-          x.id === tempId ? { ...x, status: `failed: ${(e as Error).message}`, closed: true } : x
+          x.id === tempId
+            ? {
+                ...x,
+                status: `failed: ${e instanceof Error ? e.message : String(e)}`,
+                // Keep painted lazy tabs retryable and visible after a failed
+                // restore/workspace/grid connection. Normal new connections
+                // retain the existing closed-on-failure behavior.
+                closed: x.deferredRemote ? false : true
+              }
+            : x
         )
       }))
       return null
     }
+  },
+
+  addDeferredRemote: (opts) => {
+    const id = `pending-${crypto.randomUUID()}`
+    const session: Session = {
+      id,
+      kind: 'remote',
+      title: opts.title ?? `${opts.profile.username}@${opts.profile.host}`,
+      customTitle: !!opts.title,
+      status: 'waiting for focus',
+      connectionId: opts.connectionId,
+      startCwd: opts.startCwd,
+      cwd: opts.startCwd,
+      groupId: opts.groupId ?? useLayout.getState().activeGroupId,
+      deferredRemote: true,
+      restoreProfile: opts.profile,
+      restoreScrollback: opts.restoreScrollback,
+      needsAuth: opts.needsAuth,
+      restoreSecretId: opts.restoreSecretId
+    }
+    deferredRemoteProfiles.set(id, opts.profile)
+    set((s) => ({ sessions: [...s.sessions, session], activeId: id }))
+    return id
+  },
+
+  connectDeferred: (id) => {
+    const existingPromise = deferredRemoteConnects.get(id)
+    if (existingPromise) return existingPromise
+    const session = get().sessions.find((x) => x.id === id)
+    const profile = deferredRemoteProfiles.get(id)
+    if (!session?.deferredRemote || session.needsAuth || !profile) return Promise.resolve(null)
+
+    const promise = (async () => {
+      const next = await get().connectSsh(profile, {
+        connectionId: session.connectionId,
+        startCwd: session.startCwd,
+        groupId: session.groupId,
+        title: session.customTitle ? session.title : undefined,
+        replaceId: id,
+        activate: useLayout.getState().activeGroupId === session.groupId
+      })
+      if (next) deferredRemoteProfiles.delete(id)
+      return next
+    })()
+    deferredRemoteConnects.set(id, promise)
+    void promise.then(
+      () => deferredRemoteConnects.delete(id),
+      () => deferredRemoteConnects.delete(id)
+    )
+    return promise
+  },
+
+  setDeferredCredentials: (id, credentials) => {
+    const current = deferredRemoteProfiles.get(id)
+    if (!current) return
+    const next: SSHProfile = {
+      ...current,
+      password: credentials.password || current.password,
+      passphrase: credentials.passphrase || current.passphrase,
+      jump: current.jump
+        ? {
+            ...current.jump,
+            password: credentials.jumpPassword || current.jump.password,
+            passphrase: credentials.jumpPassphrase || current.jump.passphrase
+          }
+        : current.jump
+    }
+    deferredRemoteProfiles.set(id, next)
+    set((s) => ({
+      sessions: s.sessions.map((x) =>
+        x.id === id
+          ? {
+              ...x,
+              restoreProfile: next,
+              needsAuth: false,
+              closed: false,
+              status: 'waiting for focus'
+            }
+          : x
+      )
+    }))
   },
 
   addBrowser: (opts) => {
@@ -344,7 +513,9 @@ export const useSessions = create<SessionState>((set, get) => ({
       url: opts?.url,
       groupId: opts?.groupId ?? useLayout.getState().activeGroupId,
       agentOwnedBy: opts?.agentOwnedBy,
-      firstTabKey: opts?.firstTabKey
+      firstTabKey: opts?.firstTabKey,
+      browserTabs: opts?.browserTabs,
+      browserActiveTab: opts?.browserActiveTab
     }
     // The App-level layout sync effect drops this id into the active group's
     // active leaf (same path as addLocal); no pty/ssh is created for it.
@@ -408,6 +579,27 @@ export const useSessions = create<SessionState>((set, get) => ({
       const cur = s.sessions.find((x) => x.id === id)
       if (!cur || cur.kind !== 'browser' || cur.url === url) return s
       return { sessions: s.sessions.map((x) => (x.id === id ? { ...x, url } : x)) }
+    }),
+  setBrowserTabs: (id, tabs, activeIndex) =>
+    set((s) => {
+      const cur = s.sessions.find((x) => x.id === id)
+      if (!cur || cur.kind !== 'browser') return s
+      const nextIndex = Math.max(0, Math.min(Math.max(0, tabs.length - 1), activeIndex))
+      const sameTabs = JSON.stringify(cur.browserTabs ?? []) === JSON.stringify(tabs)
+      if (sameTabs && (cur.browserActiveTab ?? 0) === nextIndex) return s
+      return {
+        sessions: s.sessions.map((x) =>
+          x.id === id ? { ...x, browserTabs: tabs, browserActiveTab: nextIndex } : x
+        )
+      }
+    }),
+  clearRestoreScrollback: (id) =>
+    set((s) => {
+      const cur = s.sessions.find((x) => x.id === id)
+      if (!cur || cur.restoreScrollback === undefined) return s
+      return {
+        sessions: s.sessions.map((x) => (x.id === id ? { ...x, restoreScrollback: undefined } : x))
+      }
     }),
   setCustomTitle: (id, title) =>
     set((s) => {
@@ -614,6 +806,7 @@ export const useSessions = create<SessionState>((set, get) => ({
 
   close: (id) => {
     const s = get().sessions.find((x) => x.id === id)
+    deferredRemoteProfiles.delete(id)
     if (s?.kind === 'local' || (s?.kind === 'remote' && !id.startsWith('pending-'))) {
       statusDisposers.get(id)?.()
       statusDisposers.delete(id)

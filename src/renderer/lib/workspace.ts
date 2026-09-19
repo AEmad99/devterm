@@ -1,7 +1,14 @@
 import type { Workspace, WorkspaceItem, WorkspaceLayoutNode, SavedConnection } from '@shared/types'
 import type { Session } from '../store/sessions'
-import { useLayout, DEFAULT_GROUP, type LayoutNode, type LayoutSnapshot } from '../store/layout'
+import {
+  useLayout,
+  DEFAULT_GROUP,
+  groupActiveSession,
+  type LayoutNode,
+  type LayoutSnapshot
+} from '../store/layout'
 import { useSessions } from '../store/sessions'
+import { waitForRemoteConnectStagger } from './remote-connect'
 
 /**
  * Pure helpers for turning live terminals into a saved workspace and back.
@@ -122,11 +129,90 @@ export function captureWorkspace(
   return { items, layout }
 }
 
+export interface WorkspaceConnectProgress {
+  groupId: string
+  total: number
+  ready: number
+  failed: number
+  errors: string[]
+}
+
+export interface WorkspaceLaunchOptions {
+  recordLaunch?: boolean
+  /** Keep this group in the background (used by boot-time auto-launch). */
+  activate?: boolean
+  onProgress?: (progress: WorkspaceConnectProgress) => void
+  onSettled?: (progress: WorkspaceConnectProgress) => void
+}
+
+interface LazyWorkspaceGroup {
+  groupId: string
+  sessionMap: Map<string, string>
+  remoteItems: WorkspaceItem[]
+  failures: string[]
+  ready: Set<string>
+  connectPromise?: Promise<void>
+  onProgress?: (progress: WorkspaceConnectProgress) => void
+  onSettled?: (progress: WorkspaceConnectProgress) => void
+}
+
+const lazyWorkspaceGroups = new Map<string, LazyWorkspaceGroup>()
+
+function workspaceProgress(record: LazyWorkspaceGroup): WorkspaceConnectProgress {
+  return {
+    groupId: record.groupId,
+    total: record.remoteItems.length,
+    ready: record.ready.size,
+    failed: record.failures.length,
+    errors: [...record.failures]
+  }
+}
+
+function emitWorkspaceProgress(record: LazyWorkspaceGroup): void {
+  record.onProgress?.(workspaceProgress(record))
+}
+
+/** Connect a launched workspace's painted remote tabs without a same-tick burst. */
+export function activateWorkspaceGroup(groupId: string): Promise<void> {
+  const record = lazyWorkspaceGroups.get(groupId)
+  if (!record) return Promise.resolve()
+  if (record.connectPromise) return record.connectPromise
+  record.connectPromise = (async () => {
+    const jobs = record.remoteItems.map(async (it, index) => {
+      const pendingId = record.sessionMap.get(it.id)
+      if (!pendingId) return
+      await waitForRemoteConnectStagger(index)
+      try {
+        const sid = await useSessions.getState().connectDeferred(pendingId)
+        if (sid) {
+          record.sessionMap.set(it.id, sid)
+          record.ready.add(it.id)
+        } else {
+          const status = useSessions.getState().sessions.find((s) => s.id === pendingId)?.status
+          record.failures.push(
+            `${it.title ?? `Remote cell ${index + 1}`}: ${status ?? 'connection failed'}`
+          )
+        }
+      } catch (e) {
+        record.failures.push(
+          `${it.title ?? `Remote cell ${index + 1}`}: ${e instanceof Error ? e.message : String(e)}`
+        )
+      }
+      emitWorkspaceProgress(record)
+    })
+    await Promise.all(jobs)
+    const progress = workspaceProgress(record)
+    record.onSettled?.(progress)
+  })()
+  return record.connectPromise
+}
+
 /**
  * Open every terminal in a workspace into a fresh group, then restore the
  * saved split layout (if any). Used by WorkspacesManager's Launch button
  * and by App's startup auto-launch. Returns the new group id and the map
- * of workspace-item id → live session id for callers that need it.
+ * of workspace-item id → session id (pending ids are updated in place as
+ * deferred remotes connect) for callers that need it.
  *
  * `recordLaunch` (default false) bumps the server-side launchCount +
  * lastLaunchedAt; callers that want to count this as a "real" launch
@@ -135,40 +221,69 @@ export function captureWorkspace(
 export async function launchWorkspaceIntoGroup(
   ws: Workspace,
   conns: SavedConnection[],
-  opts: { recordLaunch?: boolean } = {}
+  opts: WorkspaceLaunchOptions = {}
 ): Promise<{ groupId: string; sessionMap: Map<string, string> }> {
-  const { addLocal, connectSsh } = useSessions.getState()
+  const { addLocal, addDeferredRemote } = useSessions.getState()
   const groupId = `ws-${ws.id}-${Date.now()}`
+  const wasActiveGroup = useLayout.getState().activeGroupId
   const layout = useLayout.getState()
   layout.ensureGroup(groupId, ws.name)
   layout.flagGroupLaunched(groupId, ws.id)
 
   const sessionMap = new Map<string, string>()
-  await Promise.all(
-    ws.items.map(async (it) => {
-      if (it.kind === 'local') {
-        sessionMap.set(it.id, addLocal({ cwd: it.cwd, groupId }))
-        return
-      }
-      const c = conns.find((x) => x.id === it.connectionId)
-      if (!c) return
-      const { id: _id, name: _n, ...profile } = c
-      const sid = await connectSsh(profile, {
+  const failures: string[] = []
+  const remoteItems = ws.items.filter((it) => it.kind === 'remote')
+  for (const it of ws.items) {
+    if (it.kind === 'local') {
+      sessionMap.set(it.id, addLocal({ cwd: it.cwd, groupId, title: it.title }))
+      continue
+    }
+    const c = conns.find((x) => x.id === it.connectionId)
+    if (!c) {
+      failures.push(`${it.title ?? 'Remote host'}: saved connection not found`)
+      continue
+    }
+    const { id: _id, name: connectionName, ...profile } = c
+    sessionMap.set(
+      it.id,
+      addDeferredRemote({
+        profile,
         connectionId: it.connectionId,
         startCwd: it.cwd,
-        groupId
+        groupId,
+        title: it.title ?? connectionName
       })
-      if (sid) sessionMap.set(it.id, sid)
-    })
-  )
+    )
+  }
 
+  const record: LazyWorkspaceGroup = {
+    groupId,
+    sessionMap,
+    remoteItems,
+    failures,
+    ready: new Set(),
+    onProgress: opts.onProgress,
+    onSettled: opts.onSettled
+  }
+  lazyWorkspaceGroups.set(groupId, record)
+
+  // Put the full chrome/layout on screen while remotes are still pending.
+  useLayout
+    .getState()
+    .sync(useSessions.getState().sessions.map((s) => ({ id: s.id, groupId: s.groupId })))
   const snap = ws.layout ? toLiveSnapshot(ws.layout, sessionMap) : null
-  // Defer the layout restore so App's layout-sync effect has a chance to
-  // stack the new sessions into the group first.
-  await new Promise<void>((resolve) => setTimeout(resolve, 80))
-  const layout2 = useLayout.getState()
-  if (snap) layout2.restoreGroup(groupId, ws.name, snap)
-  else layout2.setActiveGroup(groupId)
+  if (snap) useLayout.getState().restoreGroup(groupId, ws.name, snap, opts.activate !== false)
+  else if (opts.activate !== false) useLayout.getState().setActiveGroup(groupId)
+  if (opts.activate === false) useLayout.getState().setActiveGroup(wasActiveGroup)
+  if (opts.activate !== false) {
+    const activeSession = groupActiveSession(
+      useLayout.getState().groups.find((g) => g.id === groupId)
+    )
+    if (activeSession) useSessions.getState().setActive(activeSession)
+  }
+
+  emitWorkspaceProgress(record)
+  if (opts.activate !== false) void activateWorkspaceGroup(groupId)
 
   if (opts.recordLaunch) {
     void window.devterm.workspaces.recordLaunch(ws.id).catch(() => undefined)

@@ -21,10 +21,14 @@ const POLL_MS = 2500
 const MAX_CONSECUTIVE_ERRORS = 5
 
 interface RemoteWatch {
-  poll: NodeJS.Timeout
+  sessionId: string
+  path: string
+  poll?: NodeJS.Timeout
   lastSig: string
   errors: number
   cleared: boolean
+  paused: boolean
+  inFlight: boolean
 }
 
 function emptyRemoteListing(path: string): DirListing {
@@ -44,56 +48,91 @@ export class SftpWatchManager {
 
   constructor(
     private getSftp: (sessionId: string) => Promise<SFTPWrapper>,
-    private emit: (watchId: string, listing: DirListing) => void
+    private emit: (watchId: string, listing: DirListing) => void,
+    private pollMs = POLL_MS
   ) {}
 
   async start(sessionId: string, path: string): Promise<string> {
     const id = randomUUID()
+    const w: RemoteWatch = {
+      sessionId,
+      path,
+      lastSig: '',
+      errors: 0,
+      cleared: false,
+      paused: false,
+      inFlight: false
+    }
+    // Register before the initial listing so a pause arriving while that
+    // listing is in flight can prevent the first timer from being armed.
+    this.watches.set(id, w)
     let lastSig = ''
     try {
       lastSig = dirSignature(await listRemote(await this.getSftp(sessionId), path))
     } catch {
       /* session may still be settling; first good poll establishes it */
     }
-    const w: RemoteWatch = {
-      lastSig,
-      poll: undefined as unknown as NodeJS.Timeout,
-      errors: 0,
-      cleared: false
-    }
+    w.lastSig = lastSig
+    this.schedule(id, w)
+    return id
+  }
 
-    const tick = async () => {
-      if (!this.watches.has(id)) return
+  /** Pause without tearing down the watch; resume performs one immediate poll. */
+  setPaused(id: string, paused: boolean): void {
+    const w = this.watches.get(id)
+    if (!w || w.paused === paused) return
+    w.paused = paused
+    if (paused) {
+      if (w.poll) clearTimeout(w.poll)
+      w.poll = undefined
+      return
+    }
+    if (!w.inFlight) void this.tick(id, w)
+  }
+
+  private schedule(id: string, w: RemoteWatch): void {
+    if (!this.watches.has(id) || w.paused || w.poll || w.inFlight) return
+    w.poll = setTimeout(() => {
+      w.poll = undefined
+      void this.tick(id, w)
+    }, this.pollMs)
+  }
+
+  private async tick(id: string, w: RemoteWatch): Promise<void> {
+    if (!this.watches.has(id) || w.paused || w.inFlight) return
+    w.inFlight = true
+    try {
       try {
-        const listing = await listRemote(await this.getSftp(sessionId), path)
+        const listing = await listRemote(await this.getSftp(w.sessionId), w.path)
         const sig = dirSignature(listing)
         w.errors = 0
         w.cleared = false
-        if (sig !== w.lastSig) {
+        if (sig !== w.lastSig && this.watches.has(id)) {
           w.lastSig = sig
           this.emit(id, listing)
         }
       } catch {
         w.errors += 1
-        if (w.errors >= MAX_CONSECUTIVE_ERRORS && !w.cleared) {
+        if (w.errors >= MAX_CONSECUTIVE_ERRORS && !w.cleared && this.watches.has(id)) {
           w.cleared = true
           w.lastSig = ''
-          this.emit(id, emptyRemoteListing(path))
+          this.emit(id, emptyRemoteListing(w.path))
         }
       }
+    } finally {
+      w.inFlight = false
       // Self-rescheduling chain: the next poll is armed only after this one
-      // settled, so ticks never overlap on a slow channel.
-      if (this.watches.has(id)) w.poll = setTimeout(tick, POLL_MS)
+      // settled, so ticks never overlap on a slow channel. A pause that lands
+      // while SFTP is in flight therefore allows this request to finish but
+      // prevents all subsequent poll traffic.
+      this.schedule(id, w)
     }
-    w.poll = setTimeout(tick, POLL_MS)
-    this.watches.set(id, w)
-    return id
   }
 
   stop(id: string): void {
     const w = this.watches.get(id)
     if (!w) return
-    clearTimeout(w.poll)
+    if (w.poll) clearTimeout(w.poll)
     this.watches.delete(id)
   }
 

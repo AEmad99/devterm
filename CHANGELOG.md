@@ -3,6 +3,32 @@
 All notable changes to DevTerm are documented here. The most recent section is
 at the top. Dates are ISO `YYYY-MM-DD`.
 
+## Unreleased
+
+### Changed
+
+- Terminal output is now retained in a bounded main-process ring for each local
+  PTY and SSH shell, preserving ANSI data for hidden-pane replay while visible
+  streaming and main-side search ingestion remain unchanged.
+- Hidden non-active terminal groups can now hibernate only their renderer xterm
+  surfaces after a configurable delay (30 seconds by default); PTY, SSH, and
+  agent processes remain alive, and recent ANSI output is replayed on return.
+- SFTP directory watchers and Git status on-change polls now pause for hidden
+  or hibernated groups and perform one immediate refresh when the group returns,
+  without affecting transfers, SSH sessions, or agent host tools.
+- Session restore, workspace auto-launch, and remote grids now paint their tabs
+  before opening SSH, connect the active group with a 300ms stagger, and defer
+  background remotes until focus by default. Restore progress reports hosts up
+  inline and failed tabs are clickable; the background policy is configurable
+  under Settings → General.
+- Session restore now keeps a bounded raw ANSI scrollback tail, ad-hoc SSH
+  drafts, and every browser tab. Ad-hoc credentials use safeStorage when
+  available; otherwise the restored tab asks for authentication without putting
+  a password in the restore JSON.
+- Optional “Keep sessions running in the tray” keeps the main process, local
+  PTYs, SSH clients, and agents alive when the window is closed; reopening
+  replays terminal surfaces, while explicit Quit still stops everything.
+
 ## 1.3.30 — 2026-09-16
 
 ### Fixed

@@ -8,6 +8,7 @@ import AgentPane from '../agent/AgentPane'
 import AgentActivityPanel from '../agent/AgentActivityPanel'
 import Splitter from '../common/Splitter'
 import PortForwardPanel from './PortForwardPanel'
+import ModalShell from '../common/ModalShell'
 import { AGENT_BRIDGE_POLICY } from '../../lib/agent-ui'
 import { useBridgeActivity } from '../../lib/bridge-activity'
 import { IconFolder, IconPorts, IconSplit, IconTerminals } from '../common/Icons'
@@ -19,6 +20,97 @@ const MAX_AGENT_WIDTH = 1200
 const MIN_FILES_WIDTH = 360
 const MAX_FILES_WIDTH = 1100
 const SPLITTER_WIDTH = 4
+
+function RestoreAuthModal({ session, onClose }: { session: Session; onClose: () => void }) {
+  const profile = session.restoreProfile
+  const [password, setPassword] = useState('')
+  const [passphrase, setPassphrase] = useState('')
+  const [jumpPassword, setJumpPassword] = useState('')
+  const [jumpPassphrase, setJumpPassphrase] = useState('')
+  if (!profile) return null
+
+  const submit = () => {
+    useSessions.getState().setDeferredCredentials(session.id, {
+      password,
+      passphrase,
+      jumpPassword,
+      jumpPassphrase
+    })
+    onClose()
+    void useSessions.getState().connectDeferred(session.id)
+  }
+
+  return (
+    <ModalShell
+      open
+      onClose={onClose}
+      title={`Authenticate ${profile.username}@${profile.host}`}
+      size={profile.jump ? 'lg' : 'sm'}
+      footer={
+        <>
+          <button type="button" className="ghost" onClick={onClose}>
+            Cancel
+          </button>
+          <button type="button" className="primary" onClick={submit}>
+            Authenticate &amp; connect
+          </button>
+        </>
+      }
+    >
+      <p className="modal-hint">
+        The original credential was not available after restart. It will stay in memory for this
+        session and is not written to the restore snapshot.
+      </p>
+      <label>
+        SSH password
+        <input
+          type="password"
+          autoFocus={!profile.privateKeyPath}
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+        />
+      </label>
+      {profile.privateKeyPath && (
+        <label>
+          Key passphrase
+          <input
+            type="password"
+            autoFocus
+            value={passphrase}
+            onChange={(e) => setPassphrase(e.target.value)}
+          />
+          <span className="modal-hint">{profile.privateKeyPath}</span>
+        </label>
+      )}
+      {profile.jump && (
+        <div className="jump">
+          <strong>
+            Jump host: {profile.jump.username}@{profile.jump.host}
+          </strong>
+          <label>
+            Jump password
+            <input
+              type="password"
+              value={jumpPassword}
+              onChange={(e) => setJumpPassword(e.target.value)}
+            />
+          </label>
+          {profile.jump.privateKeyPath && (
+            <label>
+              Jump key passphrase
+              <input
+                type="password"
+                value={jumpPassphrase}
+                onChange={(e) => setJumpPassphrase(e.target.value)}
+              />
+              <span className="modal-hint">{profile.jump.privateKeyPath}</span>
+            </label>
+          )}
+        </div>
+      )}
+    </ModalShell>
+  )
+}
 
 function fitAgentWidth(width: number, totalWidth: number): number {
   if (totalWidth <= 0) return clamp(width, MIN_AGENT_WIDTH, MAX_AGENT_WIDTH)
@@ -65,8 +157,9 @@ function formatAgentTabTask(tool: string | undefined, detail: string | undefined
  * (process keeps running). The terminal header is the launch surface
  * (Open Agent); hide / float / stop place an already-running agent.
  */
-function RemoteSessionView({ session }: { session: Session }) {
+function RemoteSessionView({ session, hibernated }: { session: Session; hibernated?: boolean }) {
   const [view, setView] = useState<'terminal' | 'files' | 'ports'>('terminal')
+  const [authPromptOpen, setAuthPromptOpen] = useState(false)
   const [filesOpened, setFilesOpened] = useState(false)
   const [portsOpened, setPortsOpened] = useState(false)
   // Prefer store-backed kind once the agent is running so float/hide round-trips
@@ -135,6 +228,38 @@ function RemoteSessionView({ session }: { session: Session }) {
     ro.observe(el)
     return () => ro.disconnect()
   }, [filesSideOpen])
+
+  if (session.deferredRemote) {
+    const connectionFailed = session.closed || session.status?.startsWith('failed:')
+    return (
+      <div className="remote-view deferred-remote-view">
+        <div className="deferred-remote-card">
+          <div className="deferred-remote-title">{session.title}</div>
+          <div className="deferred-remote-status">
+            {session.needsAuth
+              ? 'Authentication required'
+              : (session.status ?? 'waiting for focus')}
+          </div>
+          <button
+            className="ghost small"
+            onClick={() => {
+              if (session.needsAuth) setAuthPromptOpen(true)
+              else void useSessions.getState().connectDeferred(session.id)
+            }}
+          >
+            {session.needsAuth
+              ? 'Enter credentials'
+              : connectionFailed
+                ? 'Retry connection'
+                : 'Connect now'}
+          </button>
+        </div>
+        {authPromptOpen && (
+          <RestoreAuthModal session={session} onClose={() => setAuthPromptOpen(false)} />
+        )}
+      </div>
+    )
+  }
 
   return (
     <div className="remote-view">
@@ -233,7 +358,7 @@ function RemoteSessionView({ session }: { session: Session }) {
             <div className="term-agent-column" ref={splitRef}>
               <div className="term-agent-split">
                 <div className="tc-term">
-                  <TerminalView session={session} />
+                  <TerminalView session={session} hibernated={hibernated} />
                 </div>
                 {/* Keep AgentPane mounted while the process is alive so scrollback
                     survives hide/float. Only the docked mode sizes it into the layout;
@@ -299,7 +424,7 @@ function RemoteSessionView({ session }: { session: Session }) {
             )}
             {filesSideOpen && (
               <div className="remote-side-pane" style={{ width: filesWidth }}>
-                <SftpBrowser sessionId={session.id} />
+                <SftpBrowser sessionId={session.id} hibernated={hibernated} />
               </div>
             )}
           </div>
@@ -309,7 +434,7 @@ function RemoteSessionView({ session }: { session: Session }) {
             className="view-layer"
             style={{ visibility: view === 'files' ? undefined : 'hidden' }}
           >
-            <SftpBrowser sessionId={session.id} />
+            <SftpBrowser sessionId={session.id} hibernated={hibernated} />
           </div>
         )}
         {portsOpened && (

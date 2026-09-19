@@ -752,6 +752,32 @@ body.agent-float-body,
   flex-direction: column;
   height: 100%;
 }
+.deferred-remote-view {
+  align-items: center;
+  justify-content: center;
+  background: var(--panel);
+}
+.deferred-remote-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  max-width: min(420px, 80%);
+  padding: 24px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg, 10px);
+  background: var(--panel-2);
+  text-align: center;
+}
+.deferred-remote-title {
+  color: var(--fg);
+  font-size: 14px;
+  font-weight: 600;
+}
+.deferred-remote-status {
+  color: var(--muted);
+  font-size: 12px;
+}
 .view-toggle {
   display: flex;
   align-items: center;

@@ -127,8 +127,10 @@ import { registerBrowserControlIpc } from './ipc/browser-control'
 import { browserControl } from './browser/control-instance'
 import { externalUrlOk, guestUrlOk } from './browser/url-guard'
 import { registerPerformanceIpc } from './ipc/performance'
+import { registerTerminalIpc } from './ipc/terminal'
 import { initAutoUpdater, registerUpdaterIpc } from './updater'
 import { flushScheduledSnapshot } from './settings/settings-io'
+import { shouldHideToTrayOnClose } from './window-lifecycle'
 import type { PtyManager } from './pty/manager'
 import type { SSHManager } from './ssh/manager'
 import type { FileController } from './ipc/files'
@@ -156,6 +158,8 @@ let browserController: { shutdown: () => Promise<void> } | null = null
 
 /** Skip the close confirmation once the operator has approved (or quit began). */
 let allowWindowClose = false
+/** Updated by the renderer's settings sync; defaults off for older installs. */
+let keepSessionsInTray = false
 
 interface PersistedWindowState {
   width: number
@@ -169,13 +173,27 @@ function windowStatePath(): string {
   return join(app.getPath('userData'), 'window-state.json')
 }
 
+function loadKeepSessionsInTray(): boolean {
+  try {
+    const raw = JSON.parse(
+      readFileSync(join(app.getPath('userData'), 'settings.json'), 'utf8')
+    ) as { keepSessionsInTray?: unknown }
+    return raw.keepSessionsInTray === true
+  } catch {
+    return false
+  }
+}
+
+keepSessionsInTray = loadKeepSessionsInTray()
+
 /** Restore last window geometry (validated); falls back to a centered 1280×800. */
 function loadWindowState(): PersistedWindowState {
   const fallback: PersistedWindowState = { width: 1280, height: 800 }
   try {
     const raw = JSON.parse(readFileSync(windowStatePath(), 'utf8')) as Partial<PersistedWindowState>
     const width = typeof raw.width === 'number' && raw.width >= 800 ? raw.width : fallback.width
-    const height = typeof raw.height === 'number' && raw.height >= 500 ? raw.height : fallback.height
+    const height =
+      typeof raw.height === 'number' && raw.height >= 500 ? raw.height : fallback.height
     return {
       width,
       height,
@@ -216,7 +234,19 @@ function showMainWindow(): void {
   }
   if (mainWindow.isMinimized()) mainWindow.restore()
   mainWindow.show()
+  if (!mainWindow.webContents.isDestroyed()) {
+    mainWindow.webContents.send(IPC.windowTrayMode, false)
+  }
   mainWindow.focus()
+}
+
+/** Hide only the BrowserWindow; PTYs, SSH transports, agents, and their ids stay alive. */
+function hideMainWindowToTray(): void {
+  const win = mainWindow
+  if (!win || win.isDestroyed()) return
+  saveWindowState(win)
+  if (!win.webContents.isDestroyed()) win.webContents.send(IPC.windowTrayMode, true)
+  win.hide()
 }
 
 function createWindow(): void {
@@ -282,11 +312,28 @@ function createWindow(): void {
   mainWindow.on('maximize', scheduleBoundsSave)
   mainWindow.on('unmaximize', scheduleBoundsSave)
 
-  // Quit guard: unsaved editor buffers and/or live agents get one confirmation.
+  // Tray-resident mode turns the window's X into a hide operation. It must run
+  // before the quit guard: hiding does not stop agents or discard dirty editors.
+  // Quit DevTerm still sets allowWindowClose in before-quit and takes the normal
+  // shutdown path below.
+  //
+  // When tray-resident mode is off, unsaved editor buffers and/or live agents
+  // get the existing confirmation.
   // Explicit app.quit() paths (before-quit) set allowWindowClose, so this only
   // fires for the window's X button.
   mainWindow.on('close', (e) => {
     if (allowWindowClose || process.argv.includes('--self-test')) return
+    if (
+      shouldHideToTrayOnClose({
+        keepSessionsInTray,
+        allowWindowClose,
+        selfTest: process.argv.includes('--self-test')
+      })
+    ) {
+      e.preventDefault()
+      hideMainWindowToTray()
+      return
+    }
     const agents = agentController?.runningCount() ?? 0
     const unsaved = hasUnsavedEditors()
     if (agents === 0 && !unsaved) return
@@ -383,13 +430,18 @@ function registerIpc(): void {
   registerClipboardIpc()
   registerWindowIpc(() => mainWindow)
   registerContextIpc()
-  registerFoundationIpc(() => mainWindow, sshManager!)
+  registerFoundationIpc(() => mainWindow, sshManager!, {
+    onKeepSessionsInTrayChanged: (enabled) => {
+      keepSessionsInTray = enabled
+    }
+  })
   registerGitIpc(sshManager, () => mainWindow)
   // Cluster D: persistent transfer queue + in-app browser enhancements.
   transfersController = registerTransfersIpc(sshManager, () => mainWindow)
   browserController = registerBrowserIpc(() => mainWindow)
   registerBrowserControlIpc(browserControl())
   registerPerformanceIpc()
+  registerTerminalIpc()
   registerUpdaterIpc()
 
   // Global search handler (MVP)
@@ -408,10 +460,9 @@ function registerIpc(): void {
 }
 
 /**
- * Tray icon: keeps DevTerm reachable after the main window is closed while an
- * agent float window survives, and gives quick Show/Quit access. The icon is
- * pulled from the executable itself (works in dev and packaged builds without
- * shipping a separate asset).
+ * Tray icon: gives quick Show/Quit access for optional tray-resident mode. The
+ * icon is pulled from the executable itself (works in dev and packaged builds
+ * without shipping a separate asset).
  */
 function createTray(): void {
   if (tray) return
@@ -519,9 +570,8 @@ if (!gotSingleInstance) {
           cancelId: 0,
           noLink: true
         }
-        decision = (mainWindow
-          ? dialog.showMessageBox(mainWindow, opts)
-          : dialog.showMessageBox(opts)
+        decision = (
+          mainWindow ? dialog.showMessageBox(mainWindow, opts) : dialog.showMessageBox(opts)
         ).then(
           ({ response }) => response === 1,
           () => false

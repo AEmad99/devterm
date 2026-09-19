@@ -39,6 +39,9 @@ Most agent terminals either install a runtime on the server or send host work ou
 - **In-app browser** — tabbed http(s) panes for docs and dashboards. Agents can drive them through `browser_*` tools.
 - **Command palette, snippets, search** — Ctrl/Cmd+K for actions, snippets (`{{placeholders}}`), connections, workspaces, and history. Per-pane find and global search across terminals.
 - **DevTerm Agent** — bundled multi-provider agent, plus Claude, Codex, Grok, OpenCode, Kimi, pi, Antigravity, and Muse Code. Dock, float, or hide the UI without killing the process. Remote host tools ride MCP; local agents work in the folder that terminal is in.
+- **Resilient terminal lifecycle** — bounded ANSI output rings, hibernation/replay for hidden panes, watcher suspension, and deferred remote work keep large session estates responsive without unmounting terminals.
+- **Rich session restore** — restores terminal output tails, browser tabs, editors, workspaces, and ad-hoc SSH drafts; credentials stay in a safeStorage sidecar and missing secrets prompt instead of being written to JSON.
+- **Optional tray residency** — close-to-tray keeps local PTYs, SSH sessions, and agents alive while the window is hidden; explicit Quit performs normal cleanup. Reboot survival is not implied.
 - **Port forwards, dictation, themes** — local `-L` and SOCKS `-D`, offline Whisper push-to-talk, and nine themes (including Glass) that restyle chrome and the terminal together.
 
 ![Git panel](resources/screens/git-panel.png)
@@ -129,6 +132,7 @@ Open Agent from the pane tab strip. Hide and Float do not stop it; Stop / close 
 ```sh
 npm run typecheck
 npm run test
+npm run test:grid
 node scripts/smoke.cjs
 ```
 
@@ -139,7 +143,7 @@ npm run build
 npx electron . --self-test
 ```
 
-Release history is in [CHANGELOG.md](./CHANGELOG.md). Agent-facing architecture notes live in [AGENTS.md](./AGENTS.md).
+Release history is in [CHANGELOG.md](./CHANGELOG.md). Agent-facing architecture notes live in [AGENTS.md](./AGENTS.md). The current implementation roadmap is [DEVTERM-AGENT-IMPLEMENTATION-PLAN.md](./DEVTERM-AGENT-IMPLEMENTATION-PLAN.md), with the task prompts collected in [DEVTERM-AGENT-PROMPTS.md](./DEVTERM-AGENT-PROMPTS.md).
 
 ## License
 

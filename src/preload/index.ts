@@ -45,7 +45,8 @@ import {
   type TransferItemV2,
   type TransferEvent,
   type TransferListResult,
-  type BrowserDownloadItem
+  type BrowserDownloadItem,
+  type TerminalActivity
 } from '@shared/types'
 
 // Subscribe helper for per-id main->renderer channels.
@@ -91,6 +92,14 @@ const api: DevTermApi = {
       ipcRenderer.invoke(IPC.sshAttachTmux, id, req),
     killTmux: (id, name: string): Promise<void> => ipcRenderer.invoke(IPC.sshKillTmux, id, name)
   },
+  terminal: {
+    setHibernated: (sessionId: string, hibernated: boolean): Promise<void> =>
+      ipcRenderer.invoke(IPC.terminalSetHibernated, sessionId, hibernated),
+    replay: (sessionId: string): Promise<string> =>
+      ipcRenderer.invoke(IPC.terminalReplay, sessionId),
+    onActivity: (sessionId: string, cb: (activity: TerminalActivity) => void): (() => void) =>
+      subscribe<TerminalActivity>(`${IPC.terminalActivity}:${sessionId}`, cb)
+  },
   fs: {
     list: (path?: string): Promise<DirListing> => ipcRenderer.invoke(IPC.fsList, path),
     home: (): Promise<string> => ipcRenderer.invoke(IPC.fsHome),
@@ -128,6 +137,8 @@ const api: DevTermApi = {
     watch: (sid: string, path: string): Promise<string> =>
       ipcRenderer.invoke(IPC.sftpWatch, sid, path),
     unwatch: (watchId: string) => ipcRenderer.send(IPC.sftpUnwatch, watchId),
+    setWatchPaused: (watchId: string, paused: boolean) =>
+      ipcRenderer.send(IPC.sftpSetWatchPaused, watchId, paused),
     onWatchEvent: (watchId, cb) => subscribe<DirListing>(`${IPC.sftpWatchEvent}:${watchId}`, cb)
   },
   search: {
@@ -186,6 +197,8 @@ const api: DevTermApi = {
   },
   sessionRestore: {
     load: (): Promise<SessionRestoreSnapshot | null> => ipcRenderer.invoke(IPC.sessionRestoreLoad),
+    // The main process strips renderer-only live ids and SSH restore secrets
+    // before writing; this remains the single typed restore IPC boundary.
     save: (snap: SessionRestoreSnapshot): Promise<void> =>
       ipcRenderer.invoke(IPC.sessionRestoreSave, snap),
     clear: (): Promise<void> => ipcRenderer.invoke(IPC.sessionRestoreClear)
@@ -243,6 +256,7 @@ const api: DevTermApi = {
     flashAttention: (notice: { title: string; body?: string; sessionId?: string }) =>
       ipcRenderer.send(IPC.windowFlashAttention, notice),
     onFocusSession: (cb) => subscribe<string>(IPC.windowFocusSession, cb),
+    onTrayMode: (cb) => subscribe<boolean>(IPC.windowTrayMode, cb),
     agentAttention: (sessionId: string, notice: { title: string; body?: string }) =>
       ipcRenderer.send(IPC.windowAgentAttention, sessionId, notice),
     onAgentAttention: (cb) =>
@@ -360,6 +374,9 @@ const api: DevTermApi = {
      */
     watch: (target: { sessionId?: string; path: string }): void => {
       ipcRenderer.send(IPC.gitOnChangeAdd, target)
+    },
+    setWatchPaused: (target: { sessionId?: string; path: string }, paused: boolean): void => {
+      ipcRenderer.send(IPC.gitOnChangeSetPaused, target, paused)
     },
 
     // Read-side additions

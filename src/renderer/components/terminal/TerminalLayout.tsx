@@ -31,6 +31,7 @@ import { focusTerminal, openTmuxPicker } from '../../lib/terms'
 import { deriveTabLabel } from '../../lib/tab-label'
 import TabStatusDot from './TabStatusDot'
 import { useEscapeKey } from '../../lib/useEscapeKey'
+import { canHibernateSession } from '../../lib/hibernate'
 
 const TAB_H = 28 // px height of a pane's tab strip — keep in sync with --tab-h
 
@@ -112,11 +113,123 @@ export default function TerminalLayout({
   const equalize = useLayout((s) => s.equalize)
   const editorBlur = useEditors((s) => s.blur)
   const editorCloseForSession = useEditors((s) => s.closeForSession)
+  const editorDocs = useEditors((s) => s.docs)
   const inactivePaneDimming = useSettings((s) => s.inactivePaneDimming)
+  const hibernateEnabled = useSettings((s) => s.hibernateEnabled)
+  const hibernateAfterMs = useSettings((s) => s.hibernateAfterMs)
 
   const panesRef = useRef<HTMLDivElement>(null)
   const [dragId, setDragId] = useState<string | null>(null)
   const [over, setOver] = useState<{ leafId: string; zone: DropZone } | null>(null)
+  const [hibernatedIds, setHibernatedIds] = useState<Set<string>>(() => new Set())
+  const [trayHidden, setTrayHidden] = useState(false)
+  const hibernateTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
+  const hibernateConfigRef = useRef<{ enabled: boolean; afterMs: number } | null>(null)
+
+  // Tray-resident close keeps every React session mounted but disposes each
+  // live xterm surface through the same main-side ring gate used by ordinary
+  // hidden-group hibernation. Showing the window flips this back and replays
+  // the retained ANSI output without changing session ids or process leases.
+  useEffect(() => window.devterm.window.onTrayMode(setTrayHidden), [])
+
+  const dirtyEditorFor = useCallback(
+    (sessionId: string) =>
+      editorDocs.some(
+        (doc) =>
+          doc.state === 'ready' &&
+          doc.content !== doc.savedContent &&
+          (doc.scope === 'local' || doc.sessionId === sessionId)
+      ),
+    [editorDocs]
+  )
+
+  // Hidden groups keep their React slots and process leases, but after a quiet
+  // delay their renderer xterm surfaces can be disposed. The timer is owned by
+  // the layout so focusing a group cancels/wakes the whole group immediately.
+  useEffect(() => {
+    const timers = hibernateTimersRef.current
+    const config = hibernateConfigRef.current
+    if (!config || config.enabled !== hibernateEnabled || config.afterMs !== hibernateAfterMs) {
+      for (const timer of timers.values()) clearTimeout(timer)
+      timers.clear()
+      hibernateConfigRef.current = { enabled: hibernateEnabled, afterMs: hibernateAfterMs }
+    }
+
+    const liveIds = new Set(sessions.map((session) => session.id))
+    setHibernatedIds((current) => {
+      if (!hibernateEnabled) return current.size === 0 ? current : new Set()
+      const next = new Set([...current].filter((id) => liveIds.has(id)))
+      for (const session of sessions) {
+        if ((session.groupId || DEFAULT_GROUP) === activeGroupId) next.delete(session.id)
+        else if (
+          session.needsAttention ||
+          session.agentPendingApproval ||
+          dirtyEditorFor(session.id)
+        ) {
+          next.delete(session.id)
+        }
+      }
+      return next.size === current.size && [...next].every((id) => current.has(id)) ? current : next
+    })
+
+    for (const [id, timer] of timers) {
+      const session = sessions.find((item) => item.id === id)
+      const stillEligible =
+        !!session &&
+        canHibernateSession(session, activeGroupId, dirtyEditorFor(session.id)) &&
+        hibernateEnabled
+      if (!stillEligible) {
+        clearTimeout(timer)
+        timers.delete(id)
+      }
+    }
+
+    if (!hibernateEnabled) return
+    for (const session of sessions) {
+      if (!canHibernateSession(session, activeGroupId, dirtyEditorFor(session.id))) continue
+      if (hibernatedIds.has(session.id) || timers.has(session.id)) continue
+      const id = session.id
+      timers.set(
+        id,
+        setTimeout(() => {
+          timers.delete(id)
+          const current = useSessions.getState().sessions.find((item) => item.id === id)
+          if (!current || !useSettings.getState().hibernateEnabled) return
+          const docs = useEditors.getState().docs
+          const dirty = docs.some(
+            (doc) =>
+              doc.state === 'ready' &&
+              doc.content !== doc.savedContent &&
+              (doc.scope === 'local' || doc.sessionId === id)
+          )
+          if (canHibernateSession(current, useLayout.getState().activeGroupId, dirty)) {
+            setHibernatedIds((previous) => {
+              if (previous.has(id)) return previous
+              const next = new Set(previous)
+              next.add(id)
+              return next
+            })
+          }
+        }, hibernateAfterMs)
+      )
+    }
+  }, [
+    sessions,
+    activeGroupId,
+    editorDocs,
+    dirtyEditorFor,
+    hibernateEnabled,
+    hibernateAfterMs,
+    hibernatedIds
+  ])
+
+  useEffect(
+    () => () => {
+      for (const timer of hibernateTimersRef.current.values()) clearTimeout(timer)
+      hibernateTimersRef.current.clear()
+    },
+    []
+  )
 
   // Dropping a tab onto the group bar moves it to another group, which unmounts
   // the dragged tab before its `dragend` can fire — leaving `dragId` (and the
@@ -314,6 +427,8 @@ export default function TerminalLayout({
           // visibility/transform so they inherit (and can be hidden by) ancestor
           // view switches.
           const isHidden = !isFocused && !visible
+          const isHibernated =
+            (s.kind === 'local' || s.kind === 'remote') && (trayHidden || hibernatedIds.has(s.id))
           const isInactive =
             inactivePaneDimming && !isFocused && visible && !!slot && !slot.activeLeaf
           const style: React.CSSProperties = isFocused ? { ...FOCUSED_SLOT } : slotBodyStyle(rect)
@@ -336,6 +451,7 @@ export default function TerminalLayout({
               data-attention={
                 s.agentPendingApproval ? 'pending' : s.needsAttention ? 'needed' : undefined
               }
+              data-hibernated={isHibernated ? 'true' : undefined}
               onMouseDownCapture={() => focusSession(s.id)}
             >
               {isFocused && (
@@ -353,11 +469,11 @@ export default function TerminalLayout({
               {s.kind === 'browser' ? (
                 <BrowserPane session={s} />
               ) : s.kind === 'remote' ? (
-                <RemoteSessionView session={s} />
+                <RemoteSessionView session={s} hibernated={isHibernated} />
               ) : s.kind === 'local' ? (
-                <LocalSessionView session={s} />
+                <LocalSessionView session={s} hibernated={isHibernated} />
               ) : (
-                <TerminalView session={s} />
+                <TerminalView session={s} hibernated={isHibernated} />
               )}
             </div>
           )

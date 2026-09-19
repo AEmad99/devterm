@@ -22,6 +22,7 @@ import type {
   ApprovalRule,
   AttentionSettingsSnapshot,
   DefaultShellPref,
+  RemoteConnectMode,
   SavedConnection,
   SettingsExportBundle,
   SettingsSnapshot,
@@ -114,6 +115,11 @@ export function defaultSettingsSnapshot(): SettingsSnapshot {
     },
     remoteDetachedSessions: true,
     sessionRestore: true,
+    remoteConnectMode: 'focus' as RemoteConnectMode,
+    hibernateEnabled: true,
+    keepSessionsInTray: false,
+    hibernateAfterMs: 30000,
+    outputRingLines: 10000,
     transfersPanelOpen: false,
     defaultShell: { kind: 'auto' } as DefaultShellPref,
     gitPanelOpen: false,
@@ -193,6 +199,20 @@ export function mergeSnapshotWithDefaults(
     out.remoteDetachedSessions = raw.remoteDetachedSessions
   }
   if (typeof raw.sessionRestore === 'boolean') out.sessionRestore = raw.sessionRestore
+  if (typeof raw.keepSessionsInTray === 'boolean') out.keepSessionsInTray = raw.keepSessionsInTray
+  if (raw.remoteConnectMode === 'focus' || raw.remoteConnectMode === 'stagger') {
+    out.remoteConnectMode = raw.remoteConnectMode
+  }
+  if (typeof raw.hibernateEnabled === 'boolean') out.hibernateEnabled = raw.hibernateEnabled
+  if (typeof raw.hibernateAfterMs === 'number' && Number.isFinite(raw.hibernateAfterMs)) {
+    out.hibernateAfterMs = Math.max(
+      1000,
+      Math.min(24 * 60 * 60 * 1000, Math.floor(raw.hibernateAfterMs))
+    )
+  }
+  if (typeof raw.outputRingLines === 'number' && Number.isFinite(raw.outputRingLines)) {
+    out.outputRingLines = Math.max(100, Math.min(100000, Math.floor(raw.outputRingLines)))
+  }
   if (typeof raw.transfersPanelOpen === 'boolean') out.transfersPanelOpen = raw.transfersPanelOpen
   if (isObj(raw.defaultShell)) out.defaultShell = raw.defaultShell as DefaultShellPref
   if (typeof raw.gitPanelOpen === 'boolean') out.gitPanelOpen = raw.gitPanelOpen

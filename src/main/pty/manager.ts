@@ -15,8 +15,10 @@ import type {
 } from '@shared/types'
 
 export interface PtyHandlers {
-  onData: (id: string, data: string) => void
+  onData: (id: string, data: string, sessionId?: string) => void
   onExit: (id: string, exitCode: number | undefined, signal?: number) => void
+  /** Fires when an explicit kill removes a PTY without a reliable onExit event. */
+  onDispose?: (id: string) => void
   /**
    * Fires at most once per spawn when the PTY exits without ever producing
    * data — the "Windows PowerShell 5.1 failed to start" signature pattern.
@@ -290,7 +292,7 @@ export class PtyManager {
 
     proc.onData((data) => {
       if (!healthHealthy && hasRealOutput(data)) healthHealthy = true
-      this.handlers.onData(id, data)
+      this.handlers.onData(id, data, opts.sessionId)
       const listeners = this.dataListeners.get(id)
       if (listeners) {
         for (const cb of [...listeners]) {
@@ -394,6 +396,7 @@ export class PtyManager {
     // process's own onExit (guarded against stale ids) owns listener fan-out.
     this.exitListeners.delete(id)
     this.dataListeners.delete(id)
+    this.handlers.onDispose?.(id)
   }
 
   killAll(): void {

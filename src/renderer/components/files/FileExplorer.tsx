@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { DirListing, FileEntry, GitStatus } from '@shared/types'
 import { useSessions } from '../../store/sessions'
 import { useEditors } from '../../store/editors'
+import { DEFAULT_GROUP, useLayout } from '../../store/layout'
 import { localFsApi, remoteFsApi, type FsApi } from '../../lib/fsapi'
 import FileTree, { type FileTreeHandle, type Selection } from './FileTree'
 import FileMutationDialog, { type FileMutationKind } from './FileMutationDialog'
@@ -45,6 +46,7 @@ function basename(p: string): string {
  */
 export default function FileExplorer() {
   const active = useSessions((s) => s.sessions.find((x) => x.id === s.activeId))
+  const activeGroupId = useLayout((s) => s.activeGroupId)
   const kind = active?.kind
   // Live shell cwd (OSC 7); fall back to the one-shot launch directory so a
   // workspace restore / reconnect still points the explorer at the right place
@@ -53,6 +55,8 @@ export default function FileExplorer() {
   const startCwd = active?.startCwd
   const targetPath = cwd ?? startCwd
   const isPending = !active || active.id.startsWith('pending-')
+  const activeSessionGroupId = active?.groupId ?? DEFAULT_GROUP
+  const pollPaused = !!active && activeSessionGroupId !== activeGroupId
   // Browser panes have no filesystem; the explorer shows a placeholder for them.
   const isBrowser = active?.kind === 'browser'
   const sep = kind === 'remote' ? '/' : window.devterm.platform === 'win32' ? '\\' : '/'
@@ -142,6 +146,11 @@ export default function FileExplorer() {
   // paints immediately and git fills in once it returns.
   const sessionId = active?.kind === 'remote' ? active.id : undefined
   useEffect(() => {
+    if (!api) return
+    api.setWatchPaused(pollPaused)
+  }, [api, pollPaused])
+
+  useEffect(() => {
     const p = listing?.path
     if (!api || !p) return
     let cancelled = false
@@ -153,6 +162,7 @@ export default function FileExplorer() {
     // Subscribe to live updates. The preload wrapper returns an unsubscribe
     // that also tells main to stop polling when no renderers care anymore.
     window.devterm.git.watch(target)
+    window.devterm.git.setWatchPaused(target, pollPaused)
     const off = window.devterm.git.onChange(target, (s) => {
       if (!cancelled) setGitStatus(s)
     })
@@ -161,7 +171,7 @@ export default function FileExplorer() {
       off()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [listing?.path, sessionId])
+  }, [listing?.path, sessionId, pollPaused])
 
   // Live updates: reflect create / modify / delete / rename in the shown
   // directory automatically. Main only pushes when the contents actually change,

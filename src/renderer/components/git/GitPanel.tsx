@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useSessions } from '../../store/sessions'
+import { DEFAULT_GROUP, useLayout } from '../../store/layout'
 import type { GitCommandResult, GitStatus } from '@shared/types'
 import GitBranchesPanel from './GitBranchesPanel'
 import GitChangesPanel from './GitChangesPanel'
@@ -41,9 +42,11 @@ type Tab = 'changes' | 'branches' | 'log' | 'stash' | 'tags' | 'remotes'
  */
 export default function GitPanel({ className = '' }: { className?: string }) {
   const active = useSessions((s) => s.sessions.find((x) => x.id === s.activeId))
+  const activeGroupId = useLayout((s) => s.activeGroupId)
   const cwd = active?.cwd
   const isPending = !active || active.id.startsWith('pending-')
   const isBrowser = active?.kind === 'browser'
+  const pollPaused = !!active && (active.groupId ?? DEFAULT_GROUP) !== activeGroupId
 
   const scope: GitScope | null = useMemo(() => {
     if (isPending || isBrowser) return null
@@ -68,6 +71,7 @@ export default function GitPanel({ className = '' }: { className?: string }) {
       if (!cancelled) setStatus(s)
     })
     window.devterm.git.watch(target)
+    window.devterm.git.setWatchPaused(target, pollPaused)
     const off = window.devterm.git.onChange(target, (s) => {
       if (!cancelled) setStatus(s)
     })
@@ -76,7 +80,7 @@ export default function GitPanel({ className = '' }: { className?: string }) {
       off()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scope?.sessionId, scope?.path, refreshTick])
+  }, [scope?.sessionId, scope?.path, refreshTick, pollPaused])
 
   const refresh = useCallback(() => setRefreshTick((t) => t + 1), [])
 

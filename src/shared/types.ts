@@ -37,11 +37,20 @@ export type DefaultShellPref =
   | { kind: 'cmd' }
   | { kind: 'custom'; path: string }
 
+/** How remote sessions outside the active restore group are started. */
+export type RemoteConnectMode = 'focus' | 'stagger'
+
 export interface PtyCreated {
   id: string
   shell: string
   /** Absolute working directory the PTY was spawned in (for early explorer seed). */
   cwd: string
+}
+
+/** Lightweight output notification used while a renderer xterm is hibernated. */
+export interface TerminalActivity {
+  /** UTF-8 bytes retained for the hidden stream's unread/attention bookkeeping. */
+  bytes: number
 }
 
 /**
@@ -337,15 +346,7 @@ export type PolicyMode = 'read_only' | 'confirm' | 'full'
  * MCP bridge.
  */
 export type AgentKind =
-  | 'devterm'
-  | 'claude'
-  | 'pi'
-  | 'opencode'
-  | 'kimi'
-  | 'grok'
-  | 'codex'
-  | 'antigravity'
-  | 'muse'
+  'devterm' | 'claude' | 'pi' | 'opencode' | 'kimi' | 'grok' | 'codex' | 'antigravity' | 'muse'
 
 export interface AgentTrustedSkill {
   name: string
@@ -638,12 +639,7 @@ export interface AgentWindowOpenOpts {
 }
 
 export type AgentBridgeState =
-  | 'starting'
-  | 'listening'
-  | 'connected'
-  | 'disconnected'
-  | 'stopped'
-  | 'error'
+  'starting' | 'listening' | 'connected' | 'disconnected' | 'stopped' | 'error'
 
 export interface AgentBridgeStatus {
   state: AgentBridgeState
@@ -699,20 +695,7 @@ export type STTBackend = 'webgpu' | 'wasm'
 
 /** Language hint passed to Whisper. `auto` lets Whisper detect the language. */
 export type STTLanguage =
-  | 'auto'
-  | 'en'
-  | 'es'
-  | 'fr'
-  | 'de'
-  | 'it'
-  | 'pt'
-  | 'nl'
-  | 'ru'
-  | 'zh'
-  | 'ja'
-  | 'ko'
-  | 'ar'
-  | 'hi'
+  'auto' | 'en' | 'es' | 'fr' | 'de' | 'it' | 'pt' | 'nl' | 'ru' | 'zh' | 'ja' | 'ko' | 'ar' | 'hi'
 
 export interface STTSettings {
   /** Master switch. When off, the toolbar mic button is hidden and the hotkey is a no-op. */
@@ -766,6 +749,11 @@ export const IPC = {
   sshAttachTmux: 'ssh:attachTmux',
   sshKillTmux: 'ssh:killTmux',
 
+  // renderer xterm hibernate/replay (processes and SSH channels stay alive)
+  terminalSetHibernated: 'terminal:set-hibernated',
+  terminalReplay: 'terminal:replay',
+  terminalActivity: 'terminal:activity', // suffixed :<sessionId>
+
   // local filesystem
   fsList: 'fs:list',
   fsHome: 'fs:home',
@@ -790,6 +778,7 @@ export const IPC = {
   sftpWriteFile: 'sftp:writeFile',
   sftpWatch: 'sftp:watch',
   sftpUnwatch: 'sftp:unwatch',
+  sftpSetWatchPaused: 'sftp:watch:set-paused',
   sftpWatchEvent: 'sftp:watch:event', // suffixed :<watchId>
 
   // transfers (legacy non-persistent TransferManager channels — retired; the
@@ -897,6 +886,8 @@ export const IPC = {
   windowFlashAttention: 'window:flash-attention',
   /** Main → main window: focus a specific session (notification click / tray). */
   windowFocusSession: 'window:focus-session',
+  /** Main → renderer: the main window entered or left tray-resident mode. */
+  windowTrayMode: 'window:tray-mode',
   /** Renderer → main: an agent finished for `sessionId` (float window badge). */
   windowAgentAttention: 'window:agent-attention',
   /** Renderer → main: unsaved-editor flag used by the window close guard. */
@@ -943,6 +934,7 @@ export const IPC = {
   // Fire-and-forget watch registration (ipcRenderer.send → ipcMain.on).
   gitOnChangeAdd: 'git:on-change:add',
   gitOnChangeRemove: 'git:on-change:remove',
+  gitOnChangeSetPaused: 'git:on-change:set-paused',
 
   // git read-side: branches, remotes, log, stash, tags, contributors
   gitBranches: 'git:branches',
@@ -1054,6 +1046,14 @@ export interface DevTermApi {
      */
     killTmux(sessionId: string, name: string): Promise<void>
   }
+  terminal: {
+    /** Stop forwarding full shell bursts while retaining the main-side ring. */
+    setHibernated(sessionId: string, hibernated: boolean): Promise<void>
+    /** Return the retained raw stream and reopen full forwarding atomically. */
+    replay(sessionId: string): Promise<string>
+    /** Lightweight activity only; full pty:data/ssh:data stays gated. */
+    onActivity(sessionId: string, cb: (activity: TerminalActivity) => void): () => void
+  }
   /** Local filesystem browsing. */
   fs: {
     list(path?: string): Promise<DirListing>
@@ -1091,6 +1091,8 @@ export interface DevTermApi {
     watch(sessionId: string, path: string): Promise<string>
     /** Stop a watch started with `watch`. */
     unwatch(watchId: string): void
+    /** Pause/resume polling for one remote watch; resuming refreshes once. */
+    setWatchPaused(watchId: string, paused: boolean): void
     /** Subscribe to fresh listings pushed when the watched directory changes. */
     onWatchEvent(watchId: string, cb: (listing: DirListing) => void): () => void
   }
@@ -1256,6 +1258,8 @@ export interface DevTermApi {
      * The renderer switches to the owning group and focuses the session.
      */
     onFocusSession(cb: (sessionId: string) => void): () => void
+    /** Main window: closing to the tray hibernates terminal surfaces; reopening replays them. */
+    onTrayMode(cb: (hidden: boolean) => void): () => void
     /**
      * Floating agent window → main: an agent finished/wants attention for a
      * session that lives in the main window's store. Main broadcasts it to the
@@ -1400,6 +1404,8 @@ export interface DevTermApi {
      * returned by `onChange`. Best-effort: a missing main process is fine.
      */
     watch(target: { sessionId?: string; path: string }): void
+    /** Pause/resume the on-change poll for this target; resuming refreshes once. */
+    setWatchPaused(target: { sessionId?: string; path: string }, paused: boolean): void
 
     // ---- read-side additions ------------------------------------------------
 
@@ -1734,6 +1740,16 @@ export interface SettingsSnapshot {
    * SSH connections + split layout). Auto-launch workspaces still take priority.
    */
   sessionRestore?: boolean
+  /** Dispose hidden-group xterm surfaces while retaining their processes. */
+  hibernateEnabled?: boolean
+  /** Hide the window to the tray instead of quitting; off by default. */
+  keepSessionsInTray?: boolean
+  /** Delay before a clean terminal in a hidden group is hibernated. */
+  hibernateAfterMs?: number
+  /** Main-process raw output ring capacity for replay after hibernate. */
+  outputRingLines?: number
+  /** Connect background restore/workspace remotes on focus or on a stagger. */
+  remoteConnectMode?: RemoteConnectMode
   transfersPanelOpen?: boolean
   defaultShell?: DefaultShellPref
   gitPanelOpen?: boolean
@@ -1751,16 +1767,67 @@ export interface SettingsSnapshot {
 // Session restore (last-session snapshot) + SSH config import
 // ---------------------------------------------------------------------------
 
+/** Authentication shape retained for an ad-hoc SSH session restore draft. */
+export type SessionRestoreAuthMethod = 'password' | 'key' | 'agent' | 'none'
+
+/** Non-secret SSH hop fields that are safe to put in session-restore.json. */
+export interface SessionRestoreSshHop {
+  host: string
+  port: number
+  username: string
+  authMethod: SessionRestoreAuthMethod
+  privateKeyPath?: string
+  /** Whether a key passphrase was present without storing the passphrase itself. */
+  hasPassphrase?: boolean
+}
+
+/**
+ * An ad-hoc SSH profile retained by last-session restore. Passwords and key
+ * passphrases never live in the JSON snapshot. `restoreSecret` is a transient
+ * main↔renderer value populated from the OS-protected secret store on load;
+ * the main-process sanitizer strips it before writing.
+ */
+export interface SessionRestoreSshDraft extends SessionRestoreSshHop {
+  jump?: SessionRestoreSshHop
+  /** Opaque id for the matching encrypted secret entry, when one exists. */
+  secretId?: string
+  /** Runtime-only credentials; never persisted to session-restore.json. */
+  restoreSecret?: {
+    password?: string
+    passphrase?: string
+    jumpPassword?: string
+    jumpPassphrase?: string
+  }
+}
+
+/** A browser pane tab that can be recreated after the renderer restarts. */
+export interface SessionRestoreBrowserTab {
+  url: string
+  title?: string
+  zoom?: number
+  muted?: boolean
+}
+
 /** One capturable terminal (or browser pane) in a session-restore group. */
 export interface SessionRestoreItem {
   id: string
   kind: 'local' | 'remote' | 'browser'
-  /** Remote items: saved connection id (required to reconnect). */
+  /** Remote items opened from a saved connection. */
   connectionId?: string
+  /** Remote items opened ad hoc; safe host/auth metadata only. */
+  sshDraft?: SessionRestoreSshDraft
   cwd?: string
   title?: string
-  /** Browser items: last URL to reopen. */
+  /** Browser items: active URL to reopen (legacy snapshots and fallback). */
   url?: string
+  /** Browser items: every in-pane tab, in order. */
+  browserTabs?: SessionRestoreBrowserTab[]
+  /** Zero-based active browser tab index. */
+  browserActiveTab?: number
+  /** Raw ANSI tail, filled by the main process from the live output ring. */
+  scrollback?: string
+  /** Renderer-only live id used by main to capture the current output ring. */
+  liveSessionId?: string
   /** Agent to relaunch for this session (local / saved remote only). */
   agentKind?: AgentKind
   /** Where the agent UI was placed (docked / floating / hidden). */
@@ -1785,7 +1852,8 @@ export interface SessionRestoreGroup {
 
 /**
  * Snapshot of open groups written to `userData/session-restore.json`.
- * No secrets — remotes only store connectionIds.
+ * No secrets — saved remotes store connectionIds and ad-hoc remotes store a
+ * sanitized draft; runtime-only restore ids/secrets are stripped by main.
  */
 export interface SessionRestoreSnapshot {
   version: 1

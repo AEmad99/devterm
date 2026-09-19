@@ -30,6 +30,7 @@ import * as settingsIo from '../settings/settings-io'
 import * as quickConnect from '../ssh/quick-connect'
 import { setPersistEnabled } from '../search'
 import { broadcast } from './broadcast'
+import { globalOutputRings } from '../terminal/output-ring'
 
 function pushBridgeActivity(
   _getWindow: () => BrowserWindow | null,
@@ -41,7 +42,8 @@ function pushBridgeActivity(
 
 export function registerFoundationIpc(
   getWindow: () => BrowserWindow | null,
-  sshManager: SSHManager
+  sshManager: SSHManager,
+  options: { onKeepSessionsInTrayChanged?: (enabled: boolean) => void } = {}
 ): void {
   // -------------------------------------------------------------------------
   // bridge-activity
@@ -117,6 +119,16 @@ export function registerFoundationIpc(
     // Forward the persist-search toggle to the search module so a setting
     // flip takes effect without a restart.
     setPersistEnabled(snapshot.searchPersist === true)
+    // The main-side output ring follows the existing terminal scrollback
+    // setting. Its store clamps this untrusted renderer value to the hard
+    // 100000-line / byte safety limits.
+    const outputRingLines = snapshot.outputRingLines ?? snapshot.prefs?.scrollback
+    if (typeof outputRingLines === 'number' && Number.isFinite(outputRingLines)) {
+      globalOutputRings.setLimits({ maxLines: outputRingLines })
+    }
+    if (typeof snapshot.keepSessionsInTray === 'boolean') {
+      options.onKeepSessionsInTrayChanged?.(snapshot.keepSessionsInTray)
+    }
     settingsIo.scheduleSnapshot(snapshot)
   })
 

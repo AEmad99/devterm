@@ -206,6 +206,7 @@ function deriveContext(s: TabLabelInput): string | undefined {
   }
   if (s.status && s.status.toLowerCase().startsWith('reconnecting')) return s.status
   if (s.status && s.status.toLowerCase().startsWith('failed:')) return s.status
+  if (s.status && /^(waiting|connecting)/i.test(s.status)) return s.status
 
   // Agent activity is the most important "what is it doing" signal.
   if (s.agentPendingApproval) {

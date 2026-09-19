@@ -75,4 +75,38 @@ describe('splitBeside', () => {
     ])
     assert.deepEqual(root.children[1].type === 'leaf' ? root.children[1].tabs : [], ['other'])
   })
+
+  it('renames several pending SSH tabs in place when handshakes settle together', () => {
+    useLayout.setState({
+      groups: [
+        {
+          id: DEFAULT_GROUP,
+          name: 'Terminals',
+          root: {
+            type: 'leaf',
+            id: 'leaf-pending',
+            tabs: ['pending-a', 'pending-b'],
+            active: 'pending-b'
+          },
+          activeLeaf: 'leaf-pending'
+        }
+      ],
+      activeGroupId: DEFAULT_GROUP,
+      focusedId: null,
+      groupFlags: {}
+    })
+    useLayout.getState().sync([
+      { id: 'pending-a', groupId: DEFAULT_GROUP },
+      { id: 'pending-b', groupId: DEFAULT_GROUP }
+    ])
+    useLayout.getState().sync([
+      { id: 'ssh-a', groupId: DEFAULT_GROUP },
+      { id: 'ssh-b', groupId: DEFAULT_GROUP }
+    ])
+    const root = useLayout.getState().groups[0].root
+    assert.equal(root?.type, 'leaf')
+    if (root?.type !== 'leaf') return
+    assert.deepEqual(root.tabs, ['ssh-a', 'ssh-b'])
+    assert.equal(root.active, 'ssh-b')
+  })
 })

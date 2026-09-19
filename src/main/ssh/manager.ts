@@ -239,6 +239,8 @@ export interface SSHHandlers {
   onData: (sessionId: string, data: string) => void
   onExit: (sessionId: string) => void
   onStatus: (sessionId: string, status: SSHStatus) => void
+  /** Fires when an explicit disconnect removes a session from the manager. */
+  onDispose?: (sessionId: string) => void
 }
 
 /** Listener registered via `addStatusListener`; called for every status event. */
@@ -1571,6 +1573,7 @@ export class SSHManager {
         /* ignore */
       }
     }
+    this.handlers.onDispose?.(sessionId)
     this.cleanup(sessionId)
   }
 

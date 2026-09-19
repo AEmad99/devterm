@@ -107,6 +107,9 @@ export function registerFileIpc(
     sftpWatcher.stop(id)
     sftpWatchesBySender.get(e.sender.id)?.delete(id)
   })
+  ipcMain.on(IPC.sftpSetWatchPaused, (_e, id: string, paused: boolean) => {
+    sftpWatcher.setPaused(id, paused)
+  })
 
   return {
     stopWatches: () => {

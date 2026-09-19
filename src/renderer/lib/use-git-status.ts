@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useSessions } from '../store/sessions'
+import { DEFAULT_GROUP, useLayout } from '../store/layout'
 import type { GitStatus } from '@shared/types'
 
 /**
@@ -11,11 +12,13 @@ import type { GitStatus } from '@shared/types'
  */
 export function useActiveGitStatus(enabled = true): GitStatus | null {
   const active = useSessions((s) => s.sessions.find((x) => x.id === s.activeId))
+  const activeGroupId = useLayout((s) => s.activeGroupId)
   const [git, setGit] = useState<GitStatus | null>(null)
 
   const activeId = active?.id
   const activeKind = active?.kind
   const activeCwd = active?.cwd
+  const pollPaused = !!active && (active.groupId ?? DEFAULT_GROUP) !== activeGroupId
 
   useEffect(() => {
     if (!enabled) return
@@ -41,11 +44,12 @@ export function useActiveGitStatus(enabled = true): GitStatus | null {
       if (!cancelled) setGit(s)
     })
     window.devterm.git.watch(args)
+    window.devterm.git.setWatchPaused(args, pollPaused)
     return () => {
       cancelled = true
       off()
     }
-  }, [enabled, activeKind, activeCwd, activeId])
+  }, [enabled, activeKind, activeCwd, activeId, pollPaused])
 
   return git
 }

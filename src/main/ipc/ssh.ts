@@ -9,6 +9,7 @@ import {
 import { SSHManager, type ReconnectPolicy } from '../ssh/manager'
 import { makeCoalescer } from './coalesce'
 import { globalSearchIndex } from '../search/index'
+import { globalOutputRings, outputStreamKey } from '../terminal/output-ring'
 
 export function registerSshIpc(getWindow: () => BrowserWindow | null): SSHManager {
   const send = (channel: string, ...args: unknown[]) => {
@@ -17,6 +18,8 @@ export function registerSshIpc(getWindow: () => BrowserWindow | null): SSHManage
   }
 
   const sendData = makeCoalescer((id, data) => {
+    const outputKey = outputStreamKey('ssh', id)
+    globalOutputRings.append(outputKey, data)
     // Feed live SSH shell output into the global search index. A push can
     // throw on a closed session (the index drops it); we never want a
     // search-index glitch to break the live SSH data path. Mirrors the PTY
@@ -26,7 +29,11 @@ export function registerSshIpc(getWindow: () => BrowserWindow | null): SSHManage
     } catch {
       /* search index miss — keep streaming */
     }
-    send(`${IPC.sshData}:${id}`, data)
+    if (globalOutputRings.isForwarding(outputKey)) {
+      send(`${IPC.sshData}:${id}`, data)
+    } else {
+      send(`${IPC.terminalActivity}:${id}`, { bytes: Buffer.byteLength(data, 'utf8') })
+    }
   })
   const manager = new SSHManager({
     onData: (id, data) => sendData.push(id, data),
@@ -41,10 +48,18 @@ export function registerSshIpc(getWindow: () => BrowserWindow | null): SSHManage
       globalSearchIndex.clearSession(id)
       send(`${IPC.sshExit}:${id}`)
     },
-    onStatus: (id, status: SSHStatus) => send(`${IPC.sshStatus}:${id}`, status)
+    onStatus: (id, status: SSHStatus) => send(`${IPC.sshStatus}:${id}`, status),
+    onDispose: (id) => {
+      sendData.flush(id)
+      globalOutputRings.remove(outputStreamKey('ssh', id))
+    }
   })
 
-  ipcMain.handle(IPC.sshConnect, (_e, profile: SSHProfile) => manager.connect(profile))
+  ipcMain.handle(IPC.sshConnect, async (_e, profile: SSHProfile) => {
+    const result = await manager.connect(profile)
+    globalOutputRings.bindSession(result.sessionId, outputStreamKey('ssh', result.sessionId))
+    return result
+  })
   ipcMain.handle(
     IPC.sshOpenShell,
     (_e, id: string, cols: number, rows: number, options?: SSHOpenShellOptions) =>
@@ -54,7 +69,11 @@ export function registerSshIpc(getWindow: () => BrowserWindow | null): SSHManage
   ipcMain.on(IPC.sshResize, (_e, id: string, cols: number, rows: number) =>
     manager.resize(id, cols, rows)
   )
-  ipcMain.on(IPC.sshDisconnect, (_e, id: string) => manager.disconnect(id))
+  ipcMain.on(IPC.sshDisconnect, (_e, id: string) => {
+    sendData.flush(id)
+    globalOutputRings.remove(outputStreamKey('ssh', id))
+    manager.disconnect(id)
+  })
   // Cancel an in-flight auto-reconnect loop; safe to call when nothing is scheduled.
   ipcMain.on(IPC.sshCancelReconnect, (_e, id: string) => manager.cancelReconnect(id))
   // Set/inspect the auto-reconnect policy. The renderer pushes its settings here

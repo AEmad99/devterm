@@ -1,5 +1,5 @@
 import { memo, useEffect, useRef, useState } from 'react'
-import type { TmuxSessionInfo } from '@shared/types'
+import type { PtyCreated, TmuxSessionInfo } from '@shared/types'
 import { Terminal } from '@xterm/xterm'
 import type { ITheme } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
@@ -119,12 +119,37 @@ function applyHostBg(host: HTMLElement, bg: TerminalBg, theme: Theme): void {
  * remote sessions open a shell channel on the existing ssh2 client. The same
  * xterm wiring serves both (Trap §8: WebGL is feature-detected with fallback).
  */
-function TerminalView({ session }: { session: Session }) {
+function TerminalView({ session, hibernated = false }: { session: Session; hibernated?: boolean }) {
   const isWindowsRemote = session.kind === 'remote' && session.context?.os === 'windows'
+  const isHibernated = hibernated && session.kind !== 'browser'
+  const hibernatedRef = useRef(isHibernated)
+  const wasHibernated = hibernatedRef.current
+  hibernatedRef.current = isHibernated
   const hostRef = useRef<HTMLDivElement>(null)
   const termRef = useRef<Terminal | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
   const searchRef = useRef<SearchAddon | null>(null)
+  const ptyIdRef = useRef<string | null>(null)
+  const ptyExitedRef = useRef(false)
+  const ptyCreatePromiseRef = useRef<Promise<PtyCreated> | null>(null)
+  const ptyLifecycleIdRef = useRef<string | null>(null)
+  const sshShellOpenRef = useRef(false)
+  const sshShellEndedRef = useRef(false)
+  const sshOpenPromiseRef = useRef<Promise<void> | null>(null)
+  const sshLifecycleAttachedRef = useRef(false)
+  const sshTmuxListingRef = useRef<
+    Awaited<ReturnType<typeof window.devterm.ssh.listTmux>> | undefined
+  >(undefined)
+  const tmuxPickerShownRef = useRef(false)
+  const startCwdAppliedRef = useRef(false)
+  const startupShellRef = useRef<string | undefined>(undefined)
+  const exitNoticeRef = useRef<string | null>(null)
+  const lastExitNoticeRef = useRef<string | null>(null)
+  const backendCleanupsRef = useRef<Array<() => void>>([])
+  const sessionMountedRef = useRef(true)
+  const idleChimeRef = useRef<ReturnType<typeof createIdleChime> | null>(null)
+  const sessionTitleRef = useRef(session.title)
+  sessionTitleRef.current = session.title
   // The current backend resize fn (pty or ssh), set once the session is wired.
   // Used to push a resize after a font change (which alters cols/rows without
   // changing the host's pixel size, so the ResizeObserver wouldn't fire).
@@ -154,6 +179,66 @@ function TerminalView({ session }: { session: Session }) {
   // the right value before the prefs effect's first run.
   const bellOnRef = useRef(useSettings.getState().prefs.bell === 'visual')
 
+  // Attention detection and lightweight hidden-stream activity live for the
+  // session, not for an individual xterm surface. Hibernation removes the
+  // renderer listener for the full data stream, but the main process still
+  // emits tiny activity notifications so unread badges and inline-agent
+  // chimes continue to work.
+  useEffect(() => {
+    if (session.id.startsWith('pending-') || session.kind === 'browser') return
+    sessionMountedRef.current = true
+    const idleChime =
+      idleChimeRef.current ??
+      createIdleChime({
+        sessionId: session.id,
+        makeNotice: () => ({ title: sessionTitleRef.current, body: AGENT_ATTENTION_BODY })
+      })
+    idleChimeRef.current = idleChime
+    const stopActivity = window.devterm.terminal.onActivity(session.id, () => {
+      if (!hibernatedRef.current) return
+      idleChime.feed('activity')
+      if (useSessions.getState().activeId !== session.id) {
+        useSessions.getState().setHasUnreadOutput(session.id, true)
+      }
+    })
+    const stopActiveWatch = useSessions.subscribe((state, prev) => {
+      if (state.activeId === session.id && prev.activeId !== session.id) {
+        useSessions.getState().setHasUnreadOutput(session.id, false)
+      }
+    })
+    return () => {
+      sessionMountedRef.current = false
+      stopActivity()
+      stopActiveWatch()
+      idleChime.dispose()
+      if (idleChimeRef.current === idleChime) idleChimeRef.current = null
+      useSessions.getState().setCurrentCommand(session.id, undefined)
+      useSessions.getState().setProcessRunning(session.id, false)
+    }
+  }, [session.id, session.kind])
+
+  // Backend leases outlive xterm surfaces. This cleanup runs only when the
+  // React session itself closes or changes kind, never when hibernation swaps
+  // the renderer surface out.
+  useEffect(() => {
+    if (session.id.startsWith('pending-') || session.kind === 'browser') return
+    const backendCleanups = backendCleanupsRef.current
+    return () => {
+      for (const cleanup of backendCleanups.splice(0)) cleanup()
+      const ptyId = ptyIdRef.current
+      if (ptyId && !ptyExitedRef.current) {
+        void window.devterm.pty.kill(ptyId)
+      }
+      ptyIdRef.current = null
+      ptyCreatePromiseRef.current = null
+      ptyLifecycleIdRef.current = null
+      sshLifecycleAttachedRef.current = false
+      sshShellOpenRef.current = false
+      sshShellEndedRef.current = false
+      sshOpenPromiseRef.current = null
+    }
+  }, [session.id, session.kind])
+
   // Global Find (App hotkey) + in-pane Find share this opener. Must stay
   // registered for the session's lifetime, independent of the xterm effect
   // (which may re-run on kind changes).
@@ -181,6 +266,26 @@ function TerminalView({ session }: { session: Session }) {
     // Browser panes never render here (TerminalLayout routes them to BrowserPane);
     // bail defensively so a future misroute can't spawn a pty/ssh for one.
     if (!host || session.id.startsWith('pending-') || session.kind === 'browser') return
+    if (isHibernated) {
+      // The React component and its slot remain mounted. Only the xterm
+      // surface is disposed; the main-process output ring closes forwarding
+      // while the PTY/SSH lease continues to run.
+      void window.devterm.terminal.setHibernated(session.id, true)
+      return
+    }
+    const restoredScrollback = session.restoreScrollback
+    const restoringFromDisk = restoredScrollback !== undefined
+    const restoring = wasHibernated || restoringFromDisk
+    // replay() atomically captures the bounded ring and reopens the live
+    // stream. The renderer buffers any live chunks until the replay arrives
+    // so output cannot be displayed out of order.
+    const idleChime =
+      idleChimeRef.current ??
+      createIdleChime({
+        sessionId: session.id,
+        makeNotice: () => ({ title: sessionTitleRef.current, body: AGENT_ATTENTION_BODY })
+      })
+    idleChimeRef.current = idleChime
 
     const { terminalBg: bg, prefs, themeId } = useSettings.getState()
     const theme = getTheme(themeId)
@@ -254,6 +359,9 @@ function TerminalView({ session }: { session: Session }) {
     // may send a command as soon as the terminal mounts, before the backend has
     // finished starting.
     const inputQueue: string[] = []
+    const replayState: { active: boolean; pending: string[] } | null = restoring
+      ? { active: true, pending: [] }
+      : null
     let sendInput: (data: string) => void = (d) => inputQueue.push(d)
     registerTerminalInput(session.id, (d) => sendInput(d))
     const suggest = attachAutosuggest(term, host, {
@@ -323,10 +431,6 @@ function TerminalView({ session }: { session: Session }) {
     // beat after a real burst — until the shell prompt returns. A plain shell,
     // a quick command, or a long build never arms this; only an actual agent
     // does. The list of recognized agents lives in lib/attention.ts.
-    const idleChime = createIdleChime({
-      sessionId: session.id,
-      makeNotice: () => ({ title: session.title, body: AGENT_ATTENTION_BODY })
-    })
     // Reconstruct the command being submitted so we can spot an agent launch.
     // Keystrokes are exact for a typed command; on Enter we also read the rendered
     // prompt line, which catches a history-recalled or autosuggest-completed one.
@@ -385,10 +489,14 @@ function TerminalView({ session }: { session: Session }) {
       // output, so this micro-opt is worth it.
       if (bellOnRef.current && d.indexOf('\x07') !== -1) flashBell()
       idleChime.feed(d)
-      term.write(d)
       // Surface unread output on tabs that aren't being looked at.
       if (useSessions.getState().activeId !== session.id) {
         useSessions.getState().setHasUnreadOutput(session.id, true)
+      }
+      if (replayState?.active) {
+        replayState.pending.push(d)
+      } else {
+        term.write(d)
       }
     }
 
@@ -416,17 +524,54 @@ function TerminalView({ session }: { session: Session }) {
 
     let disposed = false
     const cleanups: Array<() => void> = [
-      idleChime.dispose,
       () => {
         if (bellTimer) clearTimeout(bellTimer)
-      },
-      () => setRunningCommand(undefined),
-      useSessions.subscribe((state, prev) => {
-        if (state.activeId === session.id && prev.activeId !== session.id) {
-          useSessions.getState().setHasUnreadOutput(session.id, false)
-        }
-      })
+      }
     ]
+    let replayStarted = false
+    const beginReplay = () => {
+      if (!restoring || !replayState || replayStarted) return
+      replayStarted = true
+      const writeRestoredScrollback = () => {
+        if (!restoringFromDisk) return
+        if (restoredScrollback) term.write(restoredScrollback)
+        useSessions.getState().clearRestoreScrollback(session.id)
+      }
+      void window.devterm.terminal
+        .replay(session.id)
+        .then((replay) => {
+          if (!replayState.active) return
+          replayState.active = false
+          if (disposed || hibernatedRef.current || termRef.current !== term) {
+            replayState.pending.length = 0
+            return
+          }
+          writeRestoredScrollback()
+          if (replay) term.write(replay)
+          for (const pending of replayState.pending) term.write(pending)
+          replayState.pending.length = 0
+          const notice =
+            exitNoticeRef.current ??
+            (ptyExitedRef.current || (session.kind === 'remote' && !sshShellOpenRef.current)
+              ? lastExitNoticeRef.current
+              : null)
+          if (notice) {
+            term.write(notice)
+            exitNoticeRef.current = null
+          }
+        })
+        .catch(() => {
+          // The backend may have closed during a focus switch. Do not leave
+          // live output buffered forever if replay cannot be serviced.
+          if (!replayState.active) return
+          replayState.active = false
+          if (!disposed && !hibernatedRef.current && termRef.current === term) {
+            writeRestoredScrollback()
+            for (const pending of replayState.pending) term.write(pending)
+          }
+          replayState.pending.length = 0
+        })
+    }
 
     const wireResize = (resize: (cols: number, rows: number) => void) => {
       resizeRef.current = resize
@@ -485,73 +630,106 @@ function TerminalView({ session }: { session: Session }) {
 
     if (session.kind === 'local') {
       ;(async () => {
-        const { id, cwd: spawnCwd } = await window.devterm.pty.create({
-          cols: term.cols,
-          rows: term.rows,
-          cwd: session.startCwd,
-          // Honor the user's default-shell setting on each new local terminal.
-          // The main process resolves the pref to an absolute path (or to its
-          // own default when the chosen shell isn't installed). Reading via
-          // getState() — the terminal mount path doesn't need to re-render on
-          // shell-pref changes; existing terminals keep their original pty.
-          shellPref: useSettings.getState().defaultShell
-        })
-        if (disposed) return window.devterm.pty.kill(id)
-        // Seed session cwd immediately from the spawn directory so the file
-        // explorer follows this terminal before the first OSC 7 prompt.
-        if (spawnCwd) useSessions.getState().setCwd(session.id, spawnCwd)
-        cleanups.push(window.devterm.pty.onData(id, writeData))
-        // Startup-failure diagnostic: if the main process saw the shell exit
-        // before emitting any data (Windows PowerShell 5.1's 0x8009001d is the
-        // canonical case), capture the shell path here so the upcoming
-        // onExit can render a targeted fix instead of a generic notice. The
-        // diagnostic fires once and races the exit event; whichever wins last
-        // drives the message.
-        let startupShell: string | undefined
-        cleanups.push(
-          window.devterm.pty.onStartupFailure(id, (info) => {
-            startupShell = info.shell
-          })
-        )
-        cleanups.push(
-          window.devterm.pty.onExit(id, ({ exitCode }) => {
-            setRunningCommand(undefined)
-            useSessions.getState().setExitCode(session.id, exitCode ?? null)
-            // ConPTY can tear down without reporting a code (e.g. the console
-            // host died under a misbehaving TUI) — don't print "code undefined".
-            const code = typeof exitCode === 'number' ? ` with code ${exitCode}` : ''
-            if (startupShell) {
-              // Render a targeted diagnostic instead of the generic exit
-              // notice. The banner is plain ASCII + ANSI colour so it lands
-              // intact on whatever shell the user opens next (the pane is
-              // already terminal-shaped — a clipboard-friendly fix is more
-              // useful than a styled component here).
-              term.write(`${EXIT_RESET}\r\n`)
-              term.write(`\x1b[31m[Shell failed to start]\x1b[0m\r\n`)
-              term.write(`\x1b[90m  ${startupShell}\x1b[0m\r\n`)
-              term.write(
-                `\x1b[90m  Exit code: ${typeof exitCode === 'number' ? exitCode : 'unknown'}\x1b[0m\r\n`
-              )
-              term.write(
-                isWindowsPowerShellPath(startupShell)
-                  ? powershellFailureHelp()
-                  : genericFailureHelp(startupShell)
-              )
-            } else {
-              term.write(`${EXIT_RESET}\r\n\x1b[90m[process exited${code}]\x1b[0m\r\n`)
+        const showExitNotice = (notice: string) => {
+          lastExitNoticeRef.current = notice
+          const current = termRef.current
+          if (current && !hibernatedRef.current) {
+            current.write(notice)
+            exitNoticeRef.current = null
+          } else {
+            exitNoticeRef.current = notice
+          }
+        }
+        const attachLifecycle = (id: string) => {
+          if (ptyLifecycleIdRef.current === id) return
+          ptyLifecycleIdRef.current = id
+          backendCleanupsRef.current.push(
+            window.devterm.pty.onStartupFailure(id, (info) => {
+              startupShellRef.current = info.shell
+            }),
+            window.devterm.pty.onExit(id, ({ exitCode }) => {
+              ptyExitedRef.current = true
+              useSessions.getState().setCurrentCommand(session.id, undefined)
+              useSessions.getState().setProcessRunning(session.id, false)
+              useSessions.getState().setExitCode(session.id, exitCode ?? null)
+              const code = typeof exitCode === 'number' ? ` with code ${exitCode}` : ''
+              const startupShell = startupShellRef.current
+              const notice = startupShell
+                ? `${EXIT_RESET}\r\n\x1b[31m[Shell failed to start]\x1b[0m\r\n` +
+                  `\x1b[90m  ${startupShell}\x1b[0m\r\n` +
+                  `\x1b[90m  Exit code: ${typeof exitCode === 'number' ? exitCode : 'unknown'}\x1b[0m\r\n` +
+                  (isWindowsPowerShellPath(startupShell)
+                    ? powershellFailureHelp()
+                    : genericFailureHelp(startupShell))
+                : `${EXIT_RESET}\r\n\x1b[90m[process exited${code}]\x1b[0m\r\n`
+              showExitNotice(notice)
+            })
+          )
+        }
+
+        let created: PtyCreated
+        try {
+          if (ptyExitedRef.current) {
+            if (restoring) beginReplay()
+            else if (lastExitNoticeRef.current) term.write(lastExitNoticeRef.current)
+            return
+          } else if (ptyIdRef.current) {
+            created = { id: ptyIdRef.current, shell: '', cwd: '' }
+          } else {
+            let creation = ptyCreatePromiseRef.current
+            if (!creation) {
+              creation = window.devterm.pty.create({
+                cols: term.cols,
+                rows: term.rows,
+                cwd: session.startCwd,
+                sessionId: session.id,
+                // Honor the user's default-shell setting on each new local terminal.
+                // The main process resolves the pref to an absolute path (or to its
+                // own default when the chosen shell isn't installed). Reading via
+                // getState() — the terminal mount path doesn't need to re-render on
+                // shell-pref changes; existing terminals keep their original pty.
+                shellPref: useSettings.getState().defaultShell
+              })
+              ptyCreatePromiseRef.current = creation
             }
-          })
-        )
-        const ptyId = id
+            created = await creation
+            if (ptyCreatePromiseRef.current === creation) ptyCreatePromiseRef.current = null
+            if (!sessionMountedRef.current) {
+              await window.devterm.pty.kill(created.id)
+              return
+            }
+            ptyIdRef.current = created.id
+            ptyExitedRef.current = false
+            startupShellRef.current = undefined
+            exitNoticeRef.current = null
+            lastExitNoticeRef.current = null
+          }
+        } catch (e) {
+          ptyCreatePromiseRef.current = null
+          if (!disposed && !hibernatedRef.current) {
+            term.write(`\r\n\x1b[31m[failed to start shell: ${String(e)}]\x1b[0m\r\n`)
+          }
+          return
+        }
+
+        attachLifecycle(created.id)
+        if (!disposed && created.cwd) {
+          // Seed session cwd immediately from the spawn directory so the file
+          // explorer follows this terminal before the first OSC 7 prompt.
+          useSessions.getState().setCwd(session.id, created.cwd)
+        }
+        if (disposed) return
+        cleanups.push(window.devterm.pty.onData(created.id, writeData))
+        beginReplay()
+        const ptyId = created.id
         sendInput = (d) => window.devterm.pty.input(ptyId, d)
         // Deliver any input that arrived before the PTY was created (e.g. a grid
         // broadcast sent while TerminalView was still mounting).
         for (const d of inputQueue) sendInput(d)
         inputQueue.length = 0
-        wireResize((c, r) => window.devterm.pty.resize(id, c, r))
-        cleanups.push(() => window.devterm.pty.kill(id))
+        wireResize((c, r) => window.devterm.pty.resize(ptyId, c, r))
       })().catch((e) => {
-        if (!disposed) {
+        if (!disposed && !hibernatedRef.current) {
           term.write(`\r\n\x1b[31m[failed to start shell: ${String(e)}]\x1b[0m\r\n`)
         }
       })
@@ -559,18 +737,35 @@ function TerminalView({ session }: { session: Session }) {
       const sid = session.id
       // Subscribe before opening the shell so the login banner isn't missed.
       cleanups.push(window.devterm.ssh.onData(sid, writeData))
-      cleanups.push(
-        window.devterm.ssh.onExit(sid, () => {
-          setRunningCommand(undefined)
-          useSessions.getState().setExitCode(session.id, null)
-          term.write(`${EXIT_RESET}\r\n\x1b[90m[connection closed]\x1b[0m\r\n`)
-        })
-      )
+      beginReplay()
+      if (!sshLifecycleAttachedRef.current) {
+        sshLifecycleAttachedRef.current = true
+        backendCleanupsRef.current.push(
+          window.devterm.ssh.onExit(sid, () => {
+            sshShellOpenRef.current = false
+            sshShellEndedRef.current = true
+            useSessions.getState().setCurrentCommand(session.id, undefined)
+            useSessions.getState().setProcessRunning(session.id, false)
+            useSessions.getState().setExitCode(session.id, null)
+            const notice = `${EXIT_RESET}\r\n\x1b[90m[connection closed]\x1b[0m\r\n`
+            lastExitNoticeRef.current = notice
+            const current = termRef.current
+            if (current && !hibernatedRef.current) {
+              current.write(notice)
+              exitNoticeRef.current = null
+            } else {
+              exitNoticeRef.current = notice
+            }
+          })
+        )
+      }
       const applyStartCwd = () => {
         // Best-effort: restore the working directory when launched from a
         // saved workspace. Works for POSIX shells and PowerShell alike.
         // Seed store so the explorer shows that path before OSC 7 arrives.
         // Skipped when attaching to an existing tmux session (it has its own cwd).
+        if (startCwdAppliedRef.current || !session.startCwd) return
+        startCwdAppliedRef.current = true
         if (session.startCwd) {
           useSessions.getState().setCwd(session.id, session.startCwd)
           const p = session.startCwd.replace(/"/g, '\\"')
@@ -578,32 +773,49 @@ function TerminalView({ session }: { session: Session }) {
         }
       }
       void (async () => {
-        // Probe tmux before opening the long-lived shell. On restrictive POSIX
-        // servers, overlapping this optional exec with the shell can exceed
-        // MaxSessions=1 or trigger a buggy transport reset.
-        const offerTmux = useSettings.getState().remoteDetachedSessions
-        let listing: Awaited<ReturnType<typeof window.devterm.ssh.listTmux>> | undefined
-        if (offerTmux) {
-          try {
-            listing = await window.devterm.ssh.listTmux(sid, 2500)
-          } catch {
-            listing = undefined
+        if (!sshShellOpenRef.current) {
+          if (sshShellEndedRef.current) return
+          let opening = sshOpenPromiseRef.current
+          if (!opening) {
+            opening = (async () => {
+              // Probe tmux before opening the long-lived shell. On restrictive
+              // POSIX servers, overlapping this optional exec with the shell can
+              // exceed MaxSessions=1 or trigger a buggy transport reset.
+              const offerTmux = useSettings.getState().remoteDetachedSessions
+              let listing: Awaited<ReturnType<typeof window.devterm.ssh.listTmux>> | undefined
+              if (offerTmux) {
+                try {
+                  listing = await window.devterm.ssh.listTmux(sid, 2500)
+                } catch {
+                  listing = undefined
+                }
+              }
+              await window.devterm.ssh.openShell(sid, term.cols, term.rows)
+              sshTmuxListingRef.current = listing
+              sshShellOpenRef.current = true
+              sshShellEndedRef.current = false
+            })()
+            sshOpenPromiseRef.current = opening
           }
-          if (disposed) return
+          try {
+            await opening
+          } finally {
+            if (sshOpenPromiseRef.current === opening) sshOpenPromiseRef.current = null
+          }
         }
-
-        await window.devterm.ssh.openShell(sid, term.cols, term.rows)
-        if (disposed) return
+        if (disposed || !sessionMountedRef.current) return
         // `openShell` resolves only after the ssh2 channel exists. Wire the
         // sender here so input queued during channel negotiation is replayed
         // instead of being written while `shell` is still undefined.
         sendInput = (d) => window.devterm.ssh.input(sid, d)
-        if (offerTmux && listing?.available) {
+        const listing = sshTmuxListingRef.current
+        if (listing?.available && !tmuxPickerShownRef.current) {
           // Keystrokes entered while the pane was still probing do not have a
           // well-defined target once the picker takes over. Discard rather than
           // unexpectedly execute them in the login shell behind the picker.
           inputQueue.length = 0
           blockInputRef.current = true
+          tmuxPickerShownRef.current = true
           setTmuxPicker({
             sessions: listing.sessions,
             version: listing.version,
@@ -615,7 +827,7 @@ function TerminalView({ session }: { session: Session }) {
         inputQueue.length = 0
         applyStartCwd()
       })().catch((e) => {
-        if (!disposed) {
+        if (!disposed && !hibernatedRef.current) {
           term.write(`\r\n\x1b[31m[failed to open shell: ${String(e)}]\x1b[0m\r\n`)
         }
       })
@@ -625,6 +837,17 @@ function TerminalView({ session }: { session: Session }) {
     return () => {
       disposed = true
       blockInputRef.current = false
+      // If the picker itself was visible when the renderer was hibernated,
+      // allow the restored surface to offer it again. A picker already
+      // resolved by the operator must stay resolved across surface swaps.
+      if (tmuxPickerRef.current) tmuxPickerShownRef.current = false
+      if (replayState) {
+        replayState.active = false
+        replayState.pending.length = 0
+      }
+      if (hibernatedRef.current) {
+        void window.devterm.terminal.setHibernated(session.id, true)
+      }
       setTmuxPicker(null)
       clearTimeout(seedTimer)
       suggest.dispose()
@@ -637,12 +860,12 @@ function TerminalView({ session }: { session: Session }) {
       disposeClipboard()
       disposeRenderer()
       term.dispose()
-      termRef.current = null
+      if (termRef.current === term) termRef.current = null
     }
     // startCwd is a one-time initial value consumed at mount; it never changes
     // for a live session, so it intentionally stays out of the dependency list.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session.id, session.kind])
+  }, [session.id, session.kind, isHibernated])
 
   // Live-apply theme + background changes from Settings without recreating the
   // terminal. A theme swap repaints the whole ANSI palette; a background change

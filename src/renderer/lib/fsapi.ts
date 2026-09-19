@@ -21,6 +21,8 @@ export interface FsApi {
    * finished starting).
    */
   watch(path: string, onChange: (listing: DirListing) => void): () => void
+  /** Pause/resume all watches created through this API; resume refreshes once. */
+  setWatchPaused(paused: boolean): void
 }
 
 /**
@@ -29,12 +31,16 @@ export interface FsApi {
  * async start resolves, so we defer the subscription and honour an unsubscribe
  * that races ahead of it (cancelled before start resolves → stop immediately).
  */
-function watchVia(
+function watchMethods(
   start: (path: string) => Promise<string>,
   subscribe: (id: string, cb: (l: DirListing) => void) => () => void,
-  unwatch: (id: string) => void
+  unwatch: (id: string) => void,
+  setPaused?: (id: string, paused: boolean) => void
 ) {
-  return (path: string, onChange: (l: DirListing) => void): (() => void) => {
+  let paused = false
+  const watchIds = new Set<string>()
+
+  const watch = (path: string, onChange: (l: DirListing) => void): (() => void) => {
     let cancelled = false
     let watchId: string | null = null
     let off: (() => void) | null = null
@@ -42,6 +48,8 @@ function watchVia(
       (id) => {
         if (cancelled) return unwatch(id)
         watchId = id
+        watchIds.add(id)
+        if (paused) setPaused?.(id, true)
         off = subscribe(id, onChange)
       },
       () => {} // start failed (e.g. session gone) — nothing to clean up
@@ -49,13 +57,28 @@ function watchVia(
     return () => {
       cancelled = true
       off?.()
-      if (watchId) unwatch(watchId)
+      if (watchId) {
+        watchIds.delete(watchId)
+        unwatch(watchId)
+      }
     }
   }
+
+  const setWatchPaused = (next: boolean) => {
+    paused = next
+    for (const id of watchIds) setPaused?.(id, next)
+  }
+
+  return { watch, setWatchPaused }
 }
 
 /** Local filesystem API surface. */
 export function localFsApi(): FsApi {
+  const watches = watchMethods(
+    (p) => window.devterm.fs.watch(p),
+    window.devterm.fs.onWatchEvent,
+    window.devterm.fs.unwatch
+  )
   return {
     list: (p) => window.devterm.fs.list(p),
     home: () => window.devterm.fs.home(),
@@ -63,16 +86,19 @@ export function localFsApi(): FsApi {
     createFile: (p) => window.devterm.fs.createFile(p),
     rename: (a, b) => window.devterm.fs.rename(a, b),
     delete: (p) => window.devterm.fs.delete(p),
-    watch: watchVia(
-      (p) => window.devterm.fs.watch(p),
-      window.devterm.fs.onWatchEvent,
-      window.devterm.fs.unwatch
-    )
+    watch: watches.watch,
+    setWatchPaused: watches.setWatchPaused
   }
 }
 
 /** Remote SFTP API surface bound to a session. */
 export function remoteFsApi(sessionId: string): FsApi {
+  const watches = watchMethods(
+    (p) => window.devterm.sftp.watch(sessionId, p),
+    window.devterm.sftp.onWatchEvent,
+    window.devterm.sftp.unwatch,
+    window.devterm.sftp.setWatchPaused
+  )
   return {
     list: (p) => window.devterm.sftp.list(sessionId, p),
     home: () => window.devterm.sftp.home(sessionId),
@@ -80,10 +106,7 @@ export function remoteFsApi(sessionId: string): FsApi {
     createFile: (p) => window.devterm.sftp.createFile(sessionId, p),
     rename: (a, b) => window.devterm.sftp.rename(sessionId, a, b),
     delete: (p) => window.devterm.sftp.delete(sessionId, p),
-    watch: watchVia(
-      (p) => window.devterm.sftp.watch(sessionId, p),
-      window.devterm.sftp.onWatchEvent,
-      window.devterm.sftp.unwatch
-    )
+    watch: watches.watch,
+    setWatchPaused: watches.setWatchPaused
   }
 }

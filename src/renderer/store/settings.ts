@@ -3,6 +3,7 @@ import type {
   AgentKind,
   AgentPreferences,
   DefaultShellPref,
+  RemoteConnectMode,
   STTSettings,
   STTModelId,
   STTLanguage
@@ -10,6 +11,12 @@ import type {
 import type { HotkeyId } from '../lib/hotkeys'
 import { applyTheme, getTheme } from '../lib/themes'
 import { applyDensity } from '../lib/density'
+import {
+  DEFAULT_HIBERNATE_AFTER_MS,
+  DEFAULT_OUTPUT_RING_LINES,
+  normalizeHibernateAfterMs,
+  normalizeOutputRingLines
+} from '../lib/hibernate'
 
 /**
  * User-facing settings for terminals. Persisted to localStorage (renderer-only,
@@ -82,6 +89,16 @@ export interface AppSettings {
    * app start. Workspace auto-launch still wins when any workspace has it set.
    */
   sessionRestore: boolean
+  /** Dispose hidden-group xterm surfaces while retaining their processes. */
+  hibernateEnabled: boolean
+  /** Hide the main window to the tray while keeping PTYs, SSH clients, and agents alive. */
+  keepSessionsInTray: boolean
+  /** Delay before a clean terminal in a hidden group is hibernated. */
+  hibernateAfterMs: number
+  /** Main-process raw output ring capacity for replay after hibernate. */
+  outputRingLines: number
+  /** Connect background restore/workspace remotes on focus or on a stagger. */
+  remoteConnectMode: RemoteConnectMode
   /**
    * Whether the transfers panel is open in the bottom dock. Cluster D adds
    * this. App toolbar's segmented "Activity | Transfers | Off" toggle is the
@@ -225,6 +242,11 @@ const DEFAULTS: AppSettings = {
   },
   remoteDetachedSessions: true,
   sessionRestore: true,
+  hibernateEnabled: true,
+  keepSessionsInTray: false,
+  hibernateAfterMs: DEFAULT_HIBERNATE_AFTER_MS,
+  outputRingLines: DEFAULT_OUTPUT_RING_LINES,
+  remoteConnectMode: 'focus',
   transfersPanelOpen: false,
   defaultShell: { kind: 'auto' },
   gitPanelOpen: false,
@@ -264,12 +286,13 @@ function load(): AppSettings {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw) return DEFAULTS
     const parsed = JSON.parse(raw)
+    const prefs = { ...DEFAULTS.prefs, ...(parsed?.prefs ?? {}) }
     // Merge over defaults so older saved files (which had no `prefs`) and any
     // future-added fields fall back cleanly.
     return {
       themeId: typeof parsed?.themeId === 'string' ? parsed.themeId : DEFAULTS.themeId,
       terminalBg: { ...DEFAULTS.terminalBg, ...(parsed?.terminalBg ?? {}) },
-      prefs: { ...DEFAULTS.prefs, ...(parsed?.prefs ?? {}) },
+      prefs,
       autoReconnect: { ...DEFAULTS.autoReconnect, ...(parsed?.autoReconnect ?? {}) },
       attention: { ...DEFAULTS.attention, ...(parsed?.attention ?? {}) },
       showStatusBar:
@@ -299,6 +322,22 @@ function load(): AppSettings {
         typeof parsed?.sessionRestore === 'boolean'
           ? parsed.sessionRestore
           : DEFAULTS.sessionRestore,
+      hibernateEnabled:
+        typeof parsed?.hibernateEnabled === 'boolean'
+          ? parsed.hibernateEnabled
+          : DEFAULTS.hibernateEnabled,
+      keepSessionsInTray:
+        typeof parsed?.keepSessionsInTray === 'boolean'
+          ? parsed.keepSessionsInTray
+          : DEFAULTS.keepSessionsInTray,
+      hibernateAfterMs: normalizeHibernateAfterMs(
+        parsed?.hibernateAfterMs ?? DEFAULTS.hibernateAfterMs
+      ),
+      outputRingLines: normalizeOutputRingLines(
+        parsed?.outputRingLines,
+        normalizeOutputRingLines(prefs.scrollback, DEFAULTS.outputRingLines)
+      ),
+      remoteConnectMode: parsed?.remoteConnectMode === 'stagger' ? 'stagger' : 'focus',
       transfersPanelOpen:
         typeof parsed?.transfersPanelOpen === 'boolean'
           ? parsed.transfersPanelOpen
@@ -481,6 +520,11 @@ interface SettingsState extends AppSettings {
   setAgentPreferences: (patch: Partial<AgentPreferences>) => void
   setRemoteDetachedSessions: (v: boolean) => void
   setSessionRestore: (v: boolean) => void
+  setHibernateEnabled: (v: boolean) => void
+  setKeepSessionsInTray: (v: boolean) => void
+  setHibernateAfterMs: (v: number) => void
+  setOutputRingLines: (v: number) => void
+  setRemoteConnectMode: (v: RemoteConnectMode) => void
   setTransfersPanelOpen: (v: boolean) => void
   setDefaultShell: (pref: DefaultShellPref) => void
   setGitPanelOpen: (v: boolean) => void
@@ -528,6 +572,11 @@ function persist(state: AppSettings): void {
     agentPreferences: state.agentPreferences,
     remoteDetachedSessions: state.remoteDetachedSessions,
     sessionRestore: state.sessionRestore,
+    hibernateEnabled: state.hibernateEnabled,
+    keepSessionsInTray: state.keepSessionsInTray,
+    hibernateAfterMs: state.hibernateAfterMs,
+    outputRingLines: state.outputRingLines,
+    remoteConnectMode: state.remoteConnectMode,
     transfersPanelOpen: state.transfersPanelOpen,
     defaultShell: state.defaultShell,
     gitPanelOpen: state.gitPanelOpen,
@@ -639,6 +688,31 @@ export const useSettings = create<SettingsState>((set, get) => ({
     persist(snapshot(get()))
   },
 
+  setHibernateEnabled: (v) => {
+    set({ hibernateEnabled: v })
+    persist(snapshot(get()))
+  },
+
+  setKeepSessionsInTray: (v) => {
+    set({ keepSessionsInTray: v })
+    persist(snapshot(get()))
+  },
+
+  setHibernateAfterMs: (v) => {
+    set({ hibernateAfterMs: normalizeHibernateAfterMs(v) })
+    persist(snapshot(get()))
+  },
+
+  setOutputRingLines: (v) => {
+    set({ outputRingLines: normalizeOutputRingLines(v) })
+    persist(snapshot(get()))
+  },
+
+  setRemoteConnectMode: (v) => {
+    set({ remoteConnectMode: v === 'stagger' ? 'stagger' : 'focus' })
+    persist(snapshot(get()))
+  },
+
   setTransfersPanelOpen: (v) => {
     set({ transfersPanelOpen: v })
     persist(snapshot(get()))
@@ -736,6 +810,22 @@ export const useSettings = create<SettingsState>((set, get) => ({
           ? s.remoteDetachedSessions
           : cur.remoteDetachedSessions,
       sessionRestore: typeof s.sessionRestore === 'boolean' ? s.sessionRestore : cur.sessionRestore,
+      hibernateEnabled:
+        typeof s.hibernateEnabled === 'boolean' ? s.hibernateEnabled : cur.hibernateEnabled,
+      keepSessionsInTray:
+        typeof s.keepSessionsInTray === 'boolean' ? s.keepSessionsInTray : cur.keepSessionsInTray,
+      hibernateAfterMs:
+        s.hibernateAfterMs !== undefined
+          ? normalizeHibernateAfterMs(s.hibernateAfterMs)
+          : cur.hibernateAfterMs,
+      outputRingLines:
+        s.outputRingLines !== undefined
+          ? normalizeOutputRingLines(s.outputRingLines)
+          : cur.outputRingLines,
+      remoteConnectMode:
+        s.remoteConnectMode === 'stagger' || s.remoteConnectMode === 'focus'
+          ? s.remoteConnectMode
+          : cur.remoteConnectMode,
       transfersPanelOpen:
         typeof s.transfersPanelOpen === 'boolean' ? s.transfersPanelOpen : cur.transfersPanelOpen,
       defaultShell: s.defaultShell ? normalizeDefaultShell(s.defaultShell) : cur.defaultShell,
@@ -779,6 +869,11 @@ export const useSettings = create<SettingsState>((set, get) => ({
       agentPreferences: DEFAULTS.agentPreferences,
       remoteDetachedSessions: DEFAULTS.remoteDetachedSessions,
       sessionRestore: DEFAULTS.sessionRestore,
+      hibernateEnabled: DEFAULTS.hibernateEnabled,
+      keepSessionsInTray: DEFAULTS.keepSessionsInTray,
+      hibernateAfterMs: DEFAULTS.hibernateAfterMs,
+      outputRingLines: DEFAULTS.outputRingLines,
+      remoteConnectMode: DEFAULTS.remoteConnectMode,
       transfersPanelOpen: DEFAULTS.transfersPanelOpen,
       defaultShell: DEFAULTS.defaultShell,
       gitPanelOpen: DEFAULTS.gitPanelOpen,
@@ -826,6 +921,11 @@ function snapshot(s: SettingsState): AppSettings {
     agentPreferences: s.agentPreferences,
     remoteDetachedSessions: s.remoteDetachedSessions,
     sessionRestore: s.sessionRestore,
+    hibernateEnabled: s.hibernateEnabled,
+    keepSessionsInTray: s.keepSessionsInTray,
+    hibernateAfterMs: s.hibernateAfterMs,
+    outputRingLines: s.outputRingLines,
+    remoteConnectMode: s.remoteConnectMode,
     transfersPanelOpen: s.transfersPanelOpen,
     defaultShell: s.defaultShell,
     gitPanelOpen: s.gitPanelOpen,
