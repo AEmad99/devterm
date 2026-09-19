@@ -1,171 +1,146 @@
 # DevTerm
 
-A cross-platform desktop **SSH/SFTP terminal** with tiling panes, a file editor, an in-app
-browser, saved connections & workspaces, and a built-in multi-provider **DevTerm Agent** (plus
-optional Claude / Codex / Grok / OpenCode / Kimi / pi / Antigravity / Muse Code CLIs) that can operate on the
-connected remote host — through an MCP bridge the app hosts itself, so the remote needs nothing
-installed and no internet.
+<p align="center">
+  <img src="resources/icon.png" width="96" alt="DevTerm icon">
+</p>
 
-- 🖥️ **Local & remote terminals** — local shell (PowerShell on Windows) and SSH with
-  password / private-key auth and single-hop **ProxyJump/bastion** support. Remote POSIX
-  hosts with a working tmux get a session picker (live pane preview, attach, kill).
-- ▦ **Tiling layout & terminal groups** — split any pane horizontally/vertically, drag to resize,
-  and organise terminals into named **groups** (drag a tab onto a group, or spin off a new one).
-  Optional last-session restore on boot (local shells + saved SSH).
-- 💾 **Saved connections & workspaces** — store SSH profiles (secrets encrypted via the OS
-  keychain), import `~/.ssh/config`, and snapshot a group of local+remote terminals — with their
-  working directories and split arrangement — into a **workspace** you can relaunch into its own
-  group.
-- 📁 **File explorer + SFTP** — a sidebar that follows your shell's working directory, plus a
-  dual-pane local ↔ remote browser with upload/download (streamed, cancellable), rename, delete,
-  and new-folder.
-- ✏️ **File editor** — open and edit files in a built-in CodeMirror 6 editor with syntax
-  highlighting for common languages. Markdown files have Edit / Side / Preview
-  (Ctrl/Cmd+Alt+M cycles).
-- 🌐 **In-app browser pane** — open a tabbed browser inside a pane (handles logins, copy/paste,
-  and `target=_blank` pop-outs as new tabs). Agents drive it through first-class `browser_*`
-  tools, with a visible cursor on click/type.
-- ⌨️ **Command palette & snippets** — save command scriptlets (with `{{placeholders}}`) and fire
-  them into the active terminal from a **Ctrl/Cmd+K** palette; per-terminal find
-  (Ctrl/Cmd+Shift+F) and global search (Ctrl/Cmd+Alt+F).
-- 🎨 **Themes** — nine built-in themes (Tokyo Night, Dracula, Catppuccin Mocha, Nord, Gruvbox,
-  One Dark, Solarized Dark, Ayu Mirage, and a translucent **Glass**) that restyle both the terminal
-  palette and the whole app chrome; plus font, cursor, scrollback and background-image preferences.
-- 🔀 **Git panel** — Warp-style status, stage/commit/push/pull, branches, stash, tags, remotes,
-  and a commit graph. Remote repos reuse the session's SSH exec channel.
-- 🤖 **DevTerm Agent** — bundled multi-provider agent (or Claude / Codex / Grok / OpenCode /
-  Kimi / pi / Antigravity / Muse Code). **Remote:** host work goes through MCP tools on the **same** SSH
-  connection. **Local:** native Read/Write/Bash in the operator's folder; MCP is browser +
-  local handoff (`agent_list` / `agent_delegate` / `agent_message`). Open Agent from the pane
-  tab strip; dock, float, or hide without killing the process. Permission prompts belong to
-  the agent CLI; Settings → Agent guardrails stay an MCP pre-check.
-- 🔒 Security-first: `contextIsolation` on, `nodeIntegration` off, `sandbox` on; MCP server bound
-  to `127.0.0.1` with a random per-session bearer token; SSH host-key verification (trust-on-first-use).
+<p align="center">
+  <strong>A desktop SSH/SFTP terminal with tiling panes, files, git, and a built-in coding agent.</strong><br>
+  Remote hosts need nothing installed and no outbound internet.
+</p>
+
+<p align="center">
+  <a href="https://github.com/AEmad99/devterm/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/AEmad99/devterm?label=release"></a>
+  <a href="./LICENSE"><img alt="MIT License" src="https://img.shields.io/github/license/AEmad99/devterm"></a>
+  <img alt="Windows" src="https://img.shields.io/badge/platform-Windows-0a7cff">
+</p>
+
+DevTerm is a normal framed Windows app. You open it and you are in a terminal — local PowerShell, SSH, or both — with splits, groups, a file sidebar, an editor, an in-app browser, and an agent that can work on the connected host through the same SSH session.
+
+**Current release: [v1.3.30](https://github.com/AEmad99/devterm/releases/tag/v1.3.30)**
+
+![DevTerm terminal workspace](resources/screens/terminal.png)
 
 ---
 
-## Getting started
+## Why it exists
 
-### Option A — Install the Windows app (easiest)
+Most agent terminals either install a runtime on the server or send host work out through the model vendor. DevTerm keeps the agent on your machine and reaches the remote through an in-process MCP bridge on the **same** ssh2 connection as the shell and SFTP. The server stays a normal SSH host.
 
-1. Go to the [**Releases**](../../releases) page and download `DevTerm-<version>-setup.exe`.
-2. Run it. It's **unsigned**, so Windows SmartScreen may warn — click **More info → Run anyway**.
+---
+
+## What you get
+
+- **Local and SSH terminals** — PowerShell (or cmd / a custom shell) locally; password or key SSH with a single bastion hop. POSIX remotes with a working tmux get a live session picker. Optional last-session restore on boot.
+- **Tiling panes and groups** — split any pane, drag to resize, and keep independent named groups. Launch a 4×4 remote grid when you need a wall of shells.
+- **Saved connections and workspaces** — OS-keychain secrets, `~/.ssh/config` import, and workspace snapshots of a group's hosts, folders, and split tree.
+- **Files, SFTP, and an editor** — a sidebar that follows `cd`, a dual-pane transfer browser with a persistent queue, and CodeMirror 6 (Markdown Edit / Side / Preview).
+- **Git panel** — status, stage, commit, push/pull, branches, stash, tags, remotes, and a commit graph. Remote repos reuse the session's SSH exec channel.
+- **In-app browser** — tabbed http(s) panes for docs and dashboards. Agents can drive them through `browser_*` tools.
+- **Command palette, snippets, search** — Ctrl/Cmd+K for actions, snippets (`{{placeholders}}`), connections, workspaces, and history. Per-pane find and global search across terminals.
+- **DevTerm Agent** — bundled multi-provider agent, plus Claude, Codex, Grok, OpenCode, Kimi, pi, Antigravity, and Muse Code. Dock, float, or hide the UI without killing the process. Remote host tools ride MCP; local agents work in the folder that terminal is in.
+- **Port forwards, dictation, themes** — local `-L` and SOCKS `-D`, offline Whisper push-to-talk, and nine themes (including Glass) that restyle chrome and the terminal together.
+
+![Git panel](resources/screens/git-panel.png)
+
+![Command palette](resources/screens/command-palette.png)
+
+![Create a terminal grid](resources/screens/grid-modal.png)
+
+---
+
+## Install (Windows)
+
+1. Download `DevTerm-<version>-setup.exe` from [Releases](https://github.com/AEmad99/devterm/releases/latest).
+2. Run it. The build is **unsigned**, so SmartScreen may warn — **More info → Run anyway**.
 3. Launch **DevTerm** from the Start menu.
 
-### Option B — Run from source
+---
 
-**Prerequisites:** [Node.js](https://nodejs.org) 18+ (works on 20/22/24), Git, and Windows x64.
-(macOS/Linux can run the dev build too — see the note in the setup script for native binaries.)
+## Run from source
+
+**Need:** Node.js 18+ (20/22/24 are fine), Git, Windows x64.
 
 ```sh
-git clone https://github.com/AEmad99/devterm.git devterm
+git clone https://github.com/AEmad99/devterm.git
 cd devterm
-
-npm install --ignore-scripts   # IMPORTANT: see "Native modules" — do NOT run a plain npm install
-npm run setup                  # fetches the Electron binary + the node-pty prebuilt
-npm run dev                    # launch with hot-reload
+npm install --ignore-scripts   # do not run a plain npm install
+npm run setup                  # Electron binary + node-pty prebuilt
+npm run dev
 ```
-
-### Build your own installer
 
 ```sh
-npm run build:win              # → dist/DevTerm-<version>-setup.exe (NSIS)
+npm run build:win              # → dist/DevTerm-<version>-setup.exe
 ```
 
-> **Packaging note:** electron-builder downloads a `winCodeSign` archive containing macOS symlinks
-> that Windows can't create without admin/Developer Mode, which aborts packaging. If you hit that,
-> pre-extract it once (excluding the two `.dylib` symlinks) into
-> `%LOCALAPPDATA%\electron-builder\Cache\winCodeSign\winCodeSign-2.6.0`, and build with
-> `CSC_IDENTITY_AUTO_DISCOVERY=false` (we build unsigned).
+If packaging dies on `winCodeSign` macOS symlinks, extract that cache once (skip the two `.dylib` links) into `%LOCALAPPDATA%\electron-builder\Cache\winCodeSign\winCodeSign-2.6.0` and build with `CSC_IDENTITY_AUTO_DISCOVERY=false`.
+
+**Native modules:** `node-pty` is aliased to a prebuilt (`electron-v121`), which is why Electron stays on **29**. Never `npm rebuild` it. `npm run setup` drops the Windows ConPTY addons into `node_modules/node-pty/build/Release/`.
 
 ---
 
-## Using DevTerm
+## Agent model
 
-- **Open a terminal:** double-click a pane's tab strip or press its **＋** and pick **Local** or
-  **Remote**. On Windows, local is PowerShell, so `ls`/`cd`/`pwd`/`cat` work.
-- **Connect over SSH:** in the picker choose **Remote**, fill in host/user and a password or
-  private-key path. Tick *"Connect through a bastion"* for a ProxyJump hop. First connection records
-  the host key (trust-on-first-use); a later mismatch is rejected with a warning. Save it in the
-  **Connections** tab to reconnect in one click (secrets are encrypted with the OS keychain).
-- **Split & group:** split a pane from its tab strip and drag the divider to resize. Drag a pane's
-  tab onto another group's tab to move it, or onto the **＋** to spin it into a new group. Use
-  **Save group** to snapshot the current group as a **Workspace** (relaunches into its own group).
-- **File explorer (left sidebar):** shows the active session's current directory and **follows you
-  as you `cd`** in the terminal. Toggle it with the **☰** button; drag its edge to resize. Open a
-  file to edit it in the built-in editor.
-- **Transfer files:** on a remote tab, switch to **Files (SFTP)** for a dual-pane local ↔ remote
-  browser — select a file and **Upload → / ← Download**, or use **＋ Folder / Rename / Delete**.
-  Transfers stream with a live progress bar and a cancel that truly aborts.
-- **Browser pane:** open an in-app browser in any pane for docs/dashboards without leaving the app.
-- **Snippets & palette:** save frequently-used commands in the **Snippets** tab, then press
-  **Ctrl/Cmd+K** to search and run them into the active terminal (parameterised snippets prompt for
-  their `{{placeholders}}`). Press **Ctrl/Cmd+Shift+F** to find within a terminal, or
-  **Ctrl/Cmd+Alt+F** to search across all terminals.
-- **Themes & preferences:** open **Settings** to switch theme, set the terminal font/cursor/
-  scrollback/background, and toggle copy-on-select / right-click-paste. Settings persist across
-  restarts.
-- **Agent:** on a local or remote pane, use the tab-strip sparkle to **Open Agent** and the
-  letter-mark to pick the backend (DevTerm Agent, Claude, Codex, Grok, …). Remote agents act
-  on the host via MCP over the same SSH connection. Local agents work in the folder that
-  terminal is in, and can open sibling agent tabs or drive the in-app browser. Hide / Float /
-  Stop once it is running — hide and float do not kill the process. Approval rules live in
-  Settings → Agent guardrails; the CLI itself still owns its permission prompts.
+```
+DevTerm Agent / CLI  (credentials stay in the agent runtime)
+  → MCP bridge on 127.0.0.1 + a random bearer token
+     → remote: same ssh2 client (shell, SFTP, and agent are separate channels)
+        → host needs nothing installed
+     → local: CLI fs/shell in the operator folder; MCP is browser + tab handoff
+```
 
-> Provider credentials stay in the agent runtime (e.g. `~/.pi/agent/auth.json` or the CLI's own
-> store) — DevTerm never moves API keys over its IPC.
+Open Agent from the pane tab strip. Hide and Float do not stop it; Stop / close tab / quit do. Approval rules under **Settings → Agent guardrails** are an MCP pre-check. The CLI still owns its own permission prompts. Provider keys never cross DevTerm IPC.
 
 ---
-
-## How it works
-
-```
-DevTerm Agent / CLI (local; model credentials stay with the agent runtime)
-  → in-process MCP bridge (127.0.0.1 + bearer token, inside the app)
-     → remote: the SAME ssh2 connection (shell + SFTP + agent are separate channels)
-        → remote host (nothing installed, no outbound internet required)
-     → local: CLI builtin fs/shell in the operator folder; MCP is browser_* + handoff
-```
-
-One `ssh2.Client` per remote session; the human shell, the SFTP browser, and the agent's host
-tools each open their own channel on it. Approval rules at the MCP boundary are a pre-check;
-the agent CLI owns interactive permission prompts.
 
 ## Security
 
-- Renderer is sandboxed and isolated; it talks to the main process only through a typed
-  `contextBridge`. No `nodeIntegration`.
-- MCP server binds to `127.0.0.1` only, with a random per-session bearer token; per-session agent config and host briefings live in a temp dir and are removed on teardown.
-- Saved SSH passwords/passphrases are encrypted at rest with the OS keychain (Electron
-  `safeStorage`); private-key paths are stored plaintext (the key stays on disk). Workspaces and
-  snippets hold **no** secrets.
-- SSH host keys are verified trust-on-first-use; a later key mismatch is rejected, not auto-accepted.
-- `.env` (which may hold a GitHub token used only for releasing) is git-ignored — never commit it.
+- Renderer: `contextIsolation` on, `nodeIntegration` off, `sandbox` on; typed `contextBridge` only.
+- MCP listens on loopback with a per-session bearer token. Temp agent config is deleted on teardown.
+- SSH passwords/passphrases use the OS keychain (`safeStorage`). Host keys are TOFU; a later mismatch is rejected.
+- Workspaces and snippets store no secrets.
 
-## Self-test
+---
+
+## Stack
+
+| Layer | Choice |
+| --- | --- |
+| App | Electron 29, React 19, TypeScript, Zustand |
+| Terminal | xterm.js (canvas renderer), node-pty, ssh2 |
+| Editor | CodeMirror 6 |
+| Agent | bundled pi-coding-agent + MCP SDK; 8 optional CLIs |
+| Packaged as | unsigned Windows NSIS (`com.devterm.app`) |
+
+---
+
+## Using it
+
+- **New terminal:** double-click a pane tab strip, or press **＋**, and pick Local or Remote.
+- **SSH:** host/user plus password or key. Tick *Connect through a bastion* for one ProxyJump hop. Save it under **Connections**.
+- **Split / group:** split from the tab strip; drag a tab onto a group, or onto **＋** for a new group. **Save group** writes a workspace.
+- **Files:** the left sidebar follows the active shell cwd. On a remote tab, **Files (SFTP)** is the dual-pane transfer UI.
+- **Agent:** sparkle opens it; the letter mark picks the backend.
+
+---
+
+## Verify a checkout
+
+```sh
+npm run typecheck
+npm run test
+node scripts/smoke.cjs
+```
+
+Headless production self-test (needs a build, ~90s):
 
 ```sh
 npm run build
 npx electron . --self-test
 ```
 
-Runs the real production code headlessly: local PowerShell PTY runs `cd`/`ls`/`pwd`/`echo` and emits
-OSC 7 cwd; an in-process `ssh2` mock server validates connect + host-key TOFU + shell echo + OS
-detection (Linux & Windows); an fs-backed SFTP server validates list/mkdir/rename/delete, a 256 KB
-upload + download integrity round-trip, and a true transfer cancel; the guardrail policy is
-unit-tested; and the **MCP bridge** is driven by a real MCP client (bearer auth incl. rejecting a
-bad token, tool listing, `run_command`/`get_host_context`/`list_dir`/`read_file` over the shared
-connection, and a read-only host blocking a destructive command).
-
-## Native modules (why the install is two steps)
-
-`node-pty` is a C++ addon. To avoid requiring a compiler, `package.json` aliases it to
-`@homebridge/node-pty-prebuilt-multiarch@0.13.1`, whose newest prebuilt targets **electron-v121**,
-so Electron is pinned to **^29**. `npm run setup` fetches Electron's binary and the matching
-`node-pty` Windows prebuilt into `node_modules/node-pty/build/Release/`. `electron-builder.yml` sets
-`npmRebuild: false` so the prebuilt binary is shipped as-is. Any future native dep (e.g. `keytar`)
-will need the same prebuilt treatment or a real toolchain.
+Release history is in [CHANGELOG.md](./CHANGELOG.md). Agent-facing architecture notes live in [AGENTS.md](./AGENTS.md).
 
 ## License
 
-MIT — see [LICENSE](./LICENSE).
+MIT — [LICENSE](./LICENSE).

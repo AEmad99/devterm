@@ -47,3 +47,8 @@ src/renderer/public/ort/
 
 # local Qwen CLI state
 .qwen/
+
+# leftover VCS / sandbox metadata (also pruned from electron-builder)
+.hg/
+.sl/
+.eden/
