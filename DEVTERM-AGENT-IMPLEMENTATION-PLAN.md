@@ -117,7 +117,7 @@ From `AGENTS.md`, verified at plan-write time:
 - Single bastion hop (`profile.jump`). No ProxyJump chains.
 - No block-based terminal UI (OSC 133 A/B only, no C/D).
 - No inline images / sixel. No OSC 9/99 attention protocol.
-- Mount-everything × renderer cost. Processes remain mounted; hidden non-active groups now hibernate renderer xterm surfaces after a configurable delay and replay bounded recent output. No automatic process hibernate.
+- Mount-everything × renderer cost. No auto-hibernate of hidden groups.
 - Electron 29 locked by node-pty prebuilt ABI. Upgrade is a project, not a bump.
 - Open issues: **#1** command syntax highlighting (cannot be done honestly on a raw PTY), **#2** preview/annotate mode (not shipped).
 - No MCP tools for git / search / forwards — agents shell out via `run_command`.
@@ -211,7 +211,7 @@ Add under Settings → Performance (there is already on-demand `performance:snap
 ### Files
 
 - `src/main/ssh/watch.ts`, `src/main/ssh/sftp.ts`
-- `src/main/ipc/git.ts` (the poll registry sits in the IPC layer)
+- `src/main/git/index.ts`
 - renderer git hooks / `FileExplorer` watch subscribers
 
 ### Done when
@@ -809,13 +809,6 @@ IPC/MCP additions: follow `.claude/skills/add-ipc/SKILL.md` or `.claude/skills/a
 _Agents: append dated bullets. Do not rewrite history._
 
 - 2026-09-19 — Plan written against v1.3.30. No implementation started in this file’s lifetime.
-- 2026-09-19 — v1.4-A part 1 implemented: main-side bounded raw output rings for local PTYs and SSH shells, with drop-oldest replay and an always-open forwarding gate behind the existing coalescer. Hibernate/dispose and renderer replay remain for part 2.
-- 2026-09-19 — v1.4-A part 2 implemented: hidden non-active terminal groups dispose renderer xterm surfaces after the configurable delay, keep PTY/SSH/agent processes alive, forward lightweight activity while hidden, and replay bounded ANSI output when restored.
-- 2026-09-19 — Manual release check note: exercise 8 local panes across 2 groups, switch away for 45s, confirm hidden xterm surfaces are disposed while processes remain alive, then return and confirm recent output is restored.
-- 2026-09-19 — v1.4-B implemented: remote SFTP directory watches and Git on-change watchers pause for hidden/hibernated groups, resume with one immediate refresh on focus, and leave transfers and agent host tools unaffected.
-- 2026-09-19 — v1.4-C implemented: restore/workspace/grid remote tabs paint before SSH, active remotes start on a 300ms stagger, background groups default to connect-on-focus (with a stagger setting), and restore progress reports/click-focuses failures.
-- 2026-09-19 — v1.4-D implemented: session restore now persists bounded raw ANSI tails, sanitized ad-hoc SSH drafts with safeStorage-backed secrets, and all browser-pane tabs; missing credentials restore as an in-place needs-auth prompt.
-- 2026-09-19 — v1.4-E implemented: optional tray-resident mode hides the window without tearing down local PTYs, SSH clients, or agents, then reattaches terminal surfaces through hibernate replay; explicit Quit remains destructive and reboot survival stays out of scope.
 
 ---
 
