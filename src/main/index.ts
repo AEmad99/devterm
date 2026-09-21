@@ -86,8 +86,38 @@ process.on('uncaughtException', (err) => {
 // `--unhandled-rejections=throw`, which means a single async rejection in the
 // MCP bridge / SSH manager / anywhere else can terminate the entire Electron
 // main process and take every terminal and agent down with it. Swallow the
-// same benign noise (EPIPE, disposed webframe) and surface the rest through
-// the same error box so real failures stay visible.
+// same benign noise (EPIPE, disposed webframe). After a window exists, tell
+// the renderer to toast the rest — a synchronous error box freezes every
+// terminal until the operator dismisses it. The native dialog stays for
+// failures that happen before any window can show a toast.
+let lastAsyncNotice = ''
+let lastAsyncNoticeAt = 0
+function reportAsyncMainError(message: string): void {
+  const msg = message.replace(/\s+/g, ' ').trim().slice(0, 280) || 'Unknown async error'
+  const now = Date.now()
+  if (msg === lastAsyncNotice && now - lastAsyncNoticeAt < 4000) return
+  lastAsyncNotice = msg
+  lastAsyncNoticeAt = now
+  console.error('Unhandled promise rejection in main process:', msg)
+  const wins = BrowserWindow.getAllWindows().filter(
+    (w) => !w.isDestroyed() && !w.webContents.isDestroyed()
+  )
+  if (!app.isReady() || wins.length === 0) {
+    try {
+      dialog.showErrorBox('An async error occurred in the main process', msg)
+    } catch {
+      /* dialog may be unavailable before app is ready */
+    }
+    return
+  }
+  for (const win of wins) {
+    try {
+      win.webContents.send(IPC.appNotice, msg)
+    } catch {
+      /* window is closing */
+    }
+  }
+}
 process.on('unhandledRejection', (reason) => {
   const err = reason instanceof Error ? reason : new Error(String(reason))
   const msg = err.message || String(reason)
@@ -98,12 +128,7 @@ process.on('unhandledRejection', (reason) => {
     console.warn('Ignored EPIPE rejection (pty/socket already gone):', msg)
     return
   }
-  console.error('Unhandled promise rejection in main process:', err)
-  try {
-    dialog.showErrorBox('An async error occurred in the main process', msg)
-  } catch {
-    /* dialog may be unavailable before app is ready */
-  }
+  reportAsyncMainError(msg)
 })
 import { registerPtyIpc } from './ipc/pty'
 import { IPC } from '@shared/types'

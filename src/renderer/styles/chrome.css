@@ -621,18 +621,17 @@
   gap: 10px;
 }
 
-/* One-time first-run hint: floating card anchored bottom-center of the panes
-   area, just above the status bar. Non-modal — only the card itself takes
-   pointer events (it's a single absolutely-positioned element). */
+/* One-time first-run hint: a stacked card in the terminal column, above the
+   panes, so it takes its own row instead of covering the shell prompt. */
 .welcome-hint {
-  position: absolute;
-  left: 50%;
-  bottom: 14px;
-  transform: translateX(-50%);
-  z-index: 4; /* above .term-layer (1), below the focus backdrop (5) and focused slots (6) */
+  position: relative;
+  z-index: 2;
   display: flex;
-  align-items: center;
-  gap: 10px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  margin: 8px 10px 0;
+  max-width: min(420px, calc(100% - 20px));
   padding: 8px 12px;
   background: var(--panel);
   border: 1px solid var(--border);
@@ -640,7 +639,13 @@
   box-shadow: var(--shadow-2);
   font-size: 12px;
   color: var(--muted);
-  white-space: nowrap;
+  white-space: normal;
+}
+.welcome-hint-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
 .welcome-checklist {
   margin: 6px 0 8px;
@@ -678,12 +683,37 @@
 @keyframes welcome-hint-in {
   from {
     opacity: 0;
-    transform: translate(-50%, 8px);
+    transform: translateY(-4px);
   }
   to {
     opacity: 1;
-    transform: translate(-50%, 0);
+    transform: none;
   }
+}
+.pane-error {
+  box-sizing: border-box;
+  height: 100%;
+  min-height: 120px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 8px;
+  padding: 20px;
+  color: var(--fg);
+  background: var(--bg);
+}
+.pane-error-title {
+  font-weight: 650;
+}
+.pane-error-detail,
+.pane-error-msg {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+.pane-error-msg {
+  font-family: var(--font-mono);
 }
 @media (prefers-reduced-motion: no-preference) {
   .welcome-hint {

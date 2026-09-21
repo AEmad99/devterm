@@ -144,8 +144,16 @@ export default function StatusBar() {
     )
   }
 
-  const agentText = active.agentExited ? 'Agent exited' : agentLabel(active.agentBridgeState)
-  const agentTone = active.agentPendingApproval ? 'warn' : active.agentExited ? 'err' : ''
+  const agentText = active.agentStartError
+    ? 'Agent failed'
+    : active.agentExited
+      ? 'Agent exited'
+      : agentLabel(active.agentBridgeState)
+  const agentTone = active.agentPendingApproval
+    ? 'warn'
+    : active.agentStartError || active.agentExited
+      ? 'err'
+      : ''
   const msgTone = statusTone(active.status)
 
   return (
@@ -221,7 +229,11 @@ export default function StatusBar() {
             type="button"
             className={`status-cell status-link status-agent ${agentTone}`}
             title={`${agentKindLabel(active.agentKind ?? 'devterm')}: ${
-              active.agentExited ? 'exited' : (active.agentBridgeState ?? 'starting')
+              active.agentStartError
+                ? active.agentStartError
+                : active.agentExited
+                  ? 'exited'
+                  : (active.agentBridgeState ?? 'starting')
             }${active.agentPendingApproval ? ' — awaiting approval' : ''} — click to show`}
             onClick={() => {
               // Hidden/floating agents come back into view; a visible agent's

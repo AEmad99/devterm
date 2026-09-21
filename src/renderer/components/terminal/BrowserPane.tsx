@@ -693,6 +693,7 @@ const BrowserFindBar = memo(function BrowserFindBar({
 })
 
 function BrowserPane({ session }: { session: Session }) {
+  const [previewRoot, setPreviewRoot] = useState<HTMLDivElement | null>(null)
   // An agent-created pane's first tab must carry the pre-agreed tabKey from
   // the browser_open request so its registration resolves the pending waiter.
   // Restored panes deliberately generate fresh tab ids, so an old AGT tab is
@@ -992,9 +993,10 @@ function BrowserPane({ session }: { session: Session }) {
             session={session}
             webContentsId={activeTab?.webContentsId ?? null}
             currentUrl={activeTab?.current}
+            overlayRoot={previewRoot}
           />
         )}
-        <div className="browser-stack">
+        <div className="browser-stack" ref={setPreviewRoot}>
           {tabs.map((t) => (
             <div
               key={t.id}

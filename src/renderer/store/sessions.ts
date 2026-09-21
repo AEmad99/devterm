@@ -124,6 +124,8 @@ export interface Session {
   needsAttention?: boolean
   /** True when the agent process has exited (bridge may still be up). */
   agentExited?: boolean
+  /** Set when agent.open fails, so a hidden or floating agent still shows the error. */
+  agentStartError?: string
   /** Incremented to ask the mounted AgentPane to relaunch (restart button). */
   agentRestartNonce?: number
   /** Wall clock when the current agent UI session started (cockpit age). */
@@ -190,6 +192,8 @@ interface SessionState {
   setDeferredCredentials: (id: string, credentials: DeferredCredentials) => void
   /** Cancel any in-flight auto-reconnect loop for the given session. */
   cancelSshReconnect: (sessionId: string) => void
+  /** Retry a dropped SSH session in place (same tab, saved profile on the main side). */
+  retrySshReconnect: (sessionId: string) => void
   /** Open an in-app browser pane; returns the new session id. Spawns no pty/ssh. */
   addBrowser: (opts?: {
     url?: string
@@ -263,6 +267,8 @@ interface SessionState {
   setHasUnreadOutput: (id: string, unread: boolean) => void
   /** Set / clear whether the agent process has exited for this session. */
   setAgentExited: (id: string, exited: boolean) => void
+  /** Record or clear an agent.open failure for the cockpit and status bar. */
+  setAgentStartError: (id: string, message: string | undefined) => void
   /** Ask the mounted AgentPane for this session to relaunch the agent. */
   bumpAgentRestart: (id: string) => void
   /** Set / clear whether a process is currently running in this session. */
@@ -550,6 +556,10 @@ export const useSessions = create<SessionState>((set, get) => ({
     }))
   },
 
+  retrySshReconnect: (sessionId) => {
+    window.devterm.ssh.reconnect(sessionId)
+  },
+
   setActive: (id) =>
     set((s) => {
       if (!s.sessions.some((x) => x.id === id)) return s
@@ -717,8 +727,9 @@ export const useSessions = create<SessionState>((set, get) => ({
                 agentKind: nextKind,
                 agentPolicyMode: nextPolicy,
                 agentStartedAt: cur.agentStartedAt ?? Date.now(),
-                // A fresh open/reattach clears a prior exited marker.
-                agentExited: patch.ptyId !== undefined ? false : x.agentExited
+                // A fresh open/reattach clears a prior exited marker and start error.
+                agentExited: patch.ptyId !== undefined ? false : x.agentExited,
+                agentStartError: patch.ptyId !== undefined ? undefined : x.agentStartError
               }
             : x
         )
@@ -800,6 +811,16 @@ export const useSessions = create<SessionState>((set, get) => ({
       if (!cur || !!cur.agentExited === exited) return s
       return {
         sessions: s.sessions.map((x) => (x.id === id ? { ...x, agentExited: exited } : x))
+      }
+    }),
+
+  setAgentStartError: (id, message) =>
+    set((s) => {
+      const cur = s.sessions.find((x) => x.id === id)
+      const next = message?.trim() ? message.trim().slice(0, 400) : undefined
+      if (!cur || cur.agentStartError === next) return s
+      return {
+        sessions: s.sessions.map((x) => (x.id === id ? { ...x, agentStartError: next } : x))
       }
     }),
 

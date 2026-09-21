@@ -5,6 +5,7 @@ import { useSettings } from './store/settings'
 import { applyTheme, getTheme } from './lib/themes'
 import { applyDensity } from './lib/density'
 import AgentPane from './components/agent/AgentPane'
+import ErrorBoundary from './components/common/ErrorBoundary'
 import ConfirmActionModal from './components/modals/ConfirmActionModal'
 import { agentKindLabel, setAgentUiMode, stopAgent } from './lib/agent-ui'
 import './styles.css'
@@ -116,4 +117,12 @@ function AgentFloatingApp() {
   )
 }
 
-ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(<AgentFloatingApp />)
+ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
+  <ErrorBoundary
+    title="This agent window hit an error"
+    detail="The agent process keeps running. Restore this window to keep using it."
+    retryLabel="Restore this window"
+  >
+    <AgentFloatingApp />
+  </ErrorBoundary>
+)

@@ -72,6 +72,14 @@ export function reduceOsc133(
 
 const COMMENTS_KEY = 'devterm.block-comments.v1'
 const MAX_COMMENTS_PER_SESSION = 80
+/** Live gutter decorations kept per pane. Older ones are released as new commands finish. */
+export const MAX_COMMAND_GUTTERS = 48
+
+/** Entries that should be disposed so only the newest `max` remain. */
+export function guttersToRelease<T>(items: readonly T[], max = MAX_COMMAND_GUTTERS): T[] {
+  if (items.length <= max) return []
+  return items.slice(0, items.length - max)
+}
 
 type CommentStore = Record<string, Record<string, { command: string; comment: string }>>
 
@@ -162,8 +170,8 @@ export interface CommandBlocksController {
 }
 
 /**
- * Track OSC 133 A/B on a live xterm, paint faint gutters, and report hook health
- * for the optional command input editor.
+ * Track OSC 133 A/B on a live xterm and paint a capped set of faint gutters.
+ * There is no command-input strip; the shell still owns the line being typed.
  */
 export function attachCommandBlocks(
   term: Terminal,
@@ -274,12 +282,25 @@ export function attachCommandBlocks(
           openMenu({ ...block, comment }, ev.clientX, ev.clientY, text)
         }
       })
-      decorations.push({
+      let dropped = false
+      const entry = {
         dispose: () => {
+          if (dropped) return
+          dropped = true
+          const index = decorations.indexOf(entry)
+          if (index >= 0) decorations.splice(index, 1)
           decoration.dispose()
           marker.dispose()
         }
+      }
+      marker.onDispose(() => {
+        if (dropped) return
+        dropped = true
+        const index = decorations.indexOf(entry)
+        if (index >= 0) decorations.splice(index, 1)
       })
+      decorations.push(entry)
+      for (const old of guttersToRelease(decorations)) old.dispose()
     } catch {
       /* proposed API / disposed terminal */
     }

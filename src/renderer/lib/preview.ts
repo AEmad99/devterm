@@ -59,7 +59,8 @@ export async function openPreviewPane(opts: {
   const source = opts.sourceSessionId
     ? useSessions.getState().sessions.find((s) => s.id === opts.sourceSessionId)
     : useSessions.getState().sessions.find((s) => s.id === useSessions.getState().activeId)
-  const groupId = opts.groupId ?? source?.groupId ?? useLayout.getState().activeGroupId ?? DEFAULT_GROUP
+  const groupId =
+    opts.groupId ?? source?.groupId ?? useLayout.getState().activeGroupId ?? DEFAULT_GROUP
   const preview: PreviewMeta = {
     kind: opts.kind,
     sourceSessionId: source?.kind === 'browser' ? source.preview?.sourceSessionId : source?.id,
@@ -69,11 +70,7 @@ export async function openPreviewPane(opts: {
   }
   const title =
     opts.title ||
-    (opts.kind === 'folder'
-      ? `Preview ${opts.folderPath}`
-      : port
-        ? `Preview :${port}`
-        : 'Preview')
+    (opts.kind === 'folder' ? `Preview ${opts.folderPath}` : port ? `Preview :${port}` : 'Preview')
   const paneId = useSessions.getState().addBrowser({
     url: loadable,
     groupId,
@@ -108,7 +105,10 @@ export function handlePreviewOpenRequest(req: PreviewOpenRequest): void {
         groupId: req.groupId
       })
       if (!paneId) {
-        window.devterm.preview.ackOpen({ requestId: req.requestId, error: 'Could not open preview' })
+        window.devterm.preview.ackOpen({
+          requestId: req.requestId,
+          error: 'Could not open preview'
+        })
         return
       }
       const session = useSessions.getState().sessions.find((s) => s.id === paneId)
@@ -124,6 +124,18 @@ export function handlePreviewOpenRequest(req: PreviewOpenRequest): void {
       })
     }
   })()
+}
+
+const portPanelListeners = new Set<(sessionId: string) => void>()
+
+/** Ask the owning remote pane to show its port-forward panel. */
+export function requestPortForwardPanel(sessionId: string): void {
+  for (const listener of portPanelListeners) listener(sessionId)
+}
+
+export function onPortForwardPanelRequest(cb: (sessionId: string) => void): () => void {
+  portPanelListeners.add(cb)
+  return () => portPanelListeners.delete(cb)
 }
 
 let wired = false

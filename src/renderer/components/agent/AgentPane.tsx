@@ -15,6 +15,7 @@ import {
 import { useBridgeActivity } from '../../lib/bridge-activity'
 import { AGENT_BRIDGE_POLICY, agentKindLabel, injectAgentPrompt } from '../../lib/agent-ui'
 import { getTheme, xtermTheme } from '../../lib/themes'
+import { toast } from '../../store/toasts'
 
 /** Live state of the agent's link to this host (what the status pill reflects). */
 type BridgeState = AgentBridgeStatus['state'] | 'connecting' | 'exited'
@@ -253,6 +254,7 @@ export default function AgentPane({
         if (mirrorToStore) {
           setAgentUi(sessionId, { kind, policyMode: mode, ptyId })
           setAgentExited(sessionId, false)
+          useSessions.getState().setAgentStartError(sessionId, undefined)
         }
         setMcpUrl(url)
         setBridge((cur) => (cur === 'connecting' ? (reused ? 'connected' : 'listening') : cur))
@@ -395,6 +397,11 @@ export default function AgentPane({
         acknowledge(false, msg)
         setBridge('error')
         setBridgeMessage(msg)
+        if (mirrorToStore) {
+          useSessions.getState().setAgentStartError(sessionId, msg)
+          setAgentTask(sessionId, 'failed to start', kind)
+          toast(`Agent failed to start: ${msg}`, 'err')
+        }
         term.write(`\r\n\x1b[31m[failed to start ${kind}: ${msg}]\x1b[0m\r\n`)
         term.write(
           kind === 'devterm'

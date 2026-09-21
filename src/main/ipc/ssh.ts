@@ -76,6 +76,9 @@ export function registerSshIpc(getWindow: () => BrowserWindow | null): SSHManage
   })
   // Cancel an in-flight auto-reconnect loop; safe to call when nothing is scheduled.
   ipcMain.on(IPC.sshCancelReconnect, (_e, id: string) => manager.cancelReconnect(id))
+  ipcMain.on(IPC.sshReconnect, (_e, id: string) => {
+    if (typeof id === 'string' && id) manager.reconnect(id)
+  })
   // Set/inspect the auto-reconnect policy. The renderer pushes its settings here
   // on boot and whenever the user edits them in the Settings modal.
   ipcMain.handle(IPC.sshGetReconnectPolicy, () => manager.getReconnectPolicy())

@@ -3,18 +3,25 @@ import type { PortForward } from '@shared/types'
 import ModalShell from '../common/ModalShell'
 import Button from '../common/Button'
 import { useSessions } from '../../store/sessions'
-import { listForwardedLocalPorts, openPreviewPane } from '../../lib/preview'
+import {
+  listForwardedLocalPorts,
+  openPreviewPane,
+  requestPortForwardPanel
+} from '../../lib/preview'
 
 export type PreviewOpenKind = 'localhost' | 'forward' | 'folder'
 
 export default function PreviewOpenModal({
   open,
   kind,
-  onClose
+  onClose,
+  onFocusTerminals
 }: {
   open: boolean
   kind: PreviewOpenKind
   onClose: () => void
+  /** Bring the terminals view forward before opening the port-forward panel. */
+  onFocusTerminals?: () => void
 }) {
   const activeId = useSessions((s) => s.activeId)
   const sessions = useSessions((s) => s.sessions)
@@ -119,7 +126,20 @@ export default function PreviewOpenModal({
           {active?.kind !== 'remote' ? (
             <p className="modal-hint">Select a remote terminal that has a local (-L) forward.</p>
           ) : forwards.length === 0 ? (
-            <p className="modal-hint">No local forwards on this session. Add one in the port-forward panel.</p>
+            <div className="modal-hint">
+              <p>No local forwards on this session yet.</p>
+              <Button
+                variant="primary"
+                onClick={() => {
+                  if (!activeId) return
+                  onFocusTerminals?.()
+                  requestPortForwardPanel(activeId)
+                  onClose()
+                }}
+              >
+                Open port forwards
+              </Button>
+            </div>
           ) : (
             <ul className="preview-forward-list">
               {forwards.map((f) => (

@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState, type Dispatch, type SetStateAction } from 'react'
+import { lazy, Suspense, useMemo, useState, type Dispatch, type SetStateAction } from 'react'
 import TerminalLayout from '../terminal/TerminalLayout'
 import GroupBar from './GroupBar'
 import ConfirmDialog from '../common/ConfirmDialog'
@@ -8,12 +8,14 @@ import {
   IconEdit,
   IconPlus,
   IconGrid,
+  IconClose,
   EmptyTerminalArt
 } from '../common/Icons'
 import { DEFAULT_GROUP, type Group } from '../../store/layout'
 import type { Session } from '../../store/sessions'
 import type { EditorDoc } from '../../store/editors'
 import { useSettings } from '../../store/settings'
+import { comboLabel, resolveHotkeys, type HotkeyId } from '../../lib/hotkeys'
 
 // CodeMirror and its editor-only UI are unnecessary for the terminal-first
 // screen. Keep them in a local async chunk and load only when a document is
@@ -83,7 +85,23 @@ export default function TerminalsView({
     (s) => (s.groupId || DEFAULT_GROUP) === activeGroupId
   ).length
   const zenMode = useSettings((s) => s.zenMode)
+  const welcomeHintSeen = useSettings((s) => s.welcomeHintSeen)
+  const setWelcomeHintSeen = useSettings((s) => s.setWelcomeHintSeen)
+  const firstRun = useSettings((s) => s.firstRun)
+  const keybindings = useSettings((s) => s.keybindings)
   const effectiveShowGroupBar = showGroupBar && !zenMode
+  const welcomeKeys = useMemo(() => {
+    const hs = resolveHotkeys(keybindings)
+    const label = (id: HotkeyId) => {
+      const h = hs.find((x) => x.id === id)
+      return h ? comboLabel(h, false) : ''
+    }
+    return {
+      palette: label('palette'),
+      newTerminal: label('newTerminal'),
+      settings: label('settings')
+    }
+  }, [keybindings])
   // Dirty editor close confirmation (a single doc, so one pending id is enough).
   const [pendingEditorClose, setPendingEditorClose] = useState<string | null>(null)
   const requestEditorClose = (id: string, dirty: boolean) => {
@@ -142,6 +160,32 @@ export default function TerminalsView({
         </div>
       )}
 
+      {!welcomeHintSeen && !zenMode && sessionCount > 0 && (
+        <div className="welcome-hint">
+          <div className="welcome-hint-head">
+            <span className="welcome-hint-title">Getting started</span>
+            <button
+              className="welcome-hint-close"
+              aria-label="Dismiss"
+              title="Dismiss"
+              onClick={() => setWelcomeHintSeen(true)}
+            >
+              <IconClose size={12} />
+            </button>
+          </div>
+          <ol className="welcome-checklist">
+            <li className={firstRun.localTerminal ? 'is-done' : ''}>Open a local terminal</li>
+            <li className={firstRun.importedSsh ? 'is-done' : ''}>
+              Import ~/.ssh/config or save a connection
+            </li>
+            <li className={firstRun.openedAgent ? 'is-done' : ''}>Open Agent once</li>
+          </ol>
+          <span className="welcome-hint-keys">
+            <kbd>{welcomeKeys.palette}</kbd> palette · <kbd>{welcomeKeys.newTerminal}</kbd> new
+            terminal · <kbd>{welcomeKeys.settings}</kbd> settings
+          </span>
+        </div>
+      )}
       {effectiveShowGroupBar && (
         <GroupBar
           groups={groups}
@@ -206,15 +250,14 @@ export default function TerminalsView({
             <div className="empty-card">
               <EmptyTerminalArt />
               <div className="empty-title">No terminals open</div>
-              <div className="empty-sub">Open a local shell, connect to a server, or start a grid.</div>
+              <div className="empty-sub">
+                Open a local shell, connect to a server, or start a grid.
+              </div>
               <button className="empty-cta" onClick={onNewTerminal}>
                 <IconPlus size={15} />
                 New terminal
               </button>
-              <button
-                className="empty-cta secondary"
-                onClick={onCreateGrid ?? onNewTerminal}
-              >
+              <button className="empty-cta secondary" onClick={onCreateGrid ?? onNewTerminal}>
                 <IconGrid size={15} />
                 Create grid…
               </button>

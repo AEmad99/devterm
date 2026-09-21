@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { commentKey, emptyBlockTracker, reduceOsc133 } from './command-blocks'
+import {
+  commentKey,
+  emptyBlockTracker,
+  guttersToRelease,
+  MAX_COMMAND_GUTTERS,
+  reduceOsc133
+} from './command-blocks'
 
 describe('OSC 133 command blocks', () => {
   it('completes a block only after A then B then the next A', () => {
@@ -37,6 +43,14 @@ describe('OSC 133 command blocks', () => {
     assert.equal(c.completed, null)
     const d = reduceOsc133(c.state, { kind: 'D', line: 8, x: 0 })
     assert.equal(d.completed, null)
+  })
+})
+
+describe('guttersToRelease', () => {
+  it('keeps the newest gutters and names the ones to drop', () => {
+    const items = Array.from({ length: MAX_COMMAND_GUTTERS + 3 }, (_, i) => i)
+    assert.deepEqual(guttersToRelease(items), [0, 1, 2])
+    assert.deepEqual(guttersToRelease([1, 2, 3], 3), [])
   })
 })
 

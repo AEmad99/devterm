@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { useSessions } from '../../store/sessions'
 import { useLayout, DEFAULT_GROUP } from '../../store/layout'
 import {
@@ -21,7 +21,13 @@ import {
 } from '../common/Icons'
 
 /** One-line status for the overview list. */
-function agentStateLabel(mode: string | undefined, bridge: string | undefined, exited: boolean): string {
+function agentStateLabel(
+  mode: string | undefined,
+  bridge: string | undefined,
+  exited: boolean,
+  startError?: string
+): string {
+  if (startError) return 'failed'
   if (exited) return 'exited'
   if (mode === 'hidden') return 'hidden'
   if (mode === 'floating') return 'floating'
@@ -71,9 +77,13 @@ export default function AgentsOverviewModal({
   onClose: () => void
 }) {
   const sessions = useSessions((s) => s.sessions)
+  const [delegateFor, setDelegateFor] = useState<string | null>(null)
+  const [delegateTask, setDelegateTask] = useState('')
   const agents = useMemo(
     () =>
-      sessions.filter((s) => s.agentUiMode && !s.closed).sort((a, b) => a.title.localeCompare(b.title)),
+      sessions
+        .filter((s) => s.agentUiMode && !s.closed)
+        .sort((a, b) => a.title.localeCompare(b.title)),
     [sessions]
   )
 
@@ -91,11 +101,7 @@ export default function AgentsOverviewModal({
     <ModalShell
       open={open}
       onClose={onClose}
-      title={
-        agents.length
-          ? `Agents (${agents.length})`
-          : 'Agents'
-      }
+      title={agents.length ? `Agents (${agents.length})` : 'Agents'}
       size="md"
     >
       {agents.length === 0 ? (
@@ -121,14 +127,22 @@ export default function AgentsOverviewModal({
                   <span className="agents-row-title">
                     {s.title}
                     {pending && <span className="agents-row-badge">approval</span>}
-                    {s.agentExited && <span className="agents-row-badge is-error">exited</span>}
+                    {s.agentStartError && <span className="agents-row-badge is-error">failed</span>}
+                    {s.agentExited && !s.agentStartError && (
+                      <span className="agents-row-badge is-error">exited</span>
+                    )}
                   </span>
                   <span className="agents-row-meta">
-                    {s.agentTask || 'no current task'} · {s.agentExited ? 'exited' : 'running'} ·{' '}
-                    {s.cwd || 'cwd unknown'} · {hostLabel(s)} · {agentKindGlyph(s.agentKind ?? 'devterm')} ·{' '}
-                    {ageLabel(s.agentStartedAt)} · {agentStateLabel(mode, s.agentBridgeState, !!s.agentExited)}
+                    {s.agentStartError || s.agentTask || 'no current task'} ·{' '}
+                    {s.agentStartError ? 'failed' : s.agentExited ? 'exited' : 'running'} ·{' '}
+                    {s.cwd || 'cwd unknown'} · {hostLabel(s)} ·{' '}
+                    {agentKindGlyph(s.agentKind ?? 'devterm')} · {ageLabel(s.agentStartedAt)} ·{' '}
+                    {agentStateLabel(mode, s.agentBridgeState, !!s.agentExited, s.agentStartError)}
                   </span>
-                  <span className="agents-row-kind" title={agentKindLabel(s.agentKind ?? 'devterm')}>
+                  <span
+                    className="agents-row-kind"
+                    title={agentKindLabel(s.agentKind ?? 'devterm')}
+                  >
                     {agentKindGlyph(s.agentKind ?? 'devterm')}
                   </span>
                 </button>
@@ -144,7 +158,10 @@ export default function AgentsOverviewModal({
                     <button
                       className="icon-btn"
                       title="Delegate to a sibling local agent"
-                      onClick={() => delegateFromCockpit(s.id)}
+                      onClick={() => {
+                        setDelegateFor(s.id)
+                        setDelegateTask('')
+                      }}
                     >
                       Delegate
                     </button>
@@ -182,6 +199,46 @@ export default function AgentsOverviewModal({
                     <IconAgentStop size={12} />
                   </button>
                 </div>
+                {delegateFor === s.id && (
+                  <form
+                    className="agents-delegate"
+                    onSubmit={(e) => {
+                      e.preventDefault()
+                      if (!delegateTask.trim()) return
+                      delegateFromCockpit(s.id, delegateTask)
+                      setDelegateFor(null)
+                      setDelegateTask('')
+                    }}
+                  >
+                    <label>
+                      Task for the delegated agent
+                      <textarea
+                        autoFocus
+                        value={delegateTask}
+                        rows={3}
+                        onChange={(e) => setDelegateTask(e.target.value)}
+                      />
+                    </label>
+                    <div className="agents-delegate-actions">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setDelegateFor(null)}
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        type="submit"
+                        variant="primary"
+                        size="sm"
+                        disabled={!delegateTask.trim()}
+                      >
+                        Start
+                      </Button>
+                    </div>
+                  </form>
+                )}
               </li>
             )
           })}

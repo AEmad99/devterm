@@ -27,6 +27,7 @@ import {
   IconSplit
 } from '../common/Icons'
 import PaneAgentControls from './PaneAgentControls'
+import ErrorBoundary from '../common/ErrorBoundary'
 import { focusTerminal, openTmuxPicker } from '../../lib/terms'
 import { deriveTabLabel } from '../../lib/tab-label'
 import TabStatusDot from './TabStatusDot'
@@ -466,15 +467,20 @@ export default function TerminalLayout({
                   <IconClose size={14} />
                 </button>
               )}
-              {s.kind === 'browser' ? (
-                <BrowserPane session={s} />
-              ) : s.kind === 'remote' ? (
-                <RemoteSessionView session={s} hibernated={isHibernated} />
-              ) : s.kind === 'local' ? (
-                <LocalSessionView session={s} hibernated={isHibernated} />
-              ) : (
-                <TerminalView session={s} hibernated={isHibernated} />
-              )}
+              <ErrorBoundary
+                title="This pane hit an error"
+                detail="The other terminals keep running. Try again reopens only this pane. A local shell here starts fresh; an SSH session stays connected."
+              >
+                {s.kind === 'browser' ? (
+                  <BrowserPane session={s} />
+                ) : s.kind === 'remote' ? (
+                  <RemoteSessionView session={s} hibernated={isHibernated} />
+                ) : s.kind === 'local' ? (
+                  <LocalSessionView session={s} hibernated={isHibernated} />
+                ) : (
+                  <TerminalView session={s} hibernated={isHibernated} />
+                )}
+              </ErrorBoundary>
             </div>
           )
         })}

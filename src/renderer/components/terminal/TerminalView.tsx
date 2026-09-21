@@ -992,16 +992,8 @@ function TerminalView({ session, hibernated = false }: { session: Session; hiber
     )
   }
 
-  const reconnect = async () => {
-    if (!session.connectionId) return
-    const conns = await window.devterm.connections.list()
-    const c = conns.find((x) => x.id === session.connectionId)
-    if (!c) return
-    const { id: _id, name: _name, ...profile } = c
-    await useSessions
-      .getState()
-      .connectSsh(profile, { connectionId: c.id, startCwd: session.cwd, groupId: session.groupId })
-    useSessions.getState().close(session.id)
+  const reconnect = () => {
+    window.devterm.ssh.reconnect(session.id)
   }
 
   return (
@@ -1028,7 +1020,7 @@ function TerminalView({ session, hibernated = false }: { session: Session; hiber
           }}
         />
       )}
-      {session.closed && session.kind === 'remote' && session.connectionId && (
+      {session.closed && session.kind === 'remote' && !session.status?.startsWith('reconnect') && (
         <div className="term-reconnect">
           <button onClick={reconnect}>⟳ Reconnect</button>
         </div>

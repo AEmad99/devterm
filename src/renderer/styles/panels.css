@@ -40,11 +40,42 @@
 }
 .preview-overlay {
   position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  top: 32px;
+  inset: 0;
   z-index: 4;
+}
+.preview-composer {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 8px;
+  z-index: 6;
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  background: var(--panel);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-2);
+}
+.preview-composer textarea {
+  width: 100%;
+  min-height: 64px;
+  resize: vertical;
+  box-sizing: border-box;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font: inherit;
+  padding: 6px 8px;
+}
+.preview-composer-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
 }
 .preview-overlay.tool-select {
   pointer-events: none;
@@ -66,6 +97,12 @@
   background: var(--accent);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--bg) 70%, transparent);
   transform: translate(-50%, -50%);
+}
+.preview-ann-pin .preview-ann-actions,
+.preview-ann-text .preview-ann-actions {
+  position: absolute;
+  left: 12px;
+  top: 16px;
 }
 .preview-ann-pin .preview-ann-body {
   position: absolute;
@@ -90,6 +127,39 @@
 .preview-ann-rect {
   border: 1.5px dashed var(--accent);
   background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.preview-ann-rect-label {
+  position: absolute;
+  left: 0;
+  top: 0;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: color-mix(in srgb, var(--panel) 90%, transparent);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+.preview-ann-actions {
+  display: inline-flex;
+  gap: 4px;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+.preview-ann-actions button {
+  border: 0;
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
+  color: var(--fg);
+  border-radius: 4px;
+  padding: 0 5px;
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+}
+.preview-ann-rect .preview-ann-actions {
+  position: absolute;
+  left: 0;
+  top: 18px;
 }
 .preview-ann-rect.is-draft {
   pointer-events: none;
@@ -4987,6 +5057,7 @@
 }
 .agents-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   padding: 7px 9px;
@@ -5078,6 +5149,29 @@
   color: var(--muted);
   font-size: var(--fs-200);
   line-height: 1.5;
+}
+.agents-delegate {
+  flex: 1 0 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.agents-delegate textarea {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 64px;
+  resize: vertical;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font: inherit;
+  padding: 6px 8px;
+}
+.agents-delegate-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
 }
 .agents-footer {
   display: flex;

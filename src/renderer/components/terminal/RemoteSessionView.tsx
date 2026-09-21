@@ -11,6 +11,7 @@ import Splitter from '../common/Splitter'
 import PortForwardPanel from './PortForwardPanel'
 import ModalShell from '../common/ModalShell'
 import { AGENT_BRIDGE_POLICY } from '../../lib/agent-ui'
+import { onPortForwardPanelRequest } from '../../lib/preview'
 import { useBridgeActivity } from '../../lib/bridge-activity'
 import { IconFolder, IconPorts, IconSplit, IconTerminals } from '../common/Icons'
 
@@ -185,6 +186,17 @@ function RemoteSessionView({ session, hibernated }: { session: Session; hibernat
     status?.startsWith('reconnecting…') ||
     status === 'reconnect cancelled' ||
     status?.startsWith('reconnect failed')
+  const retrySshReconnect = useSessions((s) => s.retrySshReconnect)
+
+  useEffect(
+    () =>
+      onPortForwardPanelRequest((id) => {
+        if (id !== session.id) return
+        setView('ports')
+        setPortsOpened(true)
+      }),
+    [session.id]
+  )
 
   // Sync the kind picker from store when another surface (float window) sets it.
   useEffect(() => {
@@ -279,12 +291,13 @@ function RemoteSessionView({ session, hibernated }: { session: Session; hibernat
             </button>
           )}
           {status?.startsWith('reconnect failed') && (
-            <span
-              className="reconnect-banner-hint"
-              title="Close this tab and re-open from the saved connection"
+            <button
+              className="ghost small"
+              onClick={() => retrySshReconnect(session.id)}
+              title="Try this host again on the same tab"
             >
-              Close this tab and re-open from the saved connection.
-            </span>
+              Retry
+            </button>
           )}
         </div>
       )}

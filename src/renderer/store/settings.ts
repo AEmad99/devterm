@@ -154,8 +154,8 @@ export interface AppSettings {
    */
   welcomeHintSeen: boolean
   /**
-   * Four-step first-run checklist. Never resurrected by settings import.
-   * Completing all four hides the card permanently (also sets welcomeHintSeen).
+   * First-run checklist. Never resurrected by settings import.
+   * The three setup steps hide the card. Picking a theme is recorded and is not required.
    */
   firstRun: {
     localTerminal: boolean
@@ -388,10 +388,14 @@ function load(): AppSettings {
         parsed?.searchIndexLines,
         DEFAULTS.searchIndexLines
       ),
-      welcomeHintSeen:
-        typeof parsed?.welcomeHintSeen === 'boolean'
-          ? parsed.welcomeHintSeen
-          : DEFAULTS.welcomeHintSeen,
+      welcomeHintSeen: (() => {
+        const fr = normalizeFirstRun(parsed?.firstRun)
+        const seen =
+          typeof parsed?.welcomeHintSeen === 'boolean'
+            ? parsed.welcomeHintSeen
+            : DEFAULTS.welcomeHintSeen
+        return seen || (fr.localTerminal && fr.importedSsh && fr.openedAgent)
+      })(),
       firstRun: normalizeFirstRun(parsed?.firstRun),
       density: parsed?.density === 'compact' ? 'compact' : DEFAULTS.density,
       pinned: normalizePinned(parsed?.pinned),
@@ -418,7 +422,7 @@ function normalizeFirstRun(raw: unknown): AppSettings['firstRun'] {
 }
 
 function firstRunComplete(fr: AppSettings['firstRun']): boolean {
-  return fr.localTerminal && fr.importedSsh && fr.openedAgent && fr.pickedTheme
+  return fr.localTerminal && fr.importedSsh && fr.openedAgent
 }
 
 function normalizePinned(raw: unknown): AppSettings['pinned'] {

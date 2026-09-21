@@ -754,6 +754,8 @@ export const IPC = {
   sshExit: 'ssh:exit', // suffixed :<sessionId>
   sshStatus: 'ssh:status', // suffixed :<sessionId>
   sshCancelReconnect: 'ssh:cancel-reconnect', // <sessionId>
+  /** Ask the main process to retry a dropped SSH session in place. */
+  sshReconnect: 'ssh:reconnect', // <sessionId>
   sshGetReconnectPolicy: 'ssh:get-reconnect-policy',
   sshSetReconnectPolicy: 'ssh:set-reconnect-policy',
   sshListTmux: 'ssh:listTmux',
@@ -831,6 +833,8 @@ export const IPC = {
   // App version + manual update check (GitHub releases via electron-updater)
   appGetVersion: 'app:get-version',
   appCheckForUpdates: 'app:check-for-updates',
+  /** Main → renderer: a non-fatal main-process failure to show as a toast. */
+  appNotice: 'app:notice',
 
   // saved connections (persisted in userData)
   connectionsList: 'connections:list',
@@ -1054,6 +1058,8 @@ export interface DevTermApi {
     resize(sessionId: string, cols: number, rows: number): void
     disconnect(sessionId: string): void
     cancelReconnect(sessionId: string): void
+    /** Retry a dropped session on the same id. The profile stays on the main-process tombstone. */
+    reconnect(sessionId: string): void
     getReconnectPolicy(): Promise<ReconnectPolicy>
     setReconnectPolicy(patch: Partial<ReconnectPolicy>): Promise<ReconnectPolicy>
     onData(sessionId: string, cb: (data: string) => void): () => void
@@ -1165,6 +1171,8 @@ export interface DevTermApi {
   app: {
     getVersion(): Promise<string>
     checkForUpdates(): Promise<AppUpdateCheckResult>
+    /** Non-fatal main-process failures. The native error box is only for startup. */
+    onNotice(cb: (message: string) => void): () => void
   }
   /** Persisted SSH connections (CRUD); each call returns the full updated list. */
   connections: {

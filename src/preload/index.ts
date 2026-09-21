@@ -85,6 +85,7 @@ const api: DevTermApi = {
     resize: (id, cols, rows) => ipcRenderer.send(IPC.sshResize, id, cols, rows),
     disconnect: (id) => ipcRenderer.send(IPC.sshDisconnect, id),
     cancelReconnect: (id: string) => ipcRenderer.send(IPC.sshCancelReconnect, id),
+    reconnect: (id: string) => ipcRenderer.send(IPC.sshReconnect, id),
     getReconnectPolicy: (): Promise<ReconnectPolicy> =>
       ipcRenderer.invoke(IPC.sshGetReconnectPolicy),
     setReconnectPolicy: (patch: Partial<ReconnectPolicy>): Promise<ReconnectPolicy> =>
@@ -190,7 +191,8 @@ const api: DevTermApi = {
   app: {
     getVersion: (): Promise<string> => ipcRenderer.invoke(IPC.appGetVersion),
     checkForUpdates: (): Promise<import('@shared/types').AppUpdateCheckResult> =>
-      ipcRenderer.invoke(IPC.appCheckForUpdates)
+      ipcRenderer.invoke(IPC.appCheckForUpdates),
+    onNotice: (cb) => subscribe<string>(IPC.appNotice, cb)
   },
   connections: {
     list: (): Promise<SavedConnection[]> => ipcRenderer.invoke(IPC.connectionsList),
@@ -237,7 +239,8 @@ const api: DevTermApi = {
   preview: {
     serveFolder: (folderPath: string): Promise<PreviewServeResult> =>
       ipcRenderer.invoke(IPC.previewServeFolder, folderPath),
-    stopServe: (serveId: string): Promise<void> => ipcRenderer.invoke(IPC.previewStopServe, serveId),
+    stopServe: (serveId: string): Promise<void> =>
+      ipcRenderer.invoke(IPC.previewStopServe, serveId),
     loadAnnotations: (sessionId: string): Promise<PreviewAnnotation[]> =>
       ipcRenderer.invoke(IPC.previewAnnotationsLoad, sessionId),
     saveAnnotations: (sessionId: string, annotations: PreviewAnnotation[]): Promise<void> =>

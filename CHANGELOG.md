@@ -5,6 +5,16 @@ at the top. Dates are ISO `YYYY-MM-DD`.
 
 ## Unreleased
 
+## 1.4.2 — 2026-09-21
+
+### Fixed
+
+- Preview comments and Agent cockpit Delegate use in-app editors. Electron does not show `window.prompt()`, so those actions previously did nothing. Preview opens in Browse mode, and the drawing layer covers only the page.
+- The first-run checklist sits above the terminal panes and finishes without picking a theme.
+- A render error in one pane stays in that pane. A main-process async error is a toast once a window exists, instead of a dialog that freezes every terminal.
+- A failed SSH reconnect can be retried on the same tab. A remote preview with no local forward opens the port-forward panel.
+- Command gutters keep only the newest 48 decorations. An agent that fails to start shows in the cockpit, the status bar, and a toast.
+
 ## 1.4.1 — 2026-09-21
 
 ### Removed

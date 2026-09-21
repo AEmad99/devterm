@@ -58,6 +58,10 @@ import { useDictation } from './store/dictation'
 import { REMOTE_CONNECT_STAGGER_MS } from './lib/remote-connect'
 import DictationStatus from './components/dictation/DictationStatus'
 import Toasts from './components/common/Toasts'
+import ModalShell from './components/common/ModalShell'
+import Button from './components/common/Button'
+import ModalFooter from './components/common/ModalFooter'
+import { toast } from './store/toasts'
 import GitPanel from './components/git/GitPanel'
 import { initBrowserControl } from './lib/browser-control'
 import { initAgentHandoff } from './lib/agent-handoff'
@@ -65,6 +69,9 @@ import { initPreviewControl } from './lib/preview'
 import PreviewOpenModal, { type PreviewOpenKind } from './components/modals/PreviewOpenModal'
 import type { HostContext } from '@shared/types'
 import type { View, BottomPanelMode } from './components/chrome/types'
+
+/** Survives an error-boundary remount so recovery does not launch every session again. */
+let appStartupStarted = false
 
 function restoreStructureKey(): string {
   const sessions = useSessions
@@ -146,9 +153,6 @@ export default function App() {
   const zenMode = useSettings((s) => s.zenMode)
   const gitPanelOpen = useSettings((s) => s.gitPanelOpen)
   const setGitPanelOpen = useSettings((s) => s.setGitPanelOpen)
-  const welcomeHintSeen = useSettings((s) => s.welcomeHintSeen)
-  const setWelcomeHintSeen = useSettings((s) => s.setWelcomeHintSeen)
-  const firstRun = useSettings((s) => s.firstRun)
   const markFirstRun = useSettings((s) => s.markFirstRun)
   const keybindings = useSettings((s) => s.keybindings)
 
@@ -200,6 +204,7 @@ export default function App() {
     confirmLabel: string
     run: () => void
   } | null>(null)
+  const [infoNotice, setInfoNotice] = useState<{ title: string; message: string } | null>(null)
   const [view, setView] = useState<View>('terminals')
   const [dragOverGroup, setDragOverGroup] = useState<string | null>(null)
   const [showSidebar, setShowSidebar] = useState(true)
@@ -209,8 +214,16 @@ export default function App() {
   const [globalSearchOpen, setGlobalSearchOpen] = useState(false)
   const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n))
 
+  useEffect(() => window.devterm.app.onNotice((message) => toast(message, 'err')), [])
+
   useEffect(() => {
     window.devterm.localContext().then(setLocal)
+    if (appStartupStarted) {
+      startupHydratedRef.current = true
+      setStartupHydrated(true)
+      return
+    }
+    appStartupStarted = true
     // Boot order:
     //  1) Workspaces with autoLaunch (operator-chosen presets win)
     //  2) Last-session restore (if enabled and a snapshot exists) — always
@@ -852,12 +865,10 @@ export default function App() {
       // update. Clear the stale flag and tell the operator what happened
       // instead of leaving an enabled button that silently does nothing.
       useLayout.getState().clearGroupLaunched(activeGroupId)
-      setPendingClose({
+      setInfoNotice({
         title: 'No saved workspace',
         message:
-          'This group came from a session snapshot rather than a saved workspace, so there is nothing to save back to. Use "Save as new" to create a workspace.',
-        confirmLabel: 'OK',
-        run: () => undefined
+          'This group came from a session snapshot rather than a saved workspace, so there is nothing to save back to. Use "Save as new" to create a workspace.'
       })
       return
     }
@@ -886,15 +897,6 @@ export default function App() {
       return h ? comboLabel(h, !!isMac) : ''
     }
   }, [keybindings, isMac])
-  const welcomeHintKeys = useMemo(
-    () => ({
-      palette: hotkeyLabel('palette'),
-      newTerminal: hotkeyLabel('newTerminal'),
-      settings: hotkeyLabel('settings')
-    }),
-    [hotkeyLabel]
-  )
-
   return (
     <div className="app" data-zen={zenMode ? 'on' : undefined}>
       {!zenMode && (
@@ -987,35 +989,6 @@ export default function App() {
                 <SnippetsManager onRun={() => setView('terminals')} />
               </div>
             )}
-            {/* One-time first-run hint. Anchored bottom-center of the panes
-                area (absolute within .panes-area), non-modal — only the card
-                itself intercepts pointer events. */}
-            {!welcomeHintSeen && view === 'terminals' && !zenMode && sessionCount > 0 && (
-              <div className="welcome-hint">
-                <span className="welcome-hint-title">Getting started</span>
-                <ol className="welcome-checklist">
-                  <li className={firstRun.localTerminal ? 'is-done' : ''}>Open a local terminal</li>
-                  <li className={firstRun.importedSsh ? 'is-done' : ''}>
-                    Import ~/.ssh/config or save a connection
-                  </li>
-                  <li className={firstRun.openedAgent ? 'is-done' : ''}>Open Agent once</li>
-                  <li className={firstRun.pickedTheme ? 'is-done' : ''}>Pick a theme</li>
-                </ol>
-                <span className="welcome-hint-keys">
-                  <kbd>{welcomeHintKeys.palette}</kbd> palette ·{' '}
-                  <kbd>{welcomeHintKeys.newTerminal}</kbd> new terminal ·{' '}
-                  <kbd>{welcomeHintKeys.settings}</kbd> settings
-                </span>
-                <button
-                  className="welcome-hint-close"
-                  aria-label="Dismiss"
-                  title="Dismiss"
-                  onClick={() => setWelcomeHintSeen(true)}
-                >
-                  <IconClose size={12} />
-                </button>
-              </div>
-            )}
           </div>
 
           <StatusBar />
@@ -1104,9 +1077,25 @@ export default function App() {
         open={!!previewOpen}
         kind={previewOpen ?? 'localhost'}
         onClose={() => setPreviewOpen(null)}
+        onFocusTerminals={() => setView('terminals')}
       />
       {showShortcuts && <ShortcutsModal onClose={() => setShowShortcuts(false)} />}
       <AgentsOverviewModal open={showAgents} onClose={() => setShowAgents(false)} />
+      <ModalShell
+        open={!!infoNotice}
+        onClose={() => setInfoNotice(null)}
+        title={infoNotice?.title ?? ''}
+        size="sm"
+        footer={
+          <ModalFooter>
+            <Button variant="primary" onClick={() => setInfoNotice(null)}>
+              OK
+            </Button>
+          </ModalFooter>
+        }
+      >
+        {infoNotice?.message}
+      </ModalShell>
       <ConfirmDialog
         open={!!pendingClose}
         title={pendingClose?.title ?? ''}
