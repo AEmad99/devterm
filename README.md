@@ -17,7 +17,7 @@
 
 DevTerm is a normal framed Windows app. You open it and you are in a terminal — local PowerShell, SSH, or both — with splits, groups, a file sidebar, an editor, an in-app browser, and an agent that can work on the connected host through the same SSH session.
 
-**Current release: [v1.4.0](https://github.com/AEmad99/devterm/releases/tag/v1.4.0)**
+**Current release: [v1.4.1](https://github.com/AEmad99/devterm/releases/tag/v1.4.1)**
 
 ![DevTerm terminal workspace](resources/screens/terminal.png)
 
@@ -38,7 +38,7 @@ Most agent terminals either install a runtime on the server or send host work ou
 - **Git panel** — status, stage, commit, push/pull, branches, stash, tags, remotes, and a commit graph. Remote repos reuse the session's SSH exec channel. Agents can call read-only `git_status` / `git_diff`.
 - **In-app browser and Preview** — tabbed http(s) panes for docs and dashboards. Preview localhost, a forwarded port, or a local folder; pin/rectangle/comment overlays send to the pane agent. Agents drive both through `browser_*` and `preview_*` tools.
 - **Command palette, snippets, search** — Ctrl/Cmd+K for actions, snippets (`{{placeholders}}`), connections, workspaces, and history. Per-pane find and global search across terminals (`search_terminals` for agents).
-- **Command input editor** — on shells with OSC 133 hooks, a one-line highlighted editor for the next command, plus block gutters (Copy / Ask agent / Comment). The raw PTY stream stays the shell's.
+- **Command block gutters** — on shells with OSC 133 hooks, completed commands get Copy / Ask agent / Comment. The raw PTY stream stays the shell's.
 - **DevTerm Agent** — bundled multi-provider agent, plus Claude, Codex, Grok, OpenCode, Kimi, pi, Antigravity, and Muse Code. Dock, float, or hide the UI without killing the process. Remote host tools ride MCP on the same ssh2 connection; local agents work in the folder that terminal is in. Cockpit (Ctrl/Cmd+Alt+A) focuses, restarts, stops, and delegates local siblings. Select terminal or editor text → **Ask agent about this**.
 - **Session restore** — last-session groups come back with scrollback tails, every browser tab, editors, agents, and ad-hoc SSH drafts. Credentials stay in a safeStorage sidecar; missing secrets prompt. Background remotes connect on focus by default.
 - **Optional tray residency** — close-to-tray keeps local PTYs, SSH sessions, and agents alive while the window is hidden; explicit Quit performs normal cleanup. Reboot survival is not implied.

@@ -818,6 +818,7 @@ _Agents: append dated bullets. Do not rewrite history._
 - 2026-09-21 — Prompts 13–20 (v1.5-B through v1.6-E): preview pane + annotations + MCP preview tools; cockpit focus/delegate; read-only `git_status`/`git_diff`/`search_terminals`; ProxyJump chains capped at 3 hops; first-run checklist + connection tags; image paste to agent artifacts; personal markdown skills folder; optional idle/approval webhook + Telegram. Package version left at 1.3.30; no tag. Prompt 21 (Electron upgrade spike) is a separate `spike/electron-upgrade` branch with `SPIKE.md`.
 - 2026-09-21 — Prompt 18 (v1.5 wrap-up): v1.5-A–E are in tree. Issue #1 close comment: highlighting lives on the OSC 133 input editor and CodeMirror files; the raw PTY stream stays the shell’s. Issue #2 close comment: preview + annotate MVP shipped (localhost / forwarded port / local folder, overlay comments, send to agent, MCP tools); leftover polish is port heuristics and richer drawing tools.
 - 2026-09-21 — Cut **v1.4.0** (installer + GitHub release). Ships v1.4 A–I, v1.5 A–E, and v1.6 A–E in one build. Electron-upgrade spike stays on `spike/electron-upgrade`. Package version bumped from 1.3.30.
+- 2026-09-21 — **v1.4.1**: removed the bottom OSC 133 command input strip; packed the app logo as real extraResource/extraFile PNGs/ICOs (window, tray, NSIS, next to the exe).
 
 ---
 

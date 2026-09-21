@@ -4,7 +4,7 @@ Guidance for coding agents working in the DevTerm repository. Read this first; p
 
 DevTerm is an Electron 29 desktop terminal: local shells (prebuilt node-pty), SSH/SFTP sessions, tiling workspaces, file browsing/editing (CodeMirror 6), an in-app browser, snippets, a Warp-style Git panel, a persistent transfer queue, offline Whisper dictation, global terminal search, and an embedded multi-provider **DevTerm Agent** with eight external CLI fallbacks (`pi`, `claude`, `opencode`, `kimi`, `grok`, `codex`, `antigravity`, `muse`). Every agent runs in a local PTY and reaches the remote host only through DevTerm's in-process MCP bridge. Stack: electron-vite, TypeScript strict, React 19, Zustand, xterm.js, ssh2, marked + DOMPurify, `@huggingface/transformers`, `@earendil-works/pi-coding-agent` (bundled runtime), a dedicated `node` binary for the agent, electron-updater, zod.
 
-**Version:** `package.json` (currently `1.4.0`). Top-level views: **Terminals** (the always-mounted workspace: group tabs, split panes, local/remote/browser sessions), **Connections**, **Workspaces**, **Snippets**. DevTerm is a normal framed desktop app; the first screen is the terminal, not a marketing page. Release history lives in `CHANGELOG.md` — do not duplicate it here.
+**Version:** `package.json` (currently `1.4.1`). Top-level views: **Terminals** (the always-mounted workspace: group tabs, split panes, local/remote/browser sessions), **Connections**, **Workspaces**, **Snippets**. DevTerm is a normal framed desktop app; the first screen is the terminal, not a marketing page. Release history lives in `CHANGELOG.md` — do not duplicate it here.
 
 ## Start here
 
@@ -84,7 +84,7 @@ Project skills in `.claude/skills/` (load via the skill tool, they carry the exa
 - **`exec` timeouts** resolve `timedOut: true` with partial output — not a disconnect. Port forwarding: local `-L` and dynamic `-D` SOCKS5 (no-auth, CONNECT only).
 - **Renderer:** terminals use the **canvas** addon on purpose (`lib/renderer.ts`) — WebGL is avoided because every session stays mounted and Chromium's ~16 WebGL context cap blanked panes. Fallback is xterm DOM. Do not switch to WebGL without a context-budget strategy. Default scrollback 10 000 (clamp 100–100 000).
 - **Autosuggest** (`lib/autosuggest.ts` + `Autosuggest.tsx`, history-driven) uses OSC 133 `;B` as the command-input anchor; accepting sends keystrokes to the shell, never writes into the buffer. Requires working prompt hooks.
-- **Command input editor + gutters** (`lib/command-blocks.ts`, `CommandInput.tsx`): when OSC 133 A/B hooks are healthy, a one-line highlighted editor appears for the next command (Enter sends keystrokes to the shell). Completed A-then-B commands get a faint gutter (Copy / Ask agent / Comment). Comments are local to the pane and appended the next time that pane’s agent is prompted. Missing hooks hide the editor. No OSC 133 C/D exit-code coloring.
+- **Command block gutters** (`lib/command-blocks.ts`): when OSC 133 A/B hooks are healthy, completed A-then-B commands get a faint gutter (Copy / Ask agent / Comment). Comments are local to the pane and appended the next time that pane’s agent is prompted. There is no bottom command input strip. No OSC 133 C/D exit-code coloring.
 - **Find:** per-pane SearchAddon bar via `SearchBar`, opened from the xterm key handler **and** the App global hotkey through `openTerminalFind` / `registerFindOpener` in `lib/terms.ts`. Per-pane find is Ctrl/Cmd+Shift+F; global search is Ctrl/Cmd+Alt+F.
 
 ## Agent bridge (DevTerm Agent + 8 fallbacks)

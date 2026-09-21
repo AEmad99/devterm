@@ -6,6 +6,8 @@ directories:
 files:
   - out/**/*
   - package.json
+  - resources/icon.ico
+  - resources/icon.png
   # Trim debug symbols (node-pty's linux prebuilds are excluded per-platform, see win.files).
   - '!**/*.pdb'
   # Build artifacts and unused native/runtime packages that bloat every installer:
@@ -46,9 +48,14 @@ files:
 # Windows build if conpty.node still is not in the unpacked output.
 beforePack: scripts/before-pack.cjs
 afterPack: scripts/after-pack.cjs
-# Keep the product logo next to the exe so BrowserWindow, tray, and toasts
-# can load it even when the asar file list is `out/**` + package.json only.
+# Copy the logo as files (not a `to:` directory). extraResources land in
+# process.resourcesPath; extraFiles land next to DevTerm.exe.
 extraResources:
+  - from: resources/icon.ico
+    to: icon.ico
+  - from: resources/icon.png
+    to: icon.png
+extraFiles:
   - from: resources/icon.ico
     to: icon.ico
   - from: resources/icon.png
@@ -106,6 +113,9 @@ nsis:
   oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: true
+  installerIcon: resources/icon.ico
+  uninstallerIcon: resources/icon.ico
+  installerHeaderIcon: resources/icon.ico
   # Force-close DevTerm.exe and install-dir orphans (agent node.exe) before
   # overwrite. Stock check only targets the main exe and aborts reinstalls.
   include: resources/installer.nsh

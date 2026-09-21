@@ -5,6 +5,16 @@ at the top. Dates are ISO `YYYY-MM-DD`.
 
 ## Unreleased
 
+## 1.4.1 — 2026-09-21
+
+### Removed
+
+- The optional OSC 133 command input strip at the bottom of the terminal. Completed-command gutters (Copy / Ask agent / Comment) stay.
+
+### Fixed
+
+- Packaged Windows builds now ship `icon.ico` / `icon.png` as real files (extraResources + extraFiles next to the exe) and apply them to the window, tray, notifications, and NSIS installer. A previous copy treated the logo path as a directory, so the installed app had no icon.
+
 ## 1.4.0 — 2026-09-21
 
 Quit is safer, large workspaces stay usable, and the agent can see more of what you see. Remote hosts still need nothing installed. The product logo is packed into the installer (`extraResources`) and applied to the window, tray, and notifications.

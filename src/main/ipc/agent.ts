@@ -56,7 +56,7 @@ import { browserControl } from '../browser/control-instance'
 import type { SSHManager } from '../ssh/manager'
 import type { PtyManager } from '../pty/manager'
 import { broadcast } from './broadcast'
-import { resolveAppIconPath } from '../app-icon'
+import { loadAppIcon, resolveAppIconPath } from '../app-icon'
 
 interface AgentSession {
   bridge: McpBridge
@@ -1077,7 +1077,7 @@ export function registerAgentIpc(
       transparent: false,
       backgroundColor: '#16161e',
       title: hostLabel ? `Agent · ${hostLabel}` : 'DevTerm Agent',
-      icon: resolveAppIconPath(),
+      icon: loadAppIcon() ?? resolveAppIconPath(),
       autoHideMenuBar: true,
       webPreferences: {
         preload: join(__dirname, '../preload/index.js'),
@@ -1089,6 +1089,8 @@ export function registerAgentIpc(
         webviewTag: false
       }
     })
+    const floatIcon = loadAppIcon()
+    if (floatIcon) win.setIcon(floatIcon)
     agentWindows.set(sessionId, win)
 
     const isLocalSession = sessions.get(sessionId)?.lastOpts?.sessionKind === 'local'

@@ -267,7 +267,7 @@ function createWindow(): void {
     transparent: false,
     backgroundColor: '#16161e',
     title: 'DevTerm',
-    icon: resolveAppIconPath(),
+    icon: loadAppIcon() ?? resolveAppIconPath(),
     autoHideMenuBar: true,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
@@ -295,6 +295,8 @@ function createWindow(): void {
     }
   })
 
+  const icon = loadAppIcon()
+  if (icon) mainWindow.setIcon(icon)
   mainWindow.on('ready-to-show', () => {
     if (state.maximized) mainWindow?.maximize()
     mainWindow?.show()

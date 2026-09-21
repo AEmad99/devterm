@@ -8,17 +8,23 @@ const agentPack = require('./agent-closure-pack.cjs')
 async function afterPack(context) {
   await ptyPack.afterPack(context)
   await agentPack.afterPack(context)
-  const resources = context.appOutDir
-    ? join(context.appOutDir, 'resources')
-    : null
-  if (resources) {
-    const ico = join(resources, 'icon.ico')
-    const png = join(resources, 'icon.png')
-    if (!existsSync(ico) && !existsSync(png)) {
-      throw new Error(
-        `Packaged logo missing: expected ${ico} or ${png}. extraResources must ship icon.ico/icon.png.`
-      )
+  const appOut = context.appOutDir
+  if (!appOut) return
+  const { statSync } = require('fs')
+  const isFile = (p) => {
+    try {
+      return existsSync(p) && statSync(p).isFile()
+    } catch {
+      return false
     }
+  }
+  const ico = join(appOut, 'resources', 'icon.ico')
+  const png = join(appOut, 'resources', 'icon.png')
+  const exeIco = join(appOut, 'icon.ico')
+  if (!isFile(ico) && !isFile(png) && !isFile(exeIco)) {
+    throw new Error(
+      `Packaged logo missing: expected a file at ${ico} or ${png}. extraResources must ship icon.ico/icon.png as files, not directories.`
+    )
   }
 }
 

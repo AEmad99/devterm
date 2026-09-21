@@ -25,7 +25,6 @@ import {
 import SearchBar from './SearchBar'
 import Autosuggest from './Autosuggest'
 import TmuxPicker from './TmuxPicker'
-import CommandInput from './CommandInput'
 import {
   attachAutosuggest,
   type AutosuggestController,
@@ -33,7 +32,6 @@ import {
 } from '../../lib/autosuggest'
 import { attachCommandBlocks, type CommandBlocksController } from '../../lib/command-blocks'
 import { askAgentAboutSelection } from '../../lib/agent-selection'
-import { sendTerminalInput } from '../../lib/terms'
 
 // A TUI that dies without cleaning up (e.g. opencode killing its whole console
 // on Ctrl+C — sst/opencode#6189) leaves xterm stuck in alternate-screen, mouse
@@ -175,9 +173,6 @@ function TerminalView({ session, hibernated = false }: { session: Session; hiber
   const [suggestView, setSuggestView] = useState<SuggestView | null>(null)
   const suggestRef = useRef<AutosuggestController | null>(null)
   const blocksRef = useRef<CommandBlocksController | null>(null)
-  const [hooksHealthy, setHooksHealthy] = useState(false)
-  const [atPrompt, setAtPrompt] = useState(false)
-  const [promptFocusToken, setPromptFocusToken] = useState(0)
   const findOpenRef = useRef(false)
   findOpenRef.current = findOpen
   // Cached bell setting, refreshed by the prefs effect below. Read on every PTY
@@ -390,11 +385,7 @@ function TerminalView({ session, hibernated = false }: { session: Session; hiber
     suggestRef.current = suggest
     const blocks = attachCommandBlocks(term, host, {
       sessionId: session.id,
-      onHooksChange: (healthy, prompt) => {
-        setHooksHealthy(healthy)
-        setAtPrompt(prompt)
-        if (healthy && prompt) setPromptFocusToken((n) => n + 1)
-      },
+      onHooksChange: () => undefined,
       onAskAgent: (selection) => {
         void askAgentAboutSelection({ sessionId: session.id, selection, source: 'terminal' })
       }
@@ -880,8 +871,6 @@ function TerminalView({ session, hibernated = false }: { session: Session; hiber
       suggestRef.current = null
       blocks.dispose()
       blocksRef.current = null
-      setHooksHealthy(false)
-      setAtPrompt(false)
       cleanups.forEach((fn) => fn())
       unregisterTerminal(session.id)
       resizeRef.current = null
@@ -1023,19 +1012,6 @@ function TerminalView({ session, hibernated = false }: { session: Session; hiber
         onAccept={(i) => suggestRef.current?.accept(i)}
         onHover={(i) => suggestRef.current?.hover(i)}
         acceptTab={!isWindowsRemote}
-      />
-      <CommandInput
-        visible={hooksHealthy && atPrompt && !isHibernated && !tmuxPicker}
-        dialect={isWindowsRemote ? 'powershell' : 'shell'}
-        focusToken={promptFocusToken}
-        autoFocus={isActive}
-        onSubmit={(cmd) => {
-          setAtPrompt(false)
-          if (cmd.trim()) useSessions.getState().setCurrentCommand(session.id, cmd.trim())
-          sendTerminalInput(session.id, `${cmd}\r`)
-        }}
-        onPassToShell={(data) => sendTerminalInput(session.id, data)}
-        onEscape={() => termRef.current?.focus()}
       />
       {findOpen && (
         <SearchBar
