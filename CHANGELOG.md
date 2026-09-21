@@ -7,7 +7,7 @@ at the top. Dates are ISO `YYYY-MM-DD`.
 
 ## 1.4.0 — 2026-09-21
 
-Quit is safer, large workspaces stay usable, and the agent can see more of what you see. Remote hosts still need nothing installed.
+Quit is safer, large workspaces stay usable, and the agent can see more of what you see. Remote hosts still need nothing installed. The product logo is packed into the installer (`extraResources`) and applied to the window, tray, and notifications.
 
 ### Added
 

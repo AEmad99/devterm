@@ -1,5 +1,6 @@
 import { ipcMain, app, BrowserWindow, Notification } from 'electron'
 import { IPC } from '@shared/types'
+import { resolveAppIconPath } from '../app-icon'
 
 /** Set by the renderer whenever editor buffers gain/lose unsaved changes. */
 let unsavedEditors = false
@@ -99,6 +100,7 @@ function raiseAttention(
     const n = new Notification({
       title: notice.title || 'DevTerm',
       body: notice.body || '',
+      icon: resolveAppIconPath(),
       // Stay silent: the audible alert is the in-app Web Audio chime, whose
       // loudness the user controls via the attention "Chime volume" slider. A
       // non-silent toast would play Windows' own notification ding at the fixed

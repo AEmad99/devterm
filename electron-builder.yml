@@ -46,6 +46,13 @@ files:
 # Windows build if conpty.node still is not in the unpacked output.
 beforePack: scripts/before-pack.cjs
 afterPack: scripts/after-pack.cjs
+# Keep the product logo next to the exe so BrowserWindow, tray, and toasts
+# can load it even when the asar file list is `out/**` + package.json only.
+extraResources:
+  - from: resources/icon.ico
+    to: icon.ico
+  - from: resources/icon.png
+    to: icon.png
 asarUnpack:
   - '**/node_modules/node-pty/**'
   # Native addons cannot be dlopen'd from inside asar.

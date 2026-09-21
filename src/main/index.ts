@@ -12,6 +12,7 @@ import {
 } from 'electron'
 import { readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
+import { loadAppIcon, resolveAppIconPath } from './app-icon'
 
 // Certificates explicitly accepted from the browser warning are trusted only
 // for this app run. This avoids weakening Chromium globally or silently carrying
@@ -266,6 +267,7 @@ function createWindow(): void {
     transparent: false,
     backgroundColor: '#16161e',
     title: 'DevTerm',
+    icon: resolveAppIconPath(),
     autoHideMenuBar: true,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
@@ -470,27 +472,33 @@ function registerIpc(): void {
  */
 function createTray(): void {
   if (tray) return
+  const bundled = loadAppIcon()
+  const attach = (icon: Electron.NativeImage) => {
+    if (tray) return
+    tray = new Tray(icon)
+    tray.setToolTip('DevTerm')
+    tray.setContextMenu(
+      Menu.buildFromTemplate([
+        { label: 'Show DevTerm', click: () => showMainWindow() },
+        { type: 'separator' },
+        {
+          label: 'Quit DevTerm',
+          click: () => {
+            allowWindowClose = true
+            app.quit()
+          }
+        }
+      ])
+    )
+    tray.on('click', () => showMainWindow())
+  }
+  if (bundled) {
+    attach(bundled)
+    return
+  }
   void app
     .getFileIcon(process.execPath, { size: 'small' })
-    .then((icon) => {
-      if (tray) return
-      tray = new Tray(icon)
-      tray.setToolTip('DevTerm')
-      tray.setContextMenu(
-        Menu.buildFromTemplate([
-          { label: 'Show DevTerm', click: () => showMainWindow() },
-          { type: 'separator' },
-          {
-            label: 'Quit DevTerm',
-            click: () => {
-              allowWindowClose = true
-              app.quit()
-            }
-          }
-        ])
-      )
-      tray.on('click', () => showMainWindow())
-    })
+    .then(attach)
     .catch(() => undefined)
 }
 

@@ -56,6 +56,7 @@ import { browserControl } from '../browser/control-instance'
 import type { SSHManager } from '../ssh/manager'
 import type { PtyManager } from '../pty/manager'
 import { broadcast } from './broadcast'
+import { resolveAppIconPath } from '../app-icon'
 
 interface AgentSession {
   bridge: McpBridge
@@ -1076,6 +1077,7 @@ export function registerAgentIpc(
       transparent: false,
       backgroundColor: '#16161e',
       title: hostLabel ? `Agent · ${hostLabel}` : 'DevTerm Agent',
+      icon: resolveAppIconPath(),
       autoHideMenuBar: true,
       webPreferences: {
         preload: join(__dirname, '../preload/index.js'),
