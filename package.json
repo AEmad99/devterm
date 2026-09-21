@@ -10,7 +10,7 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
-    "build:win": "electron-vite build && node scripts/ensure-pty-native.cjs && electron-builder --win --config electron-builder.yml",
+    "build:win": "electron-vite build && node scripts/ensure-pty-native.cjs && electron-builder --win --config electron-builder.yml --publish never",
     "build:linux": "electron-vite build && node scripts/ensure-pty-native.cjs && electron-builder --linux --config electron-builder.yml",
     "release:win": "electron-vite build && node scripts/ensure-pty-native.cjs && electron-builder --win --config electron-builder.yml --publish always",
     "release:linux": "electron-vite build && node scripts/ensure-pty-native.cjs && electron-builder --linux --config electron-builder.yml --publish always",
