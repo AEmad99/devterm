@@ -132,6 +132,7 @@ export function defaultSettingsSnapshot(): SettingsSnapshot {
       showFloatingStatus: true
     } as STTSettings,
     searchPersist: false,
+    searchIndexLines: 2000,
     density: 'comfortable',
     pinned: { connections: [], snippets: [], workspaces: [] },
     lastConnectedAt: {}
@@ -219,6 +220,9 @@ export function mergeSnapshotWithDefaults(
   if (isObj(raw.keybindings)) out.keybindings = raw.keybindings as SettingsSnapshot['keybindings']
   if (isObj(raw.stt)) out.stt = { ...(defaults.stt ?? {}), ...raw.stt } as STTSettings
   if (typeof raw.searchPersist === 'boolean') out.searchPersist = raw.searchPersist
+  if (typeof raw.searchIndexLines === 'number' && Number.isFinite(raw.searchIndexLines)) {
+    out.searchIndexLines = Math.max(200, Math.min(10000, Math.floor(raw.searchIndexLines)))
+  }
   if (raw.density === 'compact' || raw.density === 'comfortable') out.density = raw.density
   if (isObj(raw.pinned)) {
     const pick = (v: unknown): string[] =>

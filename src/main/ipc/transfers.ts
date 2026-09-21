@@ -12,7 +12,7 @@ import { TransferQueue, type QueueItem } from '../transfers/queue'
  * browser uses.
  *
  * Renderer-facing channels:
- *  - transfers:list / enqueueUpload / enqueueDownload / cancel / retry / clearFinished
+ *  - transfers:list / enqueueUpload / enqueueDownload / cancel / retry / resume / clearFinished
  *  - transfers:event:<id>     — live progress for one item
  *  - transfers:status         — broadcast on every list change
  */
@@ -31,11 +31,14 @@ export function registerTransfersIpc(
   const userData = app.getPath('userData')
 
   const store = new TransferStore(userData)
-  const queue = new TransferQueue(store, (sid) => ssh.getSftp(sid))
+  const queue = new TransferQueue(
+    store,
+    (sid) => ssh.getSftp(sid),
+    (sid) => ssh.getProfile(sid)?.id
+  )
 
   // Persist the loaded snapshot before we re-hydrate the pending pool so
-  // anything in-flight at the time of the last crash is durably marked
-  // canceled with reason "interrupted by restart".
+  // in-flight items are paused (Resume) rather than auto-restarted.
   void store.load().then(() => {
     queue.rehydrateFromStore()
     // Tell every renderer the post-load snapshot, in case any window was
@@ -74,6 +77,9 @@ export function registerTransfersIpc(
   })
   ipcMain.handle(IPC.transfersRetry, async (_e, id: string): Promise<TransferItemV2 | null> => {
     return queue.retry(id)
+  })
+  ipcMain.handle(IPC.transfersResume, async (_e, id: string): Promise<TransferItemV2 | null> => {
+    return queue.resume(id)
   })
   ipcMain.handle(IPC.transfersClearFinished, async (): Promise<TransferListResult> => {
     const result = await store.clearFinished()

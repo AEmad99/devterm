@@ -11,7 +11,7 @@ export interface ParsedSshHost {
   port: number
   username?: string
   privateKeyPath?: string
-  jump?: { host: string; port: number; username?: string }
+  jump?: { host: string; port: number; username?: string } | { host: string; port: number; username?: string }[]
 }
 
 interface HostBlock {
@@ -45,18 +45,32 @@ function isWildcardPattern(p: string): boolean {
   return p.includes('*') || p.includes('?') || p.includes('!')
 }
 
-/** Parse a ProxyJump value: user@host:port or host:port or [user@]host. */
-export function parseProxyJump(raw: string): { host: string; port: number; username?: string } | null {
-  const s = raw.split(',')[0]?.trim() // first hop only
-  if (!s) return null
-  // user@host:port | user@host | host:port | host
-  const m = s.match(/^(?:([^@[\]]+)@)?(\[[^\]]+\]|[^:]+)(?::(\d+))?$/)
+export type ParsedJump = { host: string; port: number; username?: string }
+
+function parseOneJump(s: string): ParsedJump | null {
+  const t = s.trim()
+  if (!t) return null
+  const m = t.match(/^(?:([^@[\]]+)@)?(\[[^\]]+\]|[^:]+)(?::(\d+))?$/)
   if (!m) return null
   const host = (m[2] ?? '').replace(/^\[|\]$/g, '')
   if (!host) return null
   const port = m[3] ? Number(m[3]) : 22
   if (!Number.isFinite(port) || port <= 0) return null
   return { host, port, username: m[1] || undefined }
+}
+
+/** Parse a ProxyJump value: user@host:port or host:port or [user@]host. */
+export function parseProxyJump(raw: string): ParsedJump | null {
+  return parseOneJump(raw.split(',')[0] ?? '')
+}
+
+/** Parse a comma-separated ProxyJump list (capped at two extra hops). */
+export function parseProxyJumpList(raw: string): ParsedJump[] {
+  return raw
+    .split(',')
+    .map(parseOneJump)
+    .filter((h): h is ParsedJump => !!h)
+    .slice(0, 2)
 }
 
 /**
@@ -119,7 +133,8 @@ export function parseSshConfig(text: string): ParsedSshHost[] {
       const privateKeyPath = opts.identityfile || undefined
       let jump: ParsedSshHost['jump']
       if (opts.proxyjump) {
-        jump = parseProxyJump(opts.proxyjump) ?? undefined
+        const hops = parseProxyJumpList(opts.proxyjump)
+        jump = hops.length > 1 ? hops : hops[0]
       } else if (opts.proxycommand) {
         // Too free-form to map safely — skip jump.
         jump = undefined

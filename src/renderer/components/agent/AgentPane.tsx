@@ -188,7 +188,10 @@ export default function AgentPane({
     term.loadAddon(fit)
     term.open(host)
     const disposeRenderer = attachRenderer(term)
-    const disposeClipboard = attachClipboard(term, host)
+    const disposeClipboard = attachClipboard(term, host, {
+      sessionId,
+      agentPty: true
+    })
     fitNow(fit, host)
     const forceRestart = restartNonce > 0
     const localCwd = useSessions.getState().sessions.find((x) => x.id === sessionId)?.cwd

@@ -28,7 +28,7 @@ import * as approvalRules from '../agent/approval-rules'
 import * as knownHosts from '../ssh/knownHosts'
 import * as settingsIo from '../settings/settings-io'
 import * as quickConnect from '../ssh/quick-connect'
-import { setPersistEnabled } from '../search'
+import { setPersistEnabled, setSearchIndexMaxLines } from '../search'
 import { broadcast } from './broadcast'
 import { globalOutputRings } from '../terminal/output-ring'
 
@@ -119,6 +119,9 @@ export function registerFoundationIpc(
     // Forward the persist-search toggle to the search module so a setting
     // flip takes effect without a restart.
     setPersistEnabled(snapshot.searchPersist === true)
+    if (snapshot.searchIndexLines !== undefined) {
+      setSearchIndexMaxLines(snapshot.searchIndexLines)
+    }
     // The main-side output ring follows the existing terminal scrollback
     // setting. Its store clamps this untrusted renderer value to the hard
     // 100000-line / byte safety limits.

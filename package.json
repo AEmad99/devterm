@@ -1,7 +1,7 @@
 {
   "name": "devterm",
-  "version": "1.3.30",
-  "description": "Desktop SSH/SFTP terminal with tiling panes, files, git, and a built-in multi-provider coding agent",
+  "version": "1.4.0",
+  "description": "Windows desktop terminal for local shells and SSH, with tiling panes, SFTP, git, preview/annotate, and a built-in multi-provider coding agent. Remote hosts need nothing installed.",
   "main": "out/main/index.js",
   "author": "DevTerm",
   "license": "MIT",

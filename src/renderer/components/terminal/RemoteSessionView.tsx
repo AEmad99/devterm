@@ -1,5 +1,6 @@
 import { memo, useEffect, useRef, useState } from 'react'
 import type { AgentKind } from '@shared/types'
+import { jumpLabel, listJumpHops } from '@shared/ssh-jump'
 import { useSessions, type Session } from '../../store/sessions'
 import { useSettings } from '../../store/settings'
 import TerminalView from './TerminalView'
@@ -82,11 +83,9 @@ function RestoreAuthModal({ session, onClose }: { session: Session; onClose: () 
           <span className="modal-hint">{profile.privateKeyPath}</span>
         </label>
       )}
-      {profile.jump && (
+      {listJumpHops(profile.jump).length > 0 && (
         <div className="jump">
-          <strong>
-            Jump host: {profile.jump.username}@{profile.jump.host}
-          </strong>
+          <strong>Jump host: {jumpLabel(profile.jump)}</strong>
           <label>
             Jump password
             <input
@@ -95,7 +94,7 @@ function RestoreAuthModal({ session, onClose }: { session: Session; onClose: () 
               onChange={(e) => setJumpPassword(e.target.value)}
             />
           </label>
-          {profile.jump.privateKeyPath && (
+          {listJumpHops(profile.jump)[0]?.privateKeyPath && (
             <label>
               Jump key passphrase
               <input
@@ -103,7 +102,7 @@ function RestoreAuthModal({ session, onClose }: { session: Session; onClose: () 
                 value={jumpPassphrase}
                 onChange={(e) => setJumpPassphrase(e.target.value)}
               />
-              <span className="modal-hint">{profile.jump.privateKeyPath}</span>
+              <span className="modal-hint">{listJumpHops(profile.jump)[0]?.privateKeyPath}</span>
             </label>
           )}
         </div>

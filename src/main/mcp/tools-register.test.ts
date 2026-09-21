@@ -60,6 +60,9 @@ describe('MCP tool registration', () => {
       names.some((n) => n.startsWith('browser_')),
       false
     )
+    for (const tool of ['git_status', 'git_diff', 'search_terminals']) {
+      assert.equal(names.includes(tool), true, `missing ${tool}`)
+    }
   })
 
   it('skips host tools locally and keeps browser tools when enabled', () => {
@@ -78,6 +81,12 @@ describe('MCP tool registration', () => {
       names.some((n) => n.startsWith('browser_')),
       true
     )
+    for (const tool of ['preview_open', 'preview_snapshot', 'preview_comments']) {
+      assert.equal(names.includes(tool), true, `missing ${tool}`)
+    }
+    for (const tool of ['git_status', 'git_diff', 'search_terminals']) {
+      assert.equal(names.includes(tool), true, `missing ${tool}`)
+    }
   })
 
   it('registers local handoff tools only when enabled', () => {

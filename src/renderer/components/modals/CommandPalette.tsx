@@ -7,7 +7,9 @@ import type {
   WorkspaceItem
 } from '@shared/types'
 import { activeSession, runInActive } from '../../lib/input'
-import { clearTerminal, focusTerminal, openTmuxPicker } from '../../lib/terms'
+import { clearTerminal, focusTerminal, getTerminalSelection, openTmuxPicker } from '../../lib/terms'
+import { getEditorSelection } from '../../lib/editor-registry'
+import { askAgentAboutSelection } from '../../lib/agent-selection'
 import {
   applyPlaceholders,
   clearCachedPlaceholders,
@@ -55,7 +57,7 @@ function snippetTarget(s: Snippet): string {
 }
 
 function connectionTarget(c: SavedConnection): string {
-  return `${c.name} ${c.host} ${c.username} ${c.port ?? ''}`
+  return `${c.name} ${c.host} ${c.username} ${c.port ?? ''} ${(c.tags ?? []).join(' ')}`
 }
 
 function workspaceItemLabel(it: WorkspaceItem, connName: (id?: string) => string): string {
@@ -91,7 +93,9 @@ function previewContent(
         label: 'Connect',
         body:
           `${c.username}@${c.host}${c.port && c.port !== 22 ? `:${c.port}` : ''}` +
-          (c.jump ? ` via ${c.jump.username}@${c.jump.host}` : ''),
+          (c.jump
+            ? ` via ${Array.isArray(c.jump) ? c.jump.map((h) => `${h.username}@${h.host}`).join(' → ') : `${c.jump.username}@${c.jump.host}`}`
+            : ''),
         mono: false
       }
     }
@@ -117,7 +121,8 @@ export default function CommandPalette({
   onSettings,
   onShortcuts,
   onGlobalSearch,
-  onAgents
+  onAgents,
+  onPreview
 }: {
   /** Called right before a command is sent, so the host can switch to the terminals view. */
   onRun: () => void
@@ -129,6 +134,7 @@ export default function CommandPalette({
   onSettings?: () => void
   onShortcuts?: () => void
   onGlobalSearch?: () => void
+  onPreview?: (kind: 'localhost' | 'forward' | 'folder') => void
   onAgents?: () => void
 }) {
   const [snippets, setSnippets] = useState<Snippet[]>([])
@@ -213,20 +219,34 @@ export default function CommandPalette({
   }, [snippets, queryTrimmed])
 
   const connectionItems = useMemo<PaletteItem[]>(() => {
+    const pinned = useSettings.getState().pinned.connections
+    const last = useSettings.getState().lastConnectedAt
+    const pinIndex = new Map(pinned.map((id, i) => [id, i]))
+    const rank = (c: SavedConnection, fuzzy: number) => {
+      const pinBoost = pinIndex.has(c.id) ? 400 - (pinIndex.get(c.id) ?? 0) : 0
+      const recency = last[c.id] ? Math.min(200, (last[c.id] ?? 0) / 1e12) : 0
+      const tagHit =
+        queryTrimmed && (c.tags ?? []).some((t) => t.toLowerCase().includes(queryTrimmed.toLowerCase()))
+          ? 80
+          : 0
+      return fuzzy * 10 + pinBoost + recency + tagHit
+    }
     if (queryTrimmed) {
       return (
         connections
           .map((c) => {
             const scored = scoreTerms(connectionTarget(c), queryTrimmed)
-            return scored ? { kind: 'connection' as const, conn: c, score: scored.score } : null
+            return scored
+              ? { kind: 'connection' as const, conn: c, score: rank(c, scored.score) }
+              : null
           })
           .filter(Boolean) as Extract<PaletteItem, { kind: 'connection' }>[]
       ).sort((a, b) => b.score - a.score || a.conn.name.localeCompare(b.conn.name))
     }
     return connections
       .slice()
-      .sort((a, b) => a.name.localeCompare(b.name))
-      .map((c) => ({ kind: 'connection' as const, conn: c, score: 0 }))
+      .sort((a, b) => rank(b, 0) - rank(a, 0) || a.name.localeCompare(b.name))
+      .map((c) => ({ kind: 'connection' as const, conn: c, score: rank(c, 0) }))
   }, [connections, queryTrimmed])
 
   const workspaceItems = useMemo<PaletteItem[]>(() => {
@@ -301,6 +321,27 @@ export default function CommandPalette({
         title: 'New browser pane',
         subtitle: 'Open an in-app browser tab',
         kw: 'browser web url'
+      },
+      {
+        id: 'preview-localhost',
+        title: 'Preview localhost port',
+        subtitle: 'Open a preview pane on 127.0.0.1',
+        kw: 'preview localhost vite next port annotate',
+        available: !!onPreview
+      },
+      {
+        id: 'preview-forward',
+        title: 'Preview forwarded port',
+        subtitle: 'Open a preview of a local (-L) forward',
+        kw: 'preview forward tunnel port annotate',
+        available: !!onPreview
+      },
+      {
+        id: 'preview-folder',
+        title: 'Preview this folder',
+        subtitle: 'Serve a local folder on 127.0.0.1 and annotate it',
+        kw: 'preview folder static files annotate',
+        available: !!onPreview
       },
       {
         id: 'new-group',
@@ -381,6 +422,12 @@ export default function CommandPalette({
         subtitle: 'See and control every running agent',
         kw: 'agent list cockpit status',
         available: !!onAgents
+      },
+      {
+        id: 'ask-agent',
+        title: 'Ask agent about this',
+        subtitle: 'Send the terminal or editor selection to this pane’s agent',
+        kw: 'ask agent selection quote send'
       },
       {
         id: 'settings',
@@ -599,6 +646,18 @@ export default function CommandPalette({
           onRun()
           useSessions.getState().addBrowser({ groupId: useLayout.getState().activeGroupId })
           break
+        case 'preview-localhost':
+          onRun()
+          onPreview?.('localhost')
+          break
+        case 'preview-forward':
+          onRun()
+          onPreview?.('forward')
+          break
+        case 'preview-folder':
+          onRun()
+          onPreview?.('folder')
+          break
         case 'new-group': {
           onRun()
           const gid = useLayout.getState().createGroup()
@@ -649,6 +708,17 @@ export default function CommandPalette({
         case 'agents':
           onAgents?.()
           break
+        case 'ask-agent': {
+          const sid = activeId
+          if (!sid) {
+            setError('No active terminal to send a selection from.')
+            return
+          }
+          const selection =
+            getTerminalSelection(sid) || getEditorSelection(useEditors.getState().activeId)
+          void askAgentAboutSelection({ sessionId: sid, selection, source: 'terminal' })
+          break
+        }
         case 'settings':
           onSettings?.()
           break

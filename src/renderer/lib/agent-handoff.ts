@@ -88,6 +88,25 @@ function handleDelegateRequest(req: AgentDelegateRequest): void {
   }
 }
 
+/** Operator-initiated local delegate from the agent cockpit. */
+export function delegateFromCockpit(sourceSessionId: string): void {
+  const source = useSessions.getState().sessions.find((s) => s.id === sourceSessionId)
+  if (!source || source.kind !== 'local') return
+  const prompt = window.prompt('Task for the delegated local agent')
+  if (!prompt?.trim()) return
+  handleDelegateRequest({
+    requestId: `cockpit-${Date.now()}`,
+    sourceSessionId,
+    sourceKind: source.agentKind ?? 'devterm',
+    sessionId: `local-${crypto.randomUUID()}`,
+    cwd: source.cwd || process.env.USERPROFILE || '',
+    kind: source.agentKind ?? 'devterm',
+    title: 'Delegated agent',
+    prompt: prompt.trim(),
+    layout: 'tab'
+  })
+}
+
 let wired = false
 
 /** Subscribe once to main's local-agent delegation requests. */

@@ -1,7 +1,14 @@
 import { useMemo } from 'react'
 import { useSessions } from '../../store/sessions'
 import { useLayout, DEFAULT_GROUP } from '../../store/layout'
-import { agentKindLabel, restartAgent, setAgentUiMode, stopAgent } from '../../lib/agent-ui'
+import {
+  agentKindGlyph,
+  agentKindLabel,
+  restartAgent,
+  setAgentUiMode,
+  stopAgent
+} from '../../lib/agent-ui'
+import { delegateFromCockpit } from '../../lib/agent-handoff'
 import { focusTerminal } from '../../lib/terms'
 import ModalShell from '../common/ModalShell'
 import Button from '../common/Button'
@@ -15,18 +22,19 @@ import {
 
 /** One-line status for the overview list. */
 function agentStateLabel(mode: string | undefined, bridge: string | undefined, exited: boolean): string {
-  if (exited) return 'exited — restart to resume'
-  if (mode === 'hidden') return 'running hidden'
-  if (mode === 'floating') return 'floating window'
+  if (exited) return 'exited'
+  if (mode === 'hidden') return 'hidden'
+  if (mode === 'floating') return 'floating'
+  if (mode === 'docked') return 'docked'
   switch (bridge) {
     case 'connected':
-      return 'connected'
+      return 'idle'
     case 'listening':
-      return 'waiting for agent'
+      return 'waiting'
     case 'starting':
-      return 'starting bridge'
+      return 'starting'
     case 'disconnected':
-      return 'bridge disconnected'
+      return 'disconnected'
     case 'stopped':
       return 'stopped'
     case 'error':
@@ -34,6 +42,20 @@ function agentStateLabel(mode: string | undefined, bridge: string | undefined, e
     default:
       return 'running'
   }
+}
+
+function ageLabel(startedAt?: number): string {
+  if (!startedAt) return ''
+  const sec = Math.max(0, Math.round((Date.now() - startedAt) / 1000))
+  if (sec < 60) return `${sec}s`
+  const min = Math.round(sec / 60)
+  if (min < 60) return `${min}m`
+  return `${Math.round(min / 60)}h`
+}
+
+function hostLabel(s: { kind?: string; title?: string; context?: { hostname?: string } }): string {
+  if (s.kind === 'local') return 'local'
+  return s.context?.hostname || s.title || 'remote'
 }
 
 /**
@@ -102,12 +124,31 @@ export default function AgentsOverviewModal({
                     {s.agentExited && <span className="agents-row-badge is-error">exited</span>}
                   </span>
                   <span className="agents-row-meta">
-                    {agentKindLabel(s.agentKind ?? 'devterm')} ·{' '}
-                    {agentStateLabel(mode, s.agentBridgeState, !!s.agentExited)}
-                    {s.agentTask ? ` · ${s.agentTask}` : ''}
+                    {s.agentTask || 'no current task'} · {s.agentExited ? 'exited' : 'running'} ·{' '}
+                    {s.cwd || 'cwd unknown'} · {hostLabel(s)} · {agentKindGlyph(s.agentKind ?? 'devterm')} ·{' '}
+                    {ageLabel(s.agentStartedAt)} · {agentStateLabel(mode, s.agentBridgeState, !!s.agentExited)}
+                  </span>
+                  <span className="agents-row-kind" title={agentKindLabel(s.agentKind ?? 'devterm')}>
+                    {agentKindGlyph(s.agentKind ?? 'devterm')}
                   </span>
                 </button>
                 <div className="agents-row-actions">
+                  <button
+                    className="icon-btn"
+                    title="Focus pane"
+                    onClick={() => focusSession(s.id)}
+                  >
+                    Focus
+                  </button>
+                  {s.kind === 'local' && (
+                    <button
+                      className="icon-btn"
+                      title="Delegate to a sibling local agent"
+                      onClick={() => delegateFromCockpit(s.id)}
+                    >
+                      Delegate
+                    </button>
+                  )}
                   {mode !== 'docked' && (
                     <button
                       className="icon-btn"

@@ -22,6 +22,7 @@ import type {
 } from '@shared/types'
 import { buildAgentsMd } from './context'
 import { PI_EXTENSION_SOURCE } from './extension'
+import { listPersonalMarkdownSkills, skillDigest } from './personal-skills'
 
 /** Extra spawn behavior. Remote launches omit `nativeLocal` (temp cwd, MCP host tools). */
 export interface AgentLaunchExtras {
@@ -262,17 +263,29 @@ function isolatedAgentArgs(
     .map((value) => value?.trim() ?? '')
     .filter(Boolean)
   if (modelCycle.length > 1) args.push('--models', [...new Set(modelCycle)].join(','))
+  const seenSkills = new Set<string>()
   for (const skill of preferences?.trustedSkills ?? []) {
     if (!skill.enabled) continue
     try {
       const stat = statSync(skill.path)
       if (!stat.isFile() || stat.size > 512 * 1024) continue
-      const digest = createHash('sha256').update(readFileSync(skill.path)).digest('hex')
-      if (digest !== skill.sha256.toLowerCase()) continue
+      const digest = skillDigest(skill.path)
+      if (!digest || digest !== skill.sha256.toLowerCase()) continue
       args.push('--skill', skill.path)
+      seenSkills.add(skill.path)
     } catch {
       /* Missing or modified skills remain disabled until explicitly re-approved. */
     }
+  }
+  for (const path of listPersonalMarkdownSkills()) {
+    if (seenSkills.has(path)) continue
+    const pinned = (preferences?.trustedSkills ?? []).find((s) => s.path === path)
+    const digest = skillDigest(path)
+    if (!digest) continue
+    if (pinned && !pinned.enabled) continue
+    if (pinned && pinned.sha256.toLowerCase() !== digest) continue
+    args.push('--skill', path)
+    seenSkills.add(path)
   }
   const prompt = options?.initialPrompt?.replace(/\s+$/u, '')
   if (prompt) args.push(prompt)

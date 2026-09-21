@@ -46,7 +46,13 @@ import {
   type TransferEvent,
   type TransferListResult,
   type BrowserDownloadItem,
-  type TerminalActivity
+  type TerminalActivity,
+  type PreviewAnnotation,
+  type PreviewOpenAck,
+  type PreviewOpenRequest,
+  type PreviewServeResult,
+  type IdleNotifyEvent,
+  type IdleNotifySecrets
 } from '@shared/types'
 
 // Subscribe helper for per-id main->renderer channels.
@@ -225,12 +231,35 @@ const api: DevTermApi = {
     query: (q: HistoryQuery): Promise<HistoryResult> => ipcRenderer.invoke(IPC.historyQuery, q)
   },
   dialog: {
-    chooseImage: (): Promise<string | null> => ipcRenderer.invoke(IPC.dialogChooseImage)
+    chooseImage: (): Promise<string | null> => ipcRenderer.invoke(IPC.dialogChooseImage),
+    chooseDirectory: (): Promise<string | null> => ipcRenderer.invoke(IPC.dialogChooseDirectory)
+  },
+  preview: {
+    serveFolder: (folderPath: string): Promise<PreviewServeResult> =>
+      ipcRenderer.invoke(IPC.previewServeFolder, folderPath),
+    stopServe: (serveId: string): Promise<void> => ipcRenderer.invoke(IPC.previewStopServe, serveId),
+    loadAnnotations: (sessionId: string): Promise<PreviewAnnotation[]> =>
+      ipcRenderer.invoke(IPC.previewAnnotationsLoad, sessionId),
+    saveAnnotations: (sessionId: string, annotations: PreviewAnnotation[]): Promise<void> =>
+      ipcRenderer.invoke(IPC.previewAnnotationsSave, sessionId, annotations),
+    capture: (webContentsId: number): Promise<string> =>
+      ipcRenderer.invoke(IPC.previewCapture, webContentsId),
+    onOpenRequest: (cb: (req: PreviewOpenRequest) => void): (() => void) =>
+      subscribe<PreviewOpenRequest>(IPC.previewOpenRequest, cb),
+    ackOpen: (ack: PreviewOpenAck): void => {
+      ipcRenderer.send(IPC.previewOpenAck, ack)
+    }
+  },
+  notify: {
+    idle: (event: IdleNotifyEvent): Promise<void> => ipcRenderer.invoke(IPC.notifyIdle, event),
+    setSecrets: (secrets: IdleNotifySecrets): Promise<void> =>
+      ipcRenderer.invoke(IPC.notifySecrets, secrets)
   },
   clipboard: {
     writeText: (text: string): Promise<void> => ipcRenderer.invoke(IPC.clipboardWrite, text),
     readText: (): Promise<string> => ipcRenderer.invoke(IPC.clipboardRead),
-    saveImage: (): Promise<string | null> => ipcRenderer.invoke(IPC.clipboardSaveImage)
+    saveImage: (destDir?: string): Promise<string | null> =>
+      ipcRenderer.invoke(IPC.clipboardSaveImage, destDir)
   },
   shell: {
     reveal: (localPath: string): Promise<void> => ipcRenderer.invoke(IPC.shellReveal, localPath)
@@ -546,13 +575,23 @@ const api: DevTermApi = {
   // -------------------------------------------------------------------------
   transfers: {
     list: (): Promise<TransferListResult> => ipcRenderer.invoke(IPC.transfersList),
-    enqueueUpload: (opts: { sessionId: string; localPath: string; remotePath: string }) =>
-      ipcRenderer.invoke(IPC.transfersEnqueueUpload, opts) as Promise<TransferItemV2>,
-    enqueueDownload: (opts: { sessionId: string; localPath: string; remotePath: string }) =>
-      ipcRenderer.invoke(IPC.transfersEnqueueDownload, opts) as Promise<TransferItemV2>,
+    enqueueUpload: (opts: {
+      sessionId: string
+      localPath: string
+      remotePath: string
+      connectionId?: string
+    }) => ipcRenderer.invoke(IPC.transfersEnqueueUpload, opts) as Promise<TransferItemV2>,
+    enqueueDownload: (opts: {
+      sessionId: string
+      localPath: string
+      remotePath: string
+      connectionId?: string
+    }) => ipcRenderer.invoke(IPC.transfersEnqueueDownload, opts) as Promise<TransferItemV2>,
     cancel: (id: string): Promise<void> => ipcRenderer.invoke(IPC.transfersCancel, id),
     retry: (id: string): Promise<TransferItemV2 | null> =>
       ipcRenderer.invoke(IPC.transfersRetry, id) as Promise<TransferItemV2 | null>,
+    resume: (id: string): Promise<TransferItemV2 | null> =>
+      ipcRenderer.invoke(IPC.transfersResume, id) as Promise<TransferItemV2 | null>,
     clearFinished: (): Promise<TransferListResult> =>
       ipcRenderer.invoke(IPC.transfersClearFinished) as Promise<TransferListResult>,
     onProgress: (id: string, cb: (e: TransferEvent) => void): (() => void) =>

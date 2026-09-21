@@ -564,7 +564,9 @@ body.agent-float-body,
 
 .terminal-host {
   width: 100%;
-  height: 100%;
+  flex: 1;
+  min-height: 0;
+  height: auto;
   padding: 0;
   background: var(--bg-term);
   overflow: hidden;
@@ -837,6 +839,99 @@ body.agent-float-body,
   position: relative;
   width: 100%;
   height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.cmd-input-bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  padding: 6px 8px;
+  border-top: 1px solid var(--border);
+  background: var(--panel);
+}
+.cmd-input-prompt {
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 22px;
+  user-select: none;
+}
+.cmd-input-editor {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 22px;
+}
+.cmd-input-hl,
+.cmd-input-field {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 22px;
+  white-space: pre;
+  overflow: hidden;
+}
+.cmd-input-hl {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  color: var(--fg);
+}
+.cmd-input-field {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  height: 22px;
+  resize: none;
+  background: transparent;
+  color: transparent;
+  caret-color: var(--accent);
+  border: 0;
+  outline: none;
+  padding: 0;
+}
+.cmd-input-field::placeholder {
+  color: var(--muted);
+}
+.sh-command { color: var(--accent); font-weight: 600; }
+.sh-flag { color: color-mix(in srgb, var(--ok) 80%, var(--fg)); }
+.sh-string { color: color-mix(in srgb, var(--status-warn) 85%, var(--fg)); }
+.sh-comment { color: var(--muted); font-style: italic; }
+.sh-operator { color: var(--fg); opacity: 0.7; }
+.sh-number { color: color-mix(in srgb, var(--ok) 70%, var(--fg)); }
+.sh-path { color: color-mix(in srgb, var(--accent) 55%, var(--fg)); }
+
+.cmd-block-gutter {
+  width: 3px !important;
+  left: 2px !important;
+  background: color-mix(in srgb, var(--accent) 42%, transparent);
+  border-radius: 2px;
+  cursor: pointer;
+  pointer-events: auto;
+}
+.cmd-block-gutter:hover {
+  background: var(--accent);
+}
+.cmd-block-comment {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px 6px 6px;
+}
+.cmd-block-comment-input {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 6px;
+  font: inherit;
+  font-size: 12px;
 }
 
 /* History autocomplete popup (Autosuggest.tsx), floated above/below the prompt

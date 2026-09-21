@@ -36,6 +36,7 @@ import {
   IconRefresh
 } from '../common/Icons'
 import Button from '../common/Button'
+import PreviewOverlay from './PreviewOverlay'
 
 /** Default landing page and search engine. */
 const HOME_URL = 'https://www.google.com'
@@ -905,7 +906,7 @@ function BrowserPane({ session }: { session: Session }) {
   }, [])
 
   return (
-    <div ref={paneRef} className="browser-pane">
+    <div ref={paneRef} className={`browser-pane${session.preview ? ' has-preview' : ''}`}>
       <div className="browser-tabs">
         {tabs.map((t) => (
           <div
@@ -985,30 +986,39 @@ function BrowserPane({ session }: { session: Session }) {
           }}
         />
       )}
-      <div className="browser-stack">
-        {tabs.map((t) => (
-          <div
-            key={t.id}
-            className={`browser-view ${t.id === activeId ? 'active' : 'browser-view-hidden'}`}
-            aria-hidden={t.id !== activeId}
-          >
-            <BrowserTab
-              ref={(h) => {
-                if (h) handles.current.set(t.id, h)
-                else handles.current.delete(t.id)
-              }}
-              tab={t}
-              onState={onState}
-              onTitle={onTitle}
-              onWebContents={onWebContents}
-              onOpenTab={addTab}
-              paneSessionId={session.id}
-              agentOwned={!!session.agentOwnedBy}
-              ownerAgentSessionId={session.agentOwnedBy}
-              onClose={() => closeTab(t.id)}
-            />
-          </div>
-        ))}
+      <div className="browser-stage">
+        {session.preview && (
+          <PreviewOverlay
+            session={session}
+            webContentsId={activeTab?.webContentsId ?? null}
+            currentUrl={activeTab?.current}
+          />
+        )}
+        <div className="browser-stack">
+          {tabs.map((t) => (
+            <div
+              key={t.id}
+              className={`browser-view ${t.id === activeId ? 'active' : 'browser-view-hidden'}`}
+              aria-hidden={t.id !== activeId}
+            >
+              <BrowserTab
+                ref={(h) => {
+                  if (h) handles.current.set(t.id, h)
+                  else handles.current.delete(t.id)
+                }}
+                tab={t}
+                onState={onState}
+                onTitle={onTitle}
+                onWebContents={onWebContents}
+                onOpenTab={addTab}
+                paneSessionId={session.id}
+                agentOwned={!!session.agentOwnedBy}
+                ownerAgentSessionId={session.agentOwnedBy}
+                onClose={() => closeTab(t.id)}
+              />
+            </div>
+          ))}
+        </div>
       </div>
       {dlDrawerOpen && (
         <div className="browser-dl-drawer">

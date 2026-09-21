@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { AgentKind, ConfirmRequest } from '@shared/types'
 import { useSessions } from '../../store/sessions'
+import { useSettings } from '../../store/settings'
 
 const SNOOZE_MS = 5 * 60 * 1000
 
@@ -45,6 +46,14 @@ export default function ConfirmActionModal() {
       // Flag the originating session so its tab dot can glow yellow until the
       // operator acts on the request. Cleared in the reply/snooze handlers.
       useSessions.getState().setAgentPendingApproval(r.sessionId, true)
+      if (useSettings.getState().idleNotify?.enabled) {
+        void window.devterm.notify.idle({
+          sessionId: r.sessionId,
+          reason: 'approval',
+          title: 'Agent needs approval',
+          body: r.detail || r.tool
+        })
+      }
     })
   }, [])
 

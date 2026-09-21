@@ -134,7 +134,8 @@ function cleanHop(value: unknown): SessionRestoreSshHop | undefined {
     authMethod: isAuthMethod(hop.authMethod) ? hop.authMethod : 'none',
     privateKeyPath:
       typeof hop.privateKeyPath === 'string' ? hop.privateKeyPath.slice(0, 4096) : undefined,
-    hasPassphrase: hop.hasPassphrase === true ? true : undefined
+    hasPassphrase: hop.hasPassphrase === true ? true : undefined,
+    useAgent: hop.useAgent === true ? true : hop.useAgent === false ? false : undefined
   }
 }
 

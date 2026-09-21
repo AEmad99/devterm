@@ -67,5 +67,8 @@ describe('MCP tool schemas', () => {
     for (const tool of tools) {
       assert.equal((tool.inputSchema as { type?: string }).type, 'object', tool.name)
     }
+    for (const name of ['preview_open', 'git_status', 'search_terminals']) {
+      assert.equal(names.includes(name), true, `missing ${name}`)
+    }
   })
 })

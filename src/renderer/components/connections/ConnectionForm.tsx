@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
-import type { SavedConnection, SSHProfile } from '@shared/types'
+import type { SavedConnection, SSHHop, SSHProfile } from '@shared/types'
+import { encodeJump, listJumpHops, MAX_JUMP_HOPS } from '@shared/ssh-jump'
 import { useSessions } from '../../store/sessions'
+import { useSettings } from '../../store/settings'
 import Button from '../common/Button'
 import ModalFooter from '../common/ModalFooter'
 import ConfirmDialog from '../common/ConfirmDialog'
@@ -14,12 +16,17 @@ type FormState = {
   password: string
   privateKeyPath: string
   passphrase: string
+  useAgent: boolean
   useJump: boolean
-  jumpHost: string
-  jumpPort: string
-  jumpUser: string
-  jumpPassword: string
-  jumpKeyPath: string
+  tags: string
+  jumps: Array<{
+    host: string
+    port: string
+    username: string
+    password: string
+    privateKeyPath: string
+    useAgent: boolean
+  }>
 }
 
 const EMPTY: FormState = {
@@ -30,12 +37,14 @@ const EMPTY: FormState = {
   password: '',
   privateKeyPath: '',
   passphrase: '',
+  useAgent: true,
   useJump: false,
-  jumpHost: '',
-  jumpPort: '22',
-  jumpUser: '',
-  jumpPassword: '',
-  jumpKeyPath: ''
+  tags: '',
+  jumps: [{ host: '', port: '22', username: '', password: '', privateKeyPath: '', useAgent: true }]
+}
+
+function emptyJump() {
+  return { host: '', port: '22', username: '', password: '', privateKeyPath: '', useAgent: true }
 }
 
 /** Hydrate the form fields from a saved connection (for "edit" / "load"). */
@@ -48,12 +57,17 @@ function fromSaved(c: SavedConnection): FormState {
     password: c.password ?? '',
     privateKeyPath: c.privateKeyPath ?? '',
     passphrase: c.passphrase ?? '',
-    useJump: !!c.jump,
-    jumpHost: c.jump?.host ?? '',
-    jumpPort: String(c.jump?.port ?? 22),
-    jumpUser: c.jump?.username ?? '',
-    jumpPassword: c.jump?.password ?? '',
-    jumpKeyPath: c.jump?.privateKeyPath ?? ''
+    useAgent: c.useAgent ?? (!c.password && !c.privateKeyPath),
+    useJump: listJumpHops(c.jump).length > 0,
+    tags: (c.tags ?? []).join(', '),
+    jumps: (listJumpHops(c.jump).length ? listJumpHops(c.jump) : [{} as SSHHop]).map((h) => ({
+      host: h.host ?? '',
+      port: String(h.port ?? 22),
+      username: h.username ?? '',
+      password: h.password ?? '',
+      privateKeyPath: h.privateKeyPath ?? '',
+      useAgent: h.useAgent ?? (!h.password && !h.privateKeyPath)
+    }))
   }
 }
 
@@ -65,14 +79,25 @@ function toProfile(f: FormState): SSHProfile {
     password: f.password || undefined,
     privateKeyPath: f.privateKeyPath.trim() || undefined,
     passphrase: f.passphrase || undefined,
+    useAgent: f.useAgent,
+    tags: f.tags
+      .split(/[, ]+/)
+      .map((t) => t.trim())
+      .filter(Boolean),
     jump: f.useJump
-      ? {
-          host: f.jumpHost.trim(),
-          port: Number(f.jumpPort) || 22,
-          username: f.jumpUser.trim(),
-          password: f.jumpPassword || undefined,
-          privateKeyPath: f.jumpKeyPath.trim() || undefined
-        }
+      ? encodeJump(
+          f.jumps
+            .filter((j) => j.host.trim())
+            .slice(0, MAX_JUMP_HOPS)
+            .map((j) => ({
+              host: j.host.trim(),
+              port: Number(j.port) || 22,
+              username: j.username.trim(),
+              password: j.password || undefined,
+              privateKeyPath: j.privateKeyPath.trim() || undefined,
+              useAgent: j.useAgent
+            }))
+        )
       : undefined
   }
 }
@@ -143,6 +168,7 @@ export default function ConnectionForm({
       const name = f.name.trim() || `${profile.username}@${profile.host}`
       const list = await window.devterm.connections.save({ ...profile, id: editingId ?? '', name })
       onSaved?.(list)
+      useSettings.getState().markFirstRun('importedSsh')
       // Link the live session to its saved connection (so it can join a workspace).
       connectionId =
         editingId ??
@@ -248,7 +274,7 @@ export default function ConnectionForm({
             type="password"
             value={f.password}
             onChange={set('password')}
-            placeholder="(leave blank to use key)"
+            placeholder="(leave blank to use key or system agent)"
           />
         </label>
         <label>
@@ -263,36 +289,135 @@ export default function ConnectionForm({
           Key passphrase
           <input type="password" value={f.passphrase} onChange={set('passphrase')} />
         </label>
+        <label
+          className="checkbox"
+          title="OpenSSH agent on this machine (Windows named pipe). Default on when no password or key is set."
+        >
+          <input type="checkbox" checked={f.useAgent} onChange={set('useAgent')} /> Use system SSH
+          agent
+        </label>
+
+        <label>
+          Tags
+          <input
+            value={f.tags}
+            onChange={set('tags')}
+            placeholder="prod, homelab (comma-separated)"
+          />
+        </label>
 
         <label className="checkbox">
           <input type="checkbox" checked={f.useJump} onChange={set('useJump')} /> Connect through a
-          bastion (ProxyJump)
+          bastion (ProxyJump, up to 2 hops)
         </label>
-        {f.useJump && (
-          <div className="jump">
-            <div className="row">
+        {f.useJump &&
+          f.jumps.map((j, i) => (
+            <div className="jump" key={i}>
+              <div className="row">
+                <label>
+                  Jump host {i + 1}
+                  <input
+                    value={j.host}
+                    onChange={(e) =>
+                      setF((p) => ({
+                        ...p,
+                        jumps: p.jumps.map((x, n) => (n === i ? { ...x, host: e.target.value } : x))
+                      }))
+                    }
+                  />
+                </label>
+                <label className="port">
+                  Port
+                  <input
+                    value={j.port}
+                    onChange={(e) =>
+                      setF((p) => ({
+                        ...p,
+                        jumps: p.jumps.map((x, n) => (n === i ? { ...x, port: e.target.value } : x))
+                      }))
+                    }
+                  />
+                </label>
+              </div>
               <label>
-                Jump host
-                <input value={f.jumpHost} onChange={set('jumpHost')} />
+                Jump user
+                <input
+                  value={j.username}
+                  onChange={(e) =>
+                    setF((p) => ({
+                      ...p,
+                      jumps: p.jumps.map((x, n) =>
+                        n === i ? { ...x, username: e.target.value } : x
+                      )
+                    }))
+                  }
+                />
               </label>
-              <label className="port">
-                Port
-                <input value={f.jumpPort} onChange={set('jumpPort')} />
+              <label>
+                Jump password
+                <input
+                  type="password"
+                  value={j.password}
+                  onChange={(e) =>
+                    setF((p) => ({
+                      ...p,
+                      jumps: p.jumps.map((x, n) =>
+                        n === i ? { ...x, password: e.target.value } : x
+                      )
+                    }))
+                  }
+                />
               </label>
+              <label>
+                Jump key path
+                <input
+                  value={j.privateKeyPath}
+                  onChange={(e) =>
+                    setF((p) => ({
+                      ...p,
+                      jumps: p.jumps.map((x, n) =>
+                        n === i ? { ...x, privateKeyPath: e.target.value } : x
+                      )
+                    }))
+                  }
+                />
+              </label>
+              <label className="checkbox">
+                <input
+                  type="checkbox"
+                  checked={j.useAgent}
+                  onChange={(e) =>
+                    setF((p) => ({
+                      ...p,
+                      jumps: p.jumps.map((x, n) =>
+                        n === i ? { ...x, useAgent: e.target.checked } : x
+                      )
+                    }))
+                  }
+                />{' '}
+                Use system SSH agent for jump host
+              </label>
+              {f.jumps.length > 1 && (
+                <Button
+                  variant="ghost"
+                  type="button"
+                  onClick={() =>
+                    setF((p) => ({ ...p, jumps: p.jumps.filter((_, n) => n !== i) }))
+                  }
+                >
+                  Remove hop
+                </Button>
+              )}
             </div>
-            <label>
-              Jump user
-              <input value={f.jumpUser} onChange={set('jumpUser')} />
-            </label>
-            <label>
-              Jump password
-              <input type="password" value={f.jumpPassword} onChange={set('jumpPassword')} />
-            </label>
-            <label>
-              Jump key path
-              <input value={f.jumpKeyPath} onChange={set('jumpKeyPath')} />
-            </label>
-          </div>
+          ))}
+        {f.useJump && f.jumps.length < MAX_JUMP_HOPS && (
+          <Button
+            variant="ghost"
+            type="button"
+            onClick={() => setF((p) => ({ ...p, jumps: [...p.jumps, emptyJump()] }))}
+          >
+            Add jump host
+          </Button>
         )}
 
         <label className="checkbox save-row">

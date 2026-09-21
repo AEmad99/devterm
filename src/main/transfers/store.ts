@@ -5,8 +5,9 @@ import type { TransferItemV2 } from '@shared/types'
 /**
  * On-disk + in-memory list of `TransferItemV2` rows. Persisted to
  * `userData/transfers.json` (atomic write: tmp + rename). On launch, any item
- * that is still in flight (not done, not canceled) is marked canceled with
- * reason "interrupted by restart" — bytes are never resumed mid-flight.
+ * that is still in flight (not done, not canceled) is marked paused so the
+ * operator can Resume from the persisted offset. Partial files keep a
+ * `.partial` suffix until success.
  *
  * The store is the single source of truth for the renderer; the queue in
  * `queue.ts` consults it on startup and pushes status changes back through it.
@@ -40,7 +41,7 @@ export class TransferStore {
     }
   }
 
-  /** Load from disk; mark in-flight items as canceled (interrupted by restart). */
+  /** Load from disk; mark in-flight items as paused so they can be resumed. */
   async load(): Promise<TransferItemV2[]> {
     try {
       const raw = await fs.readFile(this.file, 'utf-8')
@@ -55,17 +56,14 @@ export class TransferStore {
       }
       this.items = []
     }
-    // Anything still running when the app last died is unrecoverable — the
-    // ssh2 channel and streams are gone with the process. Mark + persist.
+    // Streams die with the process; the partial file and byte offset do not.
     let mutated = false
-    const now = Date.now()
     for (const it of this.items) {
       if (!it.done && !it.canceled) {
-        it.done = true
-        it.canceled = true
-        it.error = 'interrupted by restart'
-        it.finishedAt = now
-        mutated = true
+        if (!it.paused) {
+          it.paused = true
+          mutated = true
+        }
       }
     }
     if (mutated) await this.flushNow()
@@ -130,6 +128,7 @@ export class TransferStore {
       id: randomId(),
       direction: old.direction,
       sessionId: old.sessionId,
+      connectionId: old.connectionId,
       localPath: old.localPath,
       remotePath: old.remotePath,
       total: 0,

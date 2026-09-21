@@ -7,6 +7,8 @@ import { oneDark } from '@codemirror/theme-one-dark'
 import { useEditors, type EditorDoc } from '../../store/editors'
 import { useSessions } from '../../store/sessions'
 import { sendTerminalInput } from '../../lib/terms'
+import { askAgentAboutSelection } from '../../lib/agent-selection'
+import { getEditorView, registerEditorView, unregisterEditorView } from '../../lib/editor-registry'
 import { isMarkdownName } from '../../lib/markdown-preview'
 import { IconLocal, IconRemote, IconTerminals } from '../common/Icons'
 import MarkdownPreview from './MarkdownPreview'
@@ -65,7 +67,7 @@ export default function EditorView() {
   useLayoutEffect(() => {
     if (!activeDocId || sourceHidden) return
     const raf = requestAnimationFrame(() => {
-      viewRegistry.get(activeDocId)?.requestMeasure()
+      getEditorView(activeDocId)?.requestMeasure?.()
     })
     return () => cancelAnimationFrame(raf)
   }, [activeDocId, sourceHidden])
@@ -75,7 +77,7 @@ export default function EditorView() {
 
   const runInTerminal = () => {
     if (active.state !== 'ready' || !activeSession) return
-    const view = viewRegistry.get(active.id)
+    const view = getEditorView(active.id)
     if (!view) return
     // Selection wins, full doc otherwise. Don't trim the user's text — they
     // may have carefully formatted a script and we should not collapse it.
@@ -91,6 +93,19 @@ export default function EditorView() {
     const lang = RUN_LANGS.find((l) => l.id === runLang) ?? RUN_LANGS[0]
     const payload = normalized.endsWith(lang.eol) ? normalized : normalized + lang.eol
     sendTerminalInput(activeSession.id, payload)
+  }
+
+  const askAgent = () => {
+    if (active.state !== 'ready' || !activeSession || activeSession.kind === 'browser') return
+    const view = getEditorView(active.id)
+    if (!view) return
+    const sel = view.state.selection.main
+    const text = sel.empty ? '' : view.state.sliceDoc(sel.from, sel.to)
+    void askAgentAboutSelection({
+      sessionId: activeSession.id,
+      selection: text,
+      source: 'editor'
+    })
   }
 
   return (
@@ -151,6 +166,18 @@ export default function EditorView() {
           </>
         )}
         <button
+          className="ghost"
+          disabled={active.state !== 'ready' || !activeSession || activeSession.kind === 'browser'}
+          onClick={askAgent}
+          title={
+            activeSession && activeSession.kind !== 'browser'
+              ? `Send the current selection to the ${activeSession.title} agent`
+              : 'No terminal agent to send to'
+          }
+        >
+          Ask agent
+        </button>
+        <button
           className="primary"
           disabled={active.state !== 'ready' || !activeSession}
           onClick={runInTerminal}
@@ -203,10 +230,6 @@ export default function EditorView() {
   )
 }
 
-/** Tiny cross-component registry of live CodeMirror views by doc id, so the
- * "Run" button can reach the editor and read the current selection. */
-const viewRegistry = new Map<string, CMView>()
-
 /** One CodeMirror instance bound to a single ready doc (remounts per doc via key). */
 function CodeMirror({ doc }: { doc: EditorDoc }) {
   const host = useRef<HTMLDivElement | null>(null)
@@ -244,7 +267,7 @@ function CodeMirror({ doc }: { doc: EditorDoc }) {
       parent: host.current
     })
     viewRef.current = view
-    viewRegistry.set(doc.id, view)
+    registerEditorView(doc.id, view)
     view.focus()
     // Language parsers are the largest part of the renderer. Load the local
     // grammar pack only after an editor exists so terminal-first startup never
@@ -263,7 +286,7 @@ function CodeMirror({ doc }: { doc: EditorDoc }) {
       })
     return () => {
       disposed = true
-      viewRegistry.delete(doc.id)
+      unregisterEditorView(doc.id)
       view.destroy()
       viewRef.current = null
     }

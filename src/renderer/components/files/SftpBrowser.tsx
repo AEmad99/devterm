@@ -32,6 +32,9 @@ export default function SftpBrowser({
   const groupId = useSessions(
     (s) => s.sessions.find((session) => session.id === sessionId)?.groupId ?? DEFAULT_GROUP
   )
+  const connectionId = useSessions(
+    (s) => s.sessions.find((session) => session.id === sessionId)?.connectionId
+  )
   const activeGroupId = useLayout((s) => s.activeGroupId)
   const pollPaused = hibernated || groupId !== activeGroupId
 
@@ -79,7 +82,8 @@ export default function SftpBrowser({
     await window.devterm.transfers.enqueueUpload({
       sessionId,
       localPath: entry.path,
-      remotePath
+      remotePath,
+      connectionId
     })
   }
 
@@ -88,7 +92,8 @@ export default function SftpBrowser({
     await window.devterm.transfers.enqueueDownload({
       sessionId,
       localPath,
-      remotePath: entry.path
+      remotePath: entry.path,
+      connectionId
     })
   }
 
@@ -123,7 +128,8 @@ export default function SftpBrowser({
     void window.devterm.transfers.enqueueDownload({
       sessionId,
       localPath,
-      remotePath: droppedPath
+      remotePath: droppedPath,
+      connectionId
     })
   }
   const onRemoteDrop = (droppedPath: string, droppedName: string, isDir: boolean) => {
@@ -132,7 +138,8 @@ export default function SftpBrowser({
     void window.devterm.transfers.enqueueUpload({
       sessionId,
       localPath: droppedPath,
-      remotePath
+      remotePath,
+      connectionId
     })
   }
 

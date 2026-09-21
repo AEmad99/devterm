@@ -17,6 +17,12 @@ import {
   normalizeHibernateAfterMs,
   normalizeOutputRingLines
 } from '../lib/hibernate'
+import {
+  DEFAULT_SEARCH_INDEX_LINES,
+  PERFORMANCE_PRESETS,
+  type PerformancePresetId,
+  normalizeSearchIndexLines
+} from '../lib/performance-presets'
 
 /**
  * User-facing settings for terminals. Persisted to localStorage (renderer-only,
@@ -63,6 +69,11 @@ export interface AppSettings {
   autoReconnect: AutoReconnectSettings
   /** Attention signals (chime / OS notification / tab badge) for agents + terminals. */
   attention: AttentionSettings
+  idleNotify: {
+    enabled: boolean
+    webhookUrl: string
+    telegramChatId: string
+  }
   /** Bottom status bar visibility (Cluster C adds this). */
   showStatusBar: boolean
   /** Whether the agent activity panel is collapsed by default (Cluster A). */
@@ -134,12 +145,24 @@ export interface AppSettings {
    * PTY) so a closed session's recent output is still searchable.
    */
   searchPersist: boolean
+  /** In-memory global-search ring size per session. */
+  searchIndexLines: number
   /**
    * One-time onboarding hint (the floating "Getting started" card in the
    * terminals view). Flipped to true when the user dismisses it; older saved
    * payloads without the field default to false so the hint shows once.
    */
   welcomeHintSeen: boolean
+  /**
+   * Four-step first-run checklist. Never resurrected by settings import.
+   * Completing all four hides the card permanently (also sets welcomeHintSeen).
+   */
+  firstRun: {
+    localTerminal: boolean
+    importedSsh: boolean
+    openedAgent: boolean
+    pickedTheme: boolean
+  }
   /** Chrome density: comfortable (default) or compact manager/modal spacing. */
   density: 'comfortable' | 'compact'
   /** Pinned manager rows (connections / snippets / workspaces), shown first. */
@@ -224,6 +247,7 @@ const DEFAULTS: AppSettings = {
     system: true,
     idle: true
   },
+  idleNotify: { enabled: false, webhookUrl: '', telegramChatId: '' },
   showStatusBar: true,
   agentActivityCollapsed: false,
   inactivePaneDimming: true,
@@ -259,7 +283,14 @@ const DEFAULTS: AppSettings = {
     showFloatingStatus: true
   },
   searchPersist: false,
+  searchIndexLines: DEFAULT_SEARCH_INDEX_LINES,
   welcomeHintSeen: false,
+  firstRun: {
+    localTerminal: false,
+    importedSsh: false,
+    openedAgent: false,
+    pickedTheme: false
+  },
   density: 'comfortable',
   pinned: { connections: [], snippets: [], workspaces: [] },
   lastConnectedAt: {}
@@ -295,6 +326,10 @@ function load(): AppSettings {
       prefs,
       autoReconnect: { ...DEFAULTS.autoReconnect, ...(parsed?.autoReconnect ?? {}) },
       attention: { ...DEFAULTS.attention, ...(parsed?.attention ?? {}) },
+      idleNotify: {
+        ...DEFAULTS.idleNotify,
+        ...(parsed?.idleNotify && typeof parsed.idleNotify === 'object' ? parsed.idleNotify : {})
+      },
       showStatusBar:
         typeof parsed?.showStatusBar === 'boolean' ? parsed.showStatusBar : DEFAULTS.showStatusBar,
       agentActivityCollapsed:
@@ -349,10 +384,15 @@ function load(): AppSettings {
       stt: normalizeStt(parsed?.stt),
       searchPersist:
         typeof parsed?.searchPersist === 'boolean' ? parsed.searchPersist : DEFAULTS.searchPersist,
+      searchIndexLines: normalizeSearchIndexLines(
+        parsed?.searchIndexLines,
+        DEFAULTS.searchIndexLines
+      ),
       welcomeHintSeen:
         typeof parsed?.welcomeHintSeen === 'boolean'
           ? parsed.welcomeHintSeen
           : DEFAULTS.welcomeHintSeen,
+      firstRun: normalizeFirstRun(parsed?.firstRun),
       density: parsed?.density === 'compact' ? 'compact' : DEFAULTS.density,
       pinned: normalizePinned(parsed?.pinned),
       lastConnectedAt: normalizeLastConnected(parsed?.lastConnectedAt)
@@ -367,6 +407,20 @@ function load(): AppSettings {
  * saves (or hand-edited localStorage) with an unknown `kind` quietly fall back
  * to `auto` so the renderer never hands the main process garbage.
  */
+function normalizeFirstRun(raw: unknown): AppSettings['firstRun'] {
+  const o = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
+  return {
+    localTerminal: o.localTerminal === true,
+    importedSsh: o.importedSsh === true,
+    openedAgent: o.openedAgent === true,
+    pickedTheme: o.pickedTheme === true
+  }
+}
+
+function firstRunComplete(fr: AppSettings['firstRun']): boolean {
+  return fr.localTerminal && fr.importedSsh && fr.openedAgent && fr.pickedTheme
+}
+
 function normalizePinned(raw: unknown): AppSettings['pinned'] {
   const empty = { connections: [], snippets: [], workspaces: [] }
   if (!raw || typeof raw !== 'object') return empty
@@ -510,6 +564,7 @@ interface SettingsState extends AppSettings {
   setPrefs: (patch: Partial<TerminalPrefs>) => void
   setAutoReconnect: (patch: Partial<AutoReconnectSettings>) => void
   setAttention: (patch: Partial<AttentionSettings>) => void
+  setIdleNotify: (patch: Partial<AppSettings['idleNotify']>) => void
   setShowStatusBar: (v: boolean) => void
   setAgentActivityCollapsed: (v: boolean) => void
   setInactivePaneDimming: (v: boolean) => void
@@ -536,8 +591,11 @@ interface SettingsState extends AppSettings {
   setStt: (patch: Partial<STTSettings>) => void
   /** Toggle the optional persistent search index tail (off by default). */
   setSearchPersist: (v: boolean) => void
+  setSearchIndexLines: (v: number) => void
+  applyPerformancePreset: (id: PerformancePresetId) => void
   /** Dismiss the one-time first-run welcome hint. */
   setWelcomeHintSeen: (v: boolean) => void
+  markFirstRun: (step: keyof AppSettings['firstRun']) => void
   setDensity: (v: AppSettings['density']) => void
   /** Pin/unpin a manager row (connections / snippets / workspaces). */
   togglePin: (kind: PinKind, id: string) => void
@@ -562,6 +620,7 @@ function persist(state: AppSettings): void {
     prefs: state.prefs,
     autoReconnect: state.autoReconnect,
     attention: state.attention,
+    idleNotify: state.idleNotify,
     showStatusBar: state.showStatusBar,
     agentActivityCollapsed: state.agentActivityCollapsed,
     inactivePaneDimming: state.inactivePaneDimming,
@@ -583,7 +642,9 @@ function persist(state: AppSettings): void {
     keybindings: state.keybindings,
     stt: state.stt,
     searchPersist: state.searchPersist,
+    searchIndexLines: state.searchIndexLines,
     welcomeHintSeen: state.welcomeHintSeen,
+    firstRun: state.firstRun,
     density: state.density,
     pinned: state.pinned,
     lastConnectedAt: state.lastConnectedAt
@@ -607,7 +668,13 @@ export const useSettings = create<SettingsState>((set, get) => ({
   ...load(),
 
   setThemeId: (id) => {
-    set({ themeId: id })
+    const firstRun = { ...get().firstRun, pickedTheme: true }
+    const done = firstRunComplete(firstRun)
+    set({
+      themeId: id,
+      firstRun,
+      welcomeHintSeen: done ? true : get().welcomeHintSeen
+    })
     persist(snapshot(get()))
   },
 
@@ -635,6 +702,18 @@ export const useSettings = create<SettingsState>((set, get) => ({
     const attention = { ...get().attention, ...patch }
     set({ attention })
     persist(snapshot(get()))
+  },
+
+  setIdleNotify: (patch) => {
+    const idleNotify = { ...get().idleNotify, ...patch }
+    set({ idleNotify })
+    persist(snapshot(get()))
+    void window.devterm.notify
+      .setSecrets({
+        webhookUrl: idleNotify.webhookUrl,
+        telegramChatId: idleNotify.telegramChatId
+      })
+      .catch(() => undefined)
   },
 
   setShowStatusBar: (v) => {
@@ -752,8 +831,36 @@ export const useSettings = create<SettingsState>((set, get) => ({
     persist(snapshot(get()))
   },
 
+  setSearchIndexLines: (v) => {
+    set({ searchIndexLines: normalizeSearchIndexLines(v) })
+    persist(snapshot(get()))
+  },
+
+  applyPerformancePreset: (id) => {
+    const preset = PERFORMANCE_PRESETS[id]
+    if (!preset) return
+    const v = preset.values
+    const prefs = { ...get().prefs, scrollback: v.scrollback }
+    set({
+      prefs,
+      hibernateEnabled: v.hibernateEnabled,
+      hibernateAfterMs: v.hibernateAfterMs,
+      outputRingLines: v.outputRingLines,
+      searchIndexLines: v.searchIndexLines,
+      remoteConnectMode: v.remoteConnectMode
+    })
+    persist(snapshot(get()))
+  },
+
   setWelcomeHintSeen: (v) => {
     set({ welcomeHintSeen: v })
+    persist(snapshot(get()))
+  },
+
+  markFirstRun: (step) => {
+    const firstRun = { ...get().firstRun, [step]: true }
+    const done = firstRunComplete(firstRun)
+    set({ firstRun, welcomeHintSeen: done ? true : get().welcomeHintSeen })
     persist(snapshot(get()))
   },
 
@@ -788,6 +895,7 @@ export const useSettings = create<SettingsState>((set, get) => ({
         ? { ...cur.autoReconnect, ...s.autoReconnect }
         : cur.autoReconnect,
       attention: s.attention ? { ...cur.attention, ...s.attention } : cur.attention,
+      idleNotify: cur.idleNotify,
       showStatusBar: typeof s.showStatusBar === 'boolean' ? s.showStatusBar : cur.showStatusBar,
       agentActivityCollapsed:
         typeof s.agentActivityCollapsed === 'boolean'
@@ -833,9 +941,14 @@ export const useSettings = create<SettingsState>((set, get) => ({
       keybindings: s.keybindings ? normalizeKeybindings(s.keybindings) : cur.keybindings,
       stt: s.stt ? normalizeStt(s.stt) : cur.stt,
       searchPersist: typeof s.searchPersist === 'boolean' ? s.searchPersist : cur.searchPersist,
+      searchIndexLines:
+        s.searchIndexLines !== undefined
+          ? normalizeSearchIndexLines(s.searchIndexLines)
+          : cur.searchIndexLines,
       // Local-only UI flag (not part of the export bundle): importing settings
       // must not resurrect the dismissed welcome hint.
       welcomeHintSeen: cur.welcomeHintSeen,
+      firstRun: cur.firstRun,
       density: s.density === 'compact' || s.density === 'comfortable' ? s.density : cur.density,
       pinned: s.pinned ? normalizePinned(s.pinned) : cur.pinned,
       lastConnectedAt: s.lastConnectedAt
@@ -859,6 +972,7 @@ export const useSettings = create<SettingsState>((set, get) => ({
       prefs: DEFAULTS.prefs,
       autoReconnect: DEFAULTS.autoReconnect,
       attention: DEFAULTS.attention,
+      idleNotify: DEFAULTS.idleNotify,
       showStatusBar: DEFAULTS.showStatusBar,
       agentActivityCollapsed: DEFAULTS.agentActivityCollapsed,
       inactivePaneDimming: DEFAULTS.inactivePaneDimming,
@@ -880,7 +994,9 @@ export const useSettings = create<SettingsState>((set, get) => ({
       keybindings: DEFAULTS.keybindings,
       stt: DEFAULTS.stt,
       searchPersist: DEFAULTS.searchPersist,
+      searchIndexLines: DEFAULTS.searchIndexLines,
       welcomeHintSeen: DEFAULTS.welcomeHintSeen,
+      firstRun: DEFAULTS.firstRun,
       density: DEFAULTS.density,
       pinned: DEFAULTS.pinned,
       lastConnectedAt: DEFAULTS.lastConnectedAt
@@ -911,6 +1027,7 @@ function snapshot(s: SettingsState): AppSettings {
     prefs: s.prefs,
     autoReconnect: s.autoReconnect,
     attention: s.attention,
+    idleNotify: s.idleNotify,
     showStatusBar: s.showStatusBar,
     agentActivityCollapsed: s.agentActivityCollapsed,
     inactivePaneDimming: s.inactivePaneDimming,
@@ -932,7 +1049,9 @@ function snapshot(s: SettingsState): AppSettings {
     keybindings: s.keybindings,
     stt: s.stt,
     searchPersist: s.searchPersist,
+    searchIndexLines: s.searchIndexLines,
     welcomeHintSeen: s.welcomeHintSeen,
+    firstRun: s.firstRun,
     density: s.density,
     pinned: s.pinned,
     lastConnectedAt: s.lastConnectedAt

@@ -47,7 +47,11 @@ function mapHop<T extends SSHHop>(hop: T, fn: (s?: string) => string | undefined
 /** Toggle encryption on the secret fields of a connection (and its jump hop). */
 function transform(c: SavedConnection, fn: (s?: string) => string | undefined): SavedConnection {
   const out = mapHop(c, fn)
-  if (out.jump) out.jump = mapHop(out.jump, fn)
+  if (out.jump) {
+    out.jump = Array.isArray(out.jump)
+      ? out.jump.map((h) => mapHop(h, fn))
+      : mapHop(out.jump, fn)
+  }
   return out
 }
 
@@ -197,11 +201,17 @@ export function registerConnectionsIpc(): void {
             username,
             privateKeyPath,
             jump: h.jump
-              ? {
-                  host: h.jump.host,
-                  port: h.jump.port,
-                  username: h.jump.username || username
-                }
+              ? Array.isArray(h.jump)
+                ? h.jump.map((j) => ({
+                    host: j.host,
+                    port: j.port,
+                    username: j.username || username
+                  }))
+                : {
+                    host: h.jump.host,
+                    port: h.jump.port,
+                    username: h.jump.username || username
+                  }
               : undefined
           }
           list.push(entry)

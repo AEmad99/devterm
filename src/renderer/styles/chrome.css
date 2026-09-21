@@ -642,6 +642,16 @@
   color: var(--muted);
   white-space: nowrap;
 }
+.welcome-checklist {
+  margin: 6px 0 8px;
+  padding-left: 18px;
+  font-size: var(--fs-100, 11px);
+  color: var(--muted);
+}
+.welcome-checklist li.is-done {
+  color: var(--ok, var(--accent));
+  text-decoration: line-through;
+}
 .welcome-hint-title {
   color: var(--fg);
   font-weight: 600;
@@ -1368,6 +1378,16 @@ textarea:focus {
 .ghost.small {
   padding: 3px 8px;
   font-size: var(--fs-100);
+}
+.ghost.small.active {
+  border-color: var(--accent);
+  color: var(--fg);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+.perf-preset-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 .btn--md {
   padding: 5px 12px;

@@ -1,6 +1,8 @@
 import type { Terminal } from '@xterm/xterm'
 import { CanvasAddon } from '@xterm/addon-canvas'
 import { useSettings } from '../store/settings'
+import { useSessions } from '../store/sessions'
+import { injectAgentPrompt } from './agent-ui'
 
 /**
  * Attach the **canvas** renderer to a terminal.
@@ -57,7 +59,11 @@ function sanitizePasteText(text: string): string {
  * for Ctrl+V/Cmd+V) and this listener (which performs the actual paste).
  * Returns a disposer.
  */
-export function attachClipboard(term: Terminal, host: HTMLElement): () => void {
+export function attachClipboard(
+  term: Terminal,
+  host: HTMLElement,
+  opts?: { onAskAgent?: (selection: string) => void; sessionId?: string; agentPty?: boolean }
+): () => void {
   const copySelection = () => {
     if (term.hasSelection()) window.devterm.clipboard.writeText(term.getSelection())
   }
@@ -82,8 +88,22 @@ export function attachClipboard(term: Terminal, host: HTMLElement): () => void {
   // platforms that don't populate the paste event's clipboardData).
   const pasteFromClipboard = async () => {
     try {
-      const imgPath = await window.devterm.clipboard.saveImage()
+      const focused = useSessions.getState().sessions.find((s) => s.id === opts?.sessionId)
+      const agentSession =
+        focused?.agentUiMode
+          ? focused
+          : useSessions.getState().sessions.find((s) => s.agentUiMode && s.id === useSessions.getState().activeId)
+      const imgPath = await window.devterm.clipboard.saveImage(
+        agentSession || opts?.agentPty ? 'agent-artifacts' : undefined
+      )
       if (imgPath) {
+        if (agentSession && !opts?.agentPty) {
+          const ptyId = agentSession.agentPtyId
+          if (ptyId) {
+            void injectAgentPrompt(agentSession.id, ptyId, `Operator pasted image: ${imgPath}`)
+            return
+          }
+        }
         pasteText(imgPath)
         return
       }
@@ -164,6 +184,11 @@ export function attachClipboard(term: Terminal, host: HTMLElement): () => void {
         label: 'Copy',
         disabled: !hasSelection,
         onClick: () => copySelection()
+      },
+      {
+        label: 'Ask agent about this',
+        disabled: !hasSelection || !opts?.onAskAgent,
+        onClick: () => opts?.onAskAgent?.(term.getSelection())
       },
       {
         label: 'Paste',

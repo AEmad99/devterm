@@ -124,6 +124,8 @@ import { registerGitIpc } from './ipc/git'
 import { registerTransfersIpc } from './ipc/transfers'
 import { registerBrowserIpc } from './ipc/browser'
 import { registerBrowserControlIpc } from './ipc/browser-control'
+import { registerPreviewIpc, setPreviewController } from './ipc/preview'
+import { registerNotifyIpc } from './ipc/notify'
 import { browserControl } from './browser/control-instance'
 import { externalUrlOk, guestUrlOk } from './browser/url-guard'
 import { registerPerformanceIpc } from './ipc/performance'
@@ -440,6 +442,8 @@ function registerIpc(): void {
   transfersController = registerTransfersIpc(sshManager, () => mainWindow)
   browserController = registerBrowserIpc(() => mainWindow)
   registerBrowserControlIpc(browserControl())
+  setPreviewController(registerPreviewIpc(() => mainWindow))
+  registerNotifyIpc()
   registerPerformanceIpc()
   registerTerminalIpc()
   registerUpdaterIpc()
@@ -448,12 +452,12 @@ function registerIpc(): void {
   ipcMain.handle(IPC.searchQuery, (_e, q: string) => globalSearchIndex.query(q))
   ipcMain.handle(IPC.searchSeed, (_e, sessionId: string, lines: string[]) => {
     // Untrusted renderer input: cap both the number of lines and per-line size
-    // so a runaway seed can't blow up the in-memory index (which itself keeps
-    // at most 2000 lines per session).
+    // so a runaway seed can't blow up the in-memory index.
     if (typeof sessionId !== 'string' || !Array.isArray(lines)) return
+    const cap = globalSearchIndex.getMaxLines()
     const capped = lines
       .filter((l): l is string => typeof l === 'string')
-      .slice(-2000)
+      .slice(-cap)
       .map((l) => (l.length > 4000 ? l.slice(0, 4000) : l))
     globalSearchIndex.seedLines(sessionId, capped, sessionId)
   })

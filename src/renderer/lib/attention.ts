@@ -176,6 +176,15 @@ export function signalAttention(
     // re-checks focus and no-ops if we're foreground.
     if (attention.system && !focused)
       window.devterm.window.flashAttention?.({ ...notice, sessionId })
+    const notify = useSettings.getState().idleNotify
+    if (notify?.enabled) {
+      void window.devterm.notify.idle({
+        sessionId,
+        reason: 'idle',
+        title: notice.title,
+        body: notice.body
+      })
+    }
   } catch {
     /* bridge unavailable */
   }

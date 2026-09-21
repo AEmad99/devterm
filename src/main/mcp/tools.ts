@@ -8,6 +8,8 @@ import { recordBridgeActivity } from '../ipc/foundation'
 import { sanitizeDetail } from './server'
 import { registerBrowserTools, type BrowserToolsDeps } from './tools-browser'
 import { registerAgentHandoffTools, type AgentHandoffDeps } from './tools-agent'
+import { registerPreviewTools } from './tools-preview'
+import { registerWorkspaceTools } from './tools-workspace'
 import type { HostBackend } from '../agent/host-backend'
 import {
   isWindowsRemotePath,
@@ -165,6 +167,8 @@ export function registerTools(mcp: McpServer, deps: ToolDeps): void {
   if (deps.hostTools === false) {
     registerAgentHandoffTools(mcp, deps)
     registerBrowserTools(mcp, deps)
+    registerPreviewTools(mcp, deps)
+    registerWorkspaceTools(mcp, deps)
     return
   }
   const { host, sessionId, getContext, hostDown, airGapped, policy, confirm, getCwd } = deps
@@ -421,4 +425,6 @@ export function registerTools(mcp: McpServer, deps: ToolDeps): void {
   )
 
   registerBrowserTools(mcp, deps)
+  registerPreviewTools(mcp, deps)
+  registerWorkspaceTools(mcp, deps)
 }

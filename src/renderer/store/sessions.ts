@@ -7,9 +7,11 @@ import type {
   HostContext,
   PolicyMode,
   SSHProfile,
-  SessionRestoreBrowserTab
+  SessionRestoreBrowserTab,
+  PreviewMeta
 } from '@shared/types'
 import { useLayout } from './layout'
+import { encodeJump, listJumpHops } from '@shared/ssh-jump'
 
 const statusDisposers = new Map<string, () => void>()
 /** Profiles for remote tabs that have been painted but not connected yet. */
@@ -84,6 +86,8 @@ export interface Session {
   url?: string
   /** Browser panes only: restorable in-pane tabs, mirrored by BrowserPane. */
   browserTabs?: SessionRestoreBrowserTab[]
+  /** Browser panes opened as Preview + annotate. */
+  preview?: PreviewMeta
   /** Zero-based active browser tab index for restore. */
   browserActiveTab?: number
   /**
@@ -122,6 +126,8 @@ export interface Session {
   agentExited?: boolean
   /** Incremented to ask the mounted AgentPane to relaunch (restart button). */
   agentRestartNonce?: number
+  /** Wall clock when the current agent UI session started (cockpit age). */
+  agentStartedAt?: number
   /** True when new output has arrived while this session was not active. */
   hasUnreadOutput?: boolean
   /** True when a command is running in this session (set on Enter, cleared on prompt/exit). */
@@ -192,6 +198,8 @@ interface SessionState {
     firstTabKey?: string
     browserTabs?: SessionRestoreBrowserTab[]
     browserActiveTab?: number
+    preview?: PreviewMeta
+    title?: string
   }) => string
   setActive: (id: string) => void
   /** Move a session into another terminal group (the layout sync reconciles trees). */
@@ -480,13 +488,17 @@ export const useSessions = create<SessionState>((set, get) => ({
       ...current,
       password: credentials.password || current.password,
       passphrase: credentials.passphrase || current.passphrase,
-      jump: current.jump
-        ? {
-            ...current.jump,
-            password: credentials.jumpPassword || current.jump.password,
-            passphrase: credentials.jumpPassphrase || current.jump.passphrase
-          }
-        : current.jump
+      jump: encodeJump(
+        listJumpHops(current.jump).map((h, i) =>
+          i === 0
+            ? {
+                ...h,
+                password: credentials.jumpPassword || h.password,
+                passphrase: credentials.jumpPassphrase || h.passphrase
+              }
+            : h
+        )
+      )
     }
     deferredRemoteProfiles.set(id, next)
     set((s) => ({
@@ -509,13 +521,14 @@ export const useSessions = create<SessionState>((set, get) => ({
     const session: Session = {
       id,
       kind: 'browser',
-      title: 'Browser',
+      title: opts?.title ?? (opts?.preview ? 'Preview' : 'Browser'),
       url: opts?.url,
       groupId: opts?.groupId ?? useLayout.getState().activeGroupId,
       agentOwnedBy: opts?.agentOwnedBy,
       firstTabKey: opts?.firstTabKey,
       browserTabs: opts?.browserTabs,
-      browserActiveTab: opts?.browserActiveTab
+      browserActiveTab: opts?.browserActiveTab,
+      preview: opts?.preview
     }
     // The App-level layout sync effect drops this id into the active group's
     // active leaf (same path as addLocal); no pty/ssh is created for it.
@@ -674,7 +687,8 @@ export const useSessions = create<SessionState>((set, get) => ({
                   agentPolicyMode: undefined,
                   agentTask: undefined,
                   agentBridgeState: undefined,
-                  agentExited: undefined
+                  agentExited: undefined,
+                  agentStartedAt: undefined
                 }
               : x
           )
@@ -702,6 +716,7 @@ export const useSessions = create<SessionState>((set, get) => ({
                 agentPtyId: nextPty,
                 agentKind: nextKind,
                 agentPolicyMode: nextPolicy,
+                agentStartedAt: cur.agentStartedAt ?? Date.now(),
                 // A fresh open/reattach clears a prior exited marker.
                 agentExited: patch.ptyId !== undefined ? false : x.agentExited
               }
@@ -817,6 +832,9 @@ export const useSessions = create<SessionState>((set, get) => ({
     }
     if (s?.kind === 'remote' && !id.startsWith('pending-')) {
       window.devterm.ssh.disconnect(id)
+    }
+    if (s?.preview?.serveId) {
+      void window.devterm.preview.stopServe(s.preview.serveId).catch(() => undefined)
     }
     set((st) => {
       const remaining = st.sessions.filter((x) => x.id !== id)

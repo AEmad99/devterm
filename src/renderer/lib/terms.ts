@@ -53,6 +53,11 @@ export function focusTerminal(id: string): void {
   registry.get(id)?.focus()
 }
 
+/** Current xterm selection for a mounted session, or an empty string. */
+export function getTerminalSelection(id: string): string {
+  return registry.get(id)?.getSelection() ?? ''
+}
+
 /** Clear a session's terminal scrollback (keeps the current prompt line). */
 export function clearTerminal(id: string): void {
   registry.get(id)?.clear()

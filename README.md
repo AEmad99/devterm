@@ -5,8 +5,8 @@
 </p>
 
 <p align="center">
-  <strong>A desktop SSH/SFTP terminal with tiling panes, files, git, and a built-in coding agent.</strong><br>
-  Remote hosts need nothing installed and no outbound internet.
+  <strong>The Windows terminal for local machines and remote SSH hosts, with AI coding agents that never land on the server.</strong><br>
+  Tiling panes, SFTP, git, preview/annotate, and a built-in multi-provider agent. Remote hosts need nothing installed and no outbound internet.
 </p>
 
 <p align="center">
@@ -17,7 +17,7 @@
 
 DevTerm is a normal framed Windows app. You open it and you are in a terminal — local PowerShell, SSH, or both — with splits, groups, a file sidebar, an editor, an in-app browser, and an agent that can work on the connected host through the same SSH session.
 
-**Current release: [v1.3.30](https://github.com/AEmad99/devterm/releases/tag/v1.3.30)**
+**Current release: [v1.4.0](https://github.com/AEmad99/devterm/releases/tag/v1.4.0)**
 
 ![DevTerm terminal workspace](resources/screens/terminal.png)
 
@@ -31,18 +31,18 @@ Most agent terminals either install a runtime on the server or send host work ou
 
 ## What you get
 
-- **Local and SSH terminals** — PowerShell (or cmd / a custom shell) locally; password or key SSH with a single bastion hop. POSIX remotes with a working tmux get a live session picker. Optional last-session restore on boot.
-- **Tiling panes and groups** — split any pane, drag to resize, and keep independent named groups. Launch a 4×4 remote grid when you need a wall of shells.
-- **Saved connections and workspaces** — OS-keychain secrets, `~/.ssh/config` import, and workspace snapshots of a group's hosts, folders, and split tree.
-- **Files, SFTP, and an editor** — a sidebar that follows `cd`, a dual-pane transfer browser with a persistent queue, and CodeMirror 6 (Markdown Edit / Side / Preview).
-- **Git panel** — status, stage, commit, push/pull, branches, stash, tags, remotes, and a commit graph. Remote repos reuse the session's SSH exec channel.
-- **In-app browser** — tabbed http(s) panes for docs and dashboards. Agents can drive them through `browser_*` tools.
-- **Command palette, snippets, search** — Ctrl/Cmd+K for actions, snippets (`{{placeholders}}`), connections, workspaces, and history. Per-pane find and global search across terminals.
-- **DevTerm Agent** — bundled multi-provider agent, plus Claude, Codex, Grok, OpenCode, Kimi, pi, Antigravity, and Muse Code. Dock, float, or hide the UI without killing the process. Remote host tools ride MCP; local agents work in the folder that terminal is in.
-- **Resilient terminal lifecycle** — bounded ANSI output rings, hibernation/replay for hidden panes, watcher suspension, and deferred remote work keep large session estates responsive without unmounting terminals.
-- **Rich session restore** — restores terminal output tails, browser tabs, editors, workspaces, and ad-hoc SSH drafts; credentials stay in a safeStorage sidecar and missing secrets prompt instead of being written to JSON.
+- **Local and SSH terminals** — PowerShell (or cmd / a custom shell) locally; password, key file, or system OpenSSH agent. ProxyJump of up to two extra hops (three including the target). POSIX remotes with a working tmux get a live session picker.
+- **Tiling panes and groups** — split any pane, drag to resize, and keep independent named groups. Launch a 4×4 remote grid when you need a wall of shells. Hidden groups can hibernate their renderer terminals after 30s while PTYs and SSH stay alive.
+- **Saved connections and workspaces** — OS-keychain secrets, `~/.ssh/config` import (including ProxyJump lists), local-only tags (`prod`, `homelab`, …), and workspace snapshots of a group's hosts, folders, and split tree.
+- **Files, SFTP, and an editor** — a sidebar that follows `cd`, a dual-pane transfer browser with a persistent queue that can resume mid-file, and CodeMirror 6 (Markdown Edit / Side / Preview).
+- **Git panel** — status, stage, commit, push/pull, branches, stash, tags, remotes, and a commit graph. Remote repos reuse the session's SSH exec channel. Agents can call read-only `git_status` / `git_diff`.
+- **In-app browser and Preview** — tabbed http(s) panes for docs and dashboards. Preview localhost, a forwarded port, or a local folder; pin/rectangle/comment overlays send to the pane agent. Agents drive both through `browser_*` and `preview_*` tools.
+- **Command palette, snippets, search** — Ctrl/Cmd+K for actions, snippets (`{{placeholders}}`), connections, workspaces, and history. Per-pane find and global search across terminals (`search_terminals` for agents).
+- **Command input editor** — on shells with OSC 133 hooks, a one-line highlighted editor for the next command, plus block gutters (Copy / Ask agent / Comment). The raw PTY stream stays the shell's.
+- **DevTerm Agent** — bundled multi-provider agent, plus Claude, Codex, Grok, OpenCode, Kimi, pi, Antigravity, and Muse Code. Dock, float, or hide the UI without killing the process. Remote host tools ride MCP on the same ssh2 connection; local agents work in the folder that terminal is in. Cockpit (Ctrl/Cmd+Alt+A) focuses, restarts, stops, and delegates local siblings. Select terminal or editor text → **Ask agent about this**.
+- **Session restore** — last-session groups come back with scrollback tails, every browser tab, editors, agents, and ad-hoc SSH drafts. Credentials stay in a safeStorage sidecar; missing secrets prompt. Background remotes connect on focus by default.
 - **Optional tray residency** — close-to-tray keeps local PTYs, SSH sessions, and agents alive while the window is hidden; explicit Quit performs normal cleanup. Reboot survival is not implied.
-- **Port forwards, dictation, themes** — local `-L` and SOCKS `-D`, offline Whisper push-to-talk, and nine themes (including Glass) that restyle chrome and the terminal together.
+- **Port forwards, dictation, themes, notify** — local `-L` and SOCKS `-D`, offline Whisper push-to-talk, nine themes (including Glass), performance presets, personal markdown skills, image-paste-to-agent, and an optional idle/approval webhook or Telegram notify.
 
 ![Git panel](resources/screens/git-panel.png)
 
@@ -120,10 +120,11 @@ Open Agent from the pane tab strip. Hide and Float do not stop it; Stop / close 
 ## Using it
 
 - **New terminal:** double-click a pane tab strip, or press **＋**, and pick Local or Remote.
-- **SSH:** host/user plus password or key. Tick *Connect through a bastion* for one ProxyJump hop. Save it under **Connections**.
+- **SSH:** host/user plus password, key, or the system agent. Tick *Connect through a bastion* and **Add jump host** for up to two ProxyJump hops. Save it under **Connections** (optional tags).
 - **Split / group:** split from the tab strip; drag a tab onto a group, or onto **＋** for a new group. **Save group** writes a workspace.
-- **Files:** the left sidebar follows the active shell cwd. On a remote tab, **Files (SFTP)** is the dual-pane transfer UI.
-- **Agent:** sparkle opens it; the letter mark picks the backend.
+- **Files:** the left sidebar follows the active shell cwd. On a remote tab, **Files (SFTP)** is the dual-pane transfer UI; incomplete downloads resume from a `.partial` file.
+- **Agent:** sparkle opens it; the letter mark picks the backend. Hide/Float keep it running. Ctrl/Cmd+Alt+A is the cockpit.
+- **Preview:** command palette → Preview localhost port / forwarded port / this folder. Annotate, then send comments to the pane agent.
 
 ---
 

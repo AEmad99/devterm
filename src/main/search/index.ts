@@ -36,6 +36,7 @@ interface SessionRecord {
   title: string
   /** Fixed-size circular buffer; avoids O(N) shift/renumber work per chunk. */
   lines: Array<StoredLine | undefined>
+  capacity: number
   start: number
   size: number
   nextLineNumber: number
@@ -43,15 +44,58 @@ interface SessionRecord {
   pending: string
 }
 
-const MAX_LINES_PER_SESSION = 2000
+export const DEFAULT_SEARCH_INDEX_LINES = 2000
+export const MIN_SEARCH_INDEX_LINES = 200
+export const MAX_SEARCH_INDEX_LINES = 10_000
+
+export function normalizeSearchIndexLines(
+  value: unknown,
+  fallback = DEFAULT_SEARCH_INDEX_LINES
+): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return fallback
+  return Math.max(MIN_SEARCH_INDEX_LINES, Math.min(MAX_SEARCH_INDEX_LINES, Math.floor(value)))
+}
 
 export class SearchIndex {
   private index = new Map<string, SessionRecord>()
+  private maxLines: number
+
+  constructor(maxLines = DEFAULT_SEARCH_INDEX_LINES) {
+    this.maxLines = normalizeSearchIndexLines(maxLines)
+  }
+
+  getMaxLines(): number {
+    return this.maxLines
+  }
+
+  setMaxLines(value: unknown): void {
+    const next = normalizeSearchIndexLines(value, this.maxLines)
+    if (next === this.maxLines) return
+    this.maxLines = next
+    for (const rec of this.index.values()) this.rebuildRecord(rec, next)
+  }
+
+  private rebuildRecord(rec: SessionRecord, capacity: number): void {
+    const kept: StoredLine[] = []
+    for (let i = 0; i < rec.size; i++) {
+      const ln = rec.lines[(rec.start + i) % rec.capacity]
+      if (ln) kept.push(ln)
+    }
+    const slice = kept.slice(-capacity)
+    rec.lines = new Array(capacity)
+    rec.capacity = capacity
+    rec.start = 0
+    rec.size = slice.length
+    slice.forEach((ln, i) => {
+      rec.lines[i] = ln
+    })
+  }
 
   private createRecord(title: string): SessionRecord {
     return {
       title,
-      lines: new Array(MAX_LINES_PER_SESSION),
+      lines: new Array(this.maxLines),
+      capacity: this.maxLines,
       start: 0,
       size: 0,
       nextLineNumber: 1,
@@ -62,13 +106,13 @@ export class SearchIndex {
   private append(rec: SessionRecord, text: string): void {
     if (!text) return
     const stored = { text, lineNumber: rec.nextLineNumber++ }
-    if (rec.size < MAX_LINES_PER_SESSION) {
-      rec.lines[(rec.start + rec.size) % MAX_LINES_PER_SESSION] = stored
+    if (rec.size < rec.capacity) {
+      rec.lines[(rec.start + rec.size) % rec.capacity] = stored
       rec.size++
       return
     }
     rec.lines[rec.start] = stored
-    rec.start = (rec.start + 1) % MAX_LINES_PER_SESSION
+    rec.start = (rec.start + 1) % rec.capacity
   }
 
   setSessionTitle(sessionId: string, title: string) {
@@ -128,7 +172,7 @@ export class SearchIndex {
    */
   seedLines(sessionId: string, lines: string[], title: string) {
     const rec = this.createRecord(title)
-    for (const text of lines.slice(-MAX_LINES_PER_SESSION)) {
+    for (const text of lines.slice(-this.maxLines)) {
       const clean = stripAnsi(text)
       if (clean) this.append(rec, clean)
     }
@@ -141,7 +185,7 @@ export class SearchIndex {
     const out: SearchResult[] = []
     for (const [sid, rec] of this.index.entries()) {
       for (let i = 0; i < rec.size; i++) {
-        const ln = rec.lines[(rec.start + i) % MAX_LINES_PER_SESSION]
+        const ln = rec.lines[(rec.start + i) % rec.capacity]
         if (!ln) continue
         if (ln.text.toLowerCase().includes(lower)) {
           out.push({
@@ -167,6 +211,10 @@ export const globalSearchIndex = new SearchIndex()
  * without exposing the SearchIndex internals. */
 export function setPersistEnabled(v: boolean): void {
   persist.setEnabled(v)
+}
+
+export function setSearchIndexMaxLines(v: unknown): void {
+  globalSearchIndex.setMaxLines(v)
 }
 
 /** Rehydrate a session from its on-disk tail (returns the lines so the

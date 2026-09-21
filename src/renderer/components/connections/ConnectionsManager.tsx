@@ -29,6 +29,7 @@ export default function ConnectionsManager({ onConnect }: { onConnect: () => voi
   const [knownHostsOpen, setKnownHostsOpen] = useState(false)
   const [importBusy, setImportBusy] = useState(false)
   const [importHint, setImportHint] = useState<string | null>(null)
+  const [tagFilter, setTagFilter] = useState('')
 
   const refresh = async () => {
     setSaved(await window.devterm.connections.list())
@@ -41,14 +42,27 @@ export default function ConnectionsManager({ onConnect }: { onConnect: () => voi
 
   const ordered = useMemo(() => {
     const pinIndex = new Map(pinned.map((id, i) => [id, i]))
-    return [...saved].sort((a, b) => {
-      const pa = pinIndex.has(a.id) ? 0 : 1
-      const pb = pinIndex.has(b.id) ? 0 : 1
-      if (pa !== pb) return pa - pb
-      if (pa === 0) return (pinIndex.get(a.id) ?? 0) - (pinIndex.get(b.id) ?? 0)
-      return a.name.localeCompare(b.name)
-    })
-  }, [saved, pinned])
+    const q = tagFilter.trim().toLowerCase()
+    return [...saved]
+      .filter((c) => {
+        if (!q) return true
+        return (
+          (c.tags ?? []).some((t) => t.toLowerCase().includes(q)) ||
+          c.name.toLowerCase().includes(q) ||
+          c.host.toLowerCase().includes(q)
+        )
+      })
+      .sort((a, b) => {
+        const pa = pinIndex.has(a.id) ? 0 : 1
+        const pb = pinIndex.has(b.id) ? 0 : 1
+        if (pa !== pb) return pa - pb
+        if (pa === 0) return (pinIndex.get(a.id) ?? 0) - (pinIndex.get(b.id) ?? 0)
+        const la = lastConnectedAt[a.id] ?? 0
+        const lb = lastConnectedAt[b.id] ?? 0
+        if (la !== lb) return lb - la
+        return a.name.localeCompare(b.name)
+      })
+  }, [saved, pinned, tagFilter, lastConnectedAt])
 
   const connect = (c: SavedConnection) => {
     const { id: _id, name: _name, ...profile } = c
@@ -86,7 +100,12 @@ export default function ConnectionsManager({ onConnect }: { onConnect: () => voi
         <h2>Saved connections</h2>
         <span className="spacer" />
         <Button onClick={() => setKnownHostsOpen(true)}>Known hosts…</Button>
-        <Button onClick={() => void importSshConfig()} busy={importBusy}>
+        <Button
+          onClick={() => {
+            void importSshConfig().then(() => useSettings.getState().markFirstRun('importedSsh'))
+          }}
+          busy={importBusy}
+        >
           Import SSH config
         </Button>
         <Button variant="primary" onClick={() => setForm({})}>
@@ -96,6 +115,14 @@ export default function ConnectionsManager({ onConnect }: { onConnect: () => voi
       </div>
 
       {importHint && <div className="manager-hint">{importHint}</div>}
+      {saved.length > 0 && (
+        <input
+          className="manager-filter"
+          value={tagFilter}
+          onChange={(e) => setTagFilter(e.target.value)}
+          placeholder="Filter by tag, name, or host"
+        />
+      )}
 
       {loading ? (
         <ManagerSkeleton />
@@ -132,7 +159,13 @@ export default function ConnectionsManager({ onConnect }: { onConnect: () => voi
                   <>
                     {c.username}@{c.host}
                     {c.port && c.port !== 22 ? `:${c.port}` : ''}
-                    {c.jump ? `  ⤷ via ${c.jump.username}@${c.jump.host}` : ''}
+                    {c.jump
+                      ? `  ⤷ via ${
+                          Array.isArray(c.jump)
+                            ? c.jump.map((h) => `${h.username}@${h.host}`).join(' → ')
+                            : `${c.jump.username}@${c.jump.host}`
+                        }`
+                      : ''}
                   </>
                 }
                 onDoubleClick={() => connect(c)}

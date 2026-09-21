@@ -5,6 +5,25 @@ at the top. Dates are ISO `YYYY-MM-DD`.
 
 ## Unreleased
 
+## 1.4.0 — 2026-09-21
+
+Quit is safer, large workspaces stay usable, and the agent can see more of what you see. Remote hosts still need nothing installed.
+
+### Added
+
+- **Preview + annotate.** Palette actions open a hardened in-app preview of a localhost port, a local (-L) forward, or a folder served on `127.0.0.1`. Overlay pins, rectangles, and comments persist under `userData/annotations/`. Send comments (and an optional screenshot) to the pane agent. MCP tools: `preview_open`, `preview_snapshot`, `preview_comments`.
+- **Agent cockpit** (Ctrl/Cmd+Alt+A) shows last task, running/idle, cwd, host, kind letter, age, and UI mode, plus Focus pane and local Delegate.
+- **Read-only MCP tools** `git_status`, `git_diff`, and `search_terminals`. Commit and push stay in the Git panel or an explicit `run_command`.
+- **ProxyJump chains** of up to two extra hops (three including the target). Connection form “Add jump host”; OpenSSH config import reads comma-separated `ProxyJump` lists. Existing single-hop profiles still load.
+- **First-run checklist** (local terminal, save/import a connection, open Agent, pick a theme) replaces the sticky Getting started hint and is not resurrected by settings import.
+- **Connection tags** for local filtering in Connections and ranking in the command palette (pinned → last used → tag match → name).
+- **Image paste into a focused agent** writes a PNG under `userData/agent-artifacts` and injects the path.
+- **Personal markdown skills** from `userData/skills` and `~/DevTerm/skills` (instruction-only, SHA-256 re-hashed every launch).
+- **Optional idle/approval webhook** and Telegram notify (bot token stored via OS encryption). Existing toasts and taskbar flash stay.
+- **Ask agent about this.** Right-click a terminal selection, the command palette, or the file editor toolbar sends the quoted text to that pane’s agent (starts one if needed). Works while the agent UI is floating. The payload is context only — it does not invent a fix.
+- **Performance presets** in Settings → System: Balanced (default), Low memory, and Full fidelity, wired to hibernate, scrollback, search index size, and background remote connect. The performance snapshot still polls only while that page is open.
+- **Optional command input editor and block gutters** on shells with OSC 133 hooks. The editor highlights the next command; Enter types it into the shell. Completed commands (A then B) get a faint gutter with Copy / Ask agent / Comment. Panes without hooks look as they did before.
+
 ### Changed
 
 - Terminal output is now retained in a bounded main-process ring for each local
@@ -28,6 +47,13 @@ at the top. Dates are ISO `YYYY-MM-DD`.
 - Optional “Keep sessions running in the tray” keeps the main process, local
   PTYs, SSH clients, and agents alive when the window is closed; reopening
   replays terminal surfaces, while explicit Quit still stops everything.
+- Incomplete SFTP transfers now survive a restart as paused rows. Resume
+  continues from the persisted offset after checking source size/mtime; cancel
+  and quit leave a `.partial` file instead of deleting it.
+- Connections can use the system OpenSSH agent (Windows named pipe
+  `\\.\pipe\openssh-ssh-agent`). The option defaults on when no password or
+  key is set; agent-only failures report that the system agent has no usable
+  key.
 
 ## 1.3.30 — 2026-09-16
 

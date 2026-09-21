@@ -10,6 +10,7 @@ import type {
   TmuxListing
 } from '@shared/types'
 import { establish } from './connection'
+import { establishProfile } from './auth'
 import { detectRemoteContext } from './osDetect'
 import { PortForwardManager } from './port-forward'
 import {
@@ -33,6 +34,19 @@ import {
 
 export { buildDetachedSessionBootstrap } from './tmux'
 
+function endTunnel(jump?: Client, jumps?: Client[]): void {
+  const seen = new Set<Client>()
+  for (const c of [jump, ...(jumps ?? [])]) {
+    if (!c || seen.has(c)) continue
+    seen.add(c)
+    try {
+      c.end()
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
 interface Session {
   id: string
   /**
@@ -42,6 +56,10 @@ interface Session {
    */
   client?: Client
   jump?: Client
+  jumps?: Client[]
+  execJumps?: Client[]
+  sftpJumps?: Client[]
+  forwardJumps?: Client[]
   /**
    * Windows OpenSSH compatibility clients. Some Windows SSH servers advertise
    * a shell but reset the whole transport when a second channel is opened on
@@ -356,18 +374,7 @@ export class SSHManager {
     const id = profile.id || randomUUID()
     const onStatus = (s: SSHStatus) => this.fireStatus(id, s)
 
-    const { client, jump } = await establish(
-      {
-        host: profile.host,
-        port: profile.port,
-        username: profile.username,
-        password: profile.password,
-        privateKeyPath: profile.privateKeyPath,
-        passphrase: profile.passphrase,
-        jump: profile.jump
-      },
-      onStatus
-    )
+    const { client, jump, jumps } = await establish(establishProfile(profile), onStatus)
 
     // Context detection opens short-lived exec channels before the session is
     // visible to the renderer. Observe the transport during that bootstrap
@@ -380,7 +387,7 @@ export class SSHManager {
     client.once('close', onBootstrapClose)
     try {
       const context = await detectRemoteContext(client, 6000, bootstrapAbort.signal)
-      this.sessions.set(id, { id, client, jump, context, profile })
+      this.sessions.set(id, { id, client, jump, jumps, context, profile })
       client.removeListener('close', onBootstrapClose)
       client.on('close', () => this.handleTransportClose(id, client))
       return { sessionId: id, context }
@@ -390,7 +397,7 @@ export class SSHManager {
       client.removeListener('close', onBootstrapClose)
       try {
         client.end()
-        jump?.end()
+        endTunnel(jump, jumps)
       } catch {
         /* ignore */
       }
@@ -422,6 +429,7 @@ export class SSHManager {
     // Drop the dead client references but keep the session entry + profile.
     existing.client = undefined
     existing.jump = undefined
+    existing.jumps = undefined
     if (existing.reconnect) {
       void this.runReconnect(sessionId, existing.reconnect)
     } else if (this.policy.enabled) {
@@ -466,14 +474,17 @@ export class SSHManager {
   private closeAuxClient(s: Session, kind: 'exec' | 'sftp'): void {
     const client = kind === 'exec' ? s.execClient : s.sftpClient
     const jump = kind === 'exec' ? s.execJump : s.sftpJump
+    const jumps = kind === 'exec' ? s.execJumps : s.sftpJumps
     if (kind === 'exec') {
       s.execClient = undefined
       s.execJump = undefined
+      s.execJumps = undefined
       s.execClientInflight = undefined
       s.execQueue = undefined
     } else {
       s.sftpClient = undefined
       s.sftpJump = undefined
+      s.sftpJumps = undefined
       s.sftpClientInflight = undefined
     }
     if (!client) return
@@ -482,7 +493,7 @@ export class SSHManager {
     client.removeAllListeners('close')
     try {
       client.end()
-      jump?.end()
+      endTunnel(jump, jumps)
     } catch {
       /* ignore */
     }
@@ -491,9 +502,11 @@ export class SSHManager {
   private closeWindowsForwardClient(s: Session): void {
     const client = s.forwardClient
     const jump = s.forwardJump
+    const jumps = s.forwardJumps
     if (s.forwardIdleTimer) clearTimeout(s.forwardIdleTimer)
     s.forwardClient = undefined
     s.forwardJump = undefined
+    s.forwardJumps = undefined
     s.forwardClientInflight = undefined
     s.forwardRefs = 0
     s.forwardIdleTimer = undefined
@@ -501,7 +514,7 @@ export class SSHManager {
     client.removeAllListeners('close')
     try {
       client.end()
-      jump?.end()
+      endTunnel(jump, jumps)
     } catch {
       /* ignore */
     }
@@ -520,34 +533,28 @@ export class SSHManager {
 
     const primary = s.client
     const inflight = establish(
-      {
-        host: s.profile.host,
-        port: s.profile.port,
-        username: s.profile.username,
-        password: s.profile.password,
-        privateKeyPath: s.profile.privateKeyPath,
-        passphrase: s.profile.passphrase,
-        jump: s.profile.jump
-      },
+      establishProfile(s.profile),
       () => {
         /* Auxiliary connection failures belong to the operation, not the shell. */
       },
       { preferLegacyWindowsKex: true }
-    ).then(({ client, jump }) => {
+    ).then(({ client, jump, jumps }) => {
       const current = this.sessions.get(sessionId)
       if (current !== s || s.closing || s.client !== primary) {
         client.end()
-        jump?.end()
+        endTunnel(jump, jumps)
         throw new Error(RECONNECTING_ERR)
       }
       s.execClient = client
       s.execJump = jump
+      s.execJumps = jumps
       client.on('close', () => {
         if (s.execClient === client) {
           s.execClient = undefined
           s.execJump = undefined
+          s.execJumps = undefined
           try {
-            jump?.end()
+            endTunnel(jump, jumps)
           } catch {
             /* ignore */
           }
@@ -577,35 +584,29 @@ export class SSHManager {
 
     const primary = s.client
     const inflight = establish(
-      {
-        host: s.profile.host,
-        port: s.profile.port,
-        username: s.profile.username,
-        password: s.profile.password,
-        privateKeyPath: s.profile.privateKeyPath,
-        passphrase: s.profile.passphrase,
-        jump: s.profile.jump
-      },
+      establishProfile(s.profile),
       () => {
         /* Auxiliary connection failures belong to the operation, not the shell. */
       },
       { preferLegacyWindowsKex: true }
-    ).then(({ client, jump }) => {
+    ).then(({ client, jump, jumps }) => {
       const current = this.sessions.get(sessionId)
       if (current !== s || s.closing || s.client !== primary) {
         client.end()
-        jump?.end()
+        endTunnel(jump, jumps)
         throw new Error(RECONNECTING_ERR)
       }
       s.sftpClient = client
       s.sftpJump = jump
+      s.sftpJumps = jumps
       client.on('close', () => {
         if (s.sftpClient === client) {
           s.sftpClient = undefined
           s.sftpJump = undefined
+          s.sftpJumps = undefined
           s.sftp = undefined
           try {
-            jump?.end()
+            endTunnel(jump, jumps)
           } catch {
             /* ignore */
           }
@@ -640,38 +641,32 @@ export class SSHManager {
 
     const primary = s.client
     const inflight = establish(
-      {
-        host: s.profile.host,
-        port: s.profile.port,
-        username: s.profile.username,
-        password: s.profile.password,
-        privateKeyPath: s.profile.privateKeyPath,
-        passphrase: s.profile.passphrase,
-        jump: s.profile.jump
-      },
+      establishProfile(s.profile),
       () => {
         /* Forwarding failures belong to the local stream, not the shell. */
       },
       { preferLegacyWindowsKex: true }
-    ).then(({ client, jump }) => {
+    ).then(({ client, jump, jumps }) => {
       const current = this.sessions.get(sessionId)
       if (current !== s || s.closing || s.client !== primary) {
         client.end()
-        jump?.end()
+        endTunnel(jump, jumps)
         throw new Error(RECONNECTING_ERR)
       }
       s.forwardClient = client
       s.forwardJump = jump
+      s.forwardJumps = jumps
       s.forwardRefs = 0
       client.on('close', () => {
         if (s.forwardClient === client) {
           if (s.forwardIdleTimer) clearTimeout(s.forwardIdleTimer)
           s.forwardClient = undefined
           s.forwardJump = undefined
+          s.forwardJumps = undefined
           s.forwardRefs = 0
           s.forwardIdleTimer = undefined
           try {
-            jump?.end()
+            endTunnel(jump, jumps)
           } catch {
             /* ignore */
           }
@@ -723,14 +718,16 @@ export class SSHManager {
     if (s?.client) {
       const oldClient = s.client
       const oldJump = s.jump
+      const oldJumps = s.jumps
       s.client = undefined
       s.jump = undefined
+      s.jumps = undefined
       this.clearLiveChannels(s)
       this.forwardManager.suspendBySession(sessionId)
       oldClient.removeAllListeners('close')
       try {
         oldClient.end()
-        oldJump?.end()
+        endTunnel(oldJump, oldJumps)
       } catch {
         /* ignore */
       }
@@ -801,28 +798,20 @@ export class SSHManager {
     state.attempt += 1
     let pendingClient: Client | undefined
     let pendingJump: Client | undefined
+    let pendingJumps: Client[] | undefined
     try {
-      const established = await establish(
-        {
-          host: profile.host,
-          port: profile.port,
-          username: profile.username,
-          password: profile.password,
-          privateKeyPath: profile.privateKeyPath,
-          passphrase: profile.passphrase,
-          jump: profile.jump
-        },
-        () => {
-          /* swallow per-attempt status events — surface only the final outcome */
-        }
-      )
+      const established = await establish(establishProfile(profile), () => {
+        /* swallow per-attempt status events — surface only the final outcome */
+      })
       pendingClient = established.client
       pendingJump = established.jump
+      pendingJumps = established.jumps
       if (this.sessions.get(sessionId) !== s || s.reconnect !== state || s.closing) {
         pendingClient.end()
-        pendingJump?.end()
+        endTunnel(pendingJump, pendingJumps)
         pendingClient = undefined
         pendingJump = undefined
+        pendingJumps = undefined
         return
       }
       const bootstrapAbort = new AbortController()
@@ -831,27 +820,27 @@ export class SSHManager {
       }
       pendingClient.once('close', onBootstrapClose)
       const context = await detectRemoteContext(pendingClient, 6000, bootstrapAbort.signal)
-      if (
-        this.sessions.get(sessionId) !== s ||
-        s.reconnect !== state ||
-        s.closing
-      ) {
+      if (this.sessions.get(sessionId) !== s || s.reconnect !== state || s.closing) {
         pendingClient.removeListener('close', onBootstrapClose)
         pendingClient.end()
-        pendingJump?.end()
+        endTunnel(pendingJump, pendingJumps)
         pendingClient = undefined
         pendingJump = undefined
+        pendingJumps = undefined
         return
       }
       const client = pendingClient
       const jump = pendingJump
+      const jumps = pendingJumps
       client.removeListener('close', onBootstrapClose)
       pendingClient = undefined
       pendingJump = undefined
+      pendingJumps = undefined
       this.sessions.set(sessionId, {
         id: sessionId,
         client,
         jump,
+        jumps,
         context,
         profile,
         // Clear reconnect bookkeeping on success; the next drop starts a new loop.
@@ -881,7 +870,7 @@ export class SSHManager {
     } catch (err) {
       try {
         pendingClient?.end()
-        pendingJump?.end()
+        endTunnel(pendingJump, pendingJumps)
       } catch {
         /* ignore */
       }
@@ -895,6 +884,7 @@ export class SSHManager {
           delete cur.reconnect
           cur.client = undefined
           cur.jump = undefined
+          cur.jumps = undefined
         } else {
           this.sessions.set(sessionId, {
             id: sessionId,
@@ -1568,7 +1558,7 @@ export class SSHManager {
       try {
         s.shell?.close()
         s.client.end()
-        s.jump?.end()
+        endTunnel(s.jump, s.jumps)
       } catch {
         /* ignore */
       }

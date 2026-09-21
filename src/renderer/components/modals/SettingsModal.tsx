@@ -29,6 +29,11 @@ import {
 } from '../../lib/hotkeys'
 import { chime } from '../../lib/attention'
 import { AGENT_KIND_MENU, agentKindLabel } from '../../lib/agent-ui'
+import {
+  PERFORMANCE_PRESETS,
+  matchPerformancePreset,
+  type PerformancePresetId
+} from '../../lib/performance-presets'
 import ConfirmDialog from '../common/ConfirmDialog'
 import { useEscapeKey } from '../../lib/useEscapeKey'
 import {
@@ -185,6 +190,8 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
   const setAutoReconnect = useSettings((s) => s.setAutoReconnect)
   const attention = useSettings((s) => s.attention)
   const setAttention = useSettings((s) => s.setAttention)
+  const idleNotify = useSettings((s) => s.idleNotify)
+  const setIdleNotify = useSettings((s) => s.setIdleNotify)
   const showStatusBar = useSettings((s) => s.showStatusBar)
   const setShowStatusBar = useSettings((s) => s.setShowStatusBar)
   const reset = useSettings((s) => s.reset)
@@ -223,6 +230,17 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
   const setHibernateAfterMs = useSettings((s) => s.setHibernateAfterMs)
   const outputRingLines = useSettings((s) => s.outputRingLines)
   const setOutputRingLines = useSettings((s) => s.setOutputRingLines)
+  const searchIndexLines = useSettings((s) => s.searchIndexLines)
+  const setSearchIndexLines = useSettings((s) => s.setSearchIndexLines)
+  const applyPerformancePreset = useSettings((s) => s.applyPerformancePreset)
+  const performancePreset = matchPerformancePreset({
+    hibernateEnabled,
+    hibernateAfterMs,
+    scrollback: prefs.scrollback,
+    outputRingLines,
+    searchIndexLines,
+    remoteConnectMode
+  })
   const density = useSettings((s) => s.density)
   const setDensity = useSettings((s) => s.setDensity)
 
@@ -1295,6 +1313,51 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                       Watches agent output and alerts when a burst goes quiet (finished or waiting
                       for input). Disable if quiet long-running commands raise false alerts.
                     </p>
+                    <label className="settings-row-grid">
+                      <span className="settings-label">Idle / approval webhook</span>
+                      <span className="settings-control">
+                        <input
+                          type="checkbox"
+                          checked={idleNotify.enabled}
+                          onChange={(e) => setIdleNotify({ enabled: e.target.checked })}
+                        />
+                      </span>
+                    </label>
+                    <label className="settings-row-grid">
+                      <span className="settings-label">Webhook URL</span>
+                      <span className="settings-control">
+                        <input
+                          type="url"
+                          value={idleNotify.webhookUrl}
+                          onChange={(e) => setIdleNotify({ webhookUrl: e.target.value })}
+                          placeholder="https://example.com/hook"
+                        />
+                      </span>
+                    </label>
+                    <label className="settings-row-grid">
+                      <span className="settings-label">Telegram chat id</span>
+                      <span className="settings-control">
+                        <input
+                          value={idleNotify.telegramChatId}
+                          onChange={(e) => setIdleNotify({ telegramChatId: e.target.value })}
+                        />
+                      </span>
+                    </label>
+                    <label className="settings-row-grid">
+                      <span className="settings-label">Telegram bot token</span>
+                      <span className="settings-control">
+                        <input
+                          type="password"
+                          placeholder="stored in OS keychain"
+                          onBlur={(e) => {
+                            const token = e.target.value.trim()
+                            if (!token) return
+                            void window.devterm.notify.setSecrets({ telegramBotToken: token })
+                            e.target.value = ''
+                          }}
+                        />
+                      </span>
+                    </label>
                   </div>
                 </div>
               </div>
@@ -1875,6 +1938,27 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                     </p>
                   </div>
                   <div className="settings-card-body">
+                    <div className="settings-row-grid">
+                      <span className="settings-label">Preset</span>
+                      <span className="settings-control perf-preset-row">
+                        {(Object.keys(PERFORMANCE_PRESETS) as PerformancePresetId[]).map((id) => (
+                          <button
+                            key={id}
+                            type="button"
+                            className={`ghost small${performancePreset === id ? ' active' : ''}`}
+                            onClick={() => applyPerformancePreset(id)}
+                          >
+                            {PERFORMANCE_PRESETS[id].label}
+                          </button>
+                        ))}
+                      </span>
+                    </div>
+                    <p className="settings-hint">
+                      {performancePreset === 'custom'
+                        ? 'Custom mix of the knobs below.'
+                        : PERFORMANCE_PRESETS[performancePreset].hint}{' '}
+                      The snapshot below is polled only while this page is open.
+                    </p>
                     <label className="settings-row-grid">
                       <span className="settings-label">Hibernate hidden-group terminals</span>
                       <span className="settings-control">
@@ -1985,6 +2069,23 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                     </p>
                   </div>
                   <div className="settings-card-body">
+                    <label className="settings-row-grid">
+                      <span className="settings-label">Search index size</span>
+                      <span className="settings-control">
+                        <input
+                          className="text-input num-input"
+                          type="number"
+                          min={200}
+                          max={10000}
+                          step={100}
+                          value={searchIndexLines}
+                          onChange={(e) =>
+                            setSearchIndexLines(clamp(Number(e.target.value) || 2000, 200, 10000))
+                          }
+                        />
+                        <span className="settings-hint">lines / session</span>
+                      </span>
+                    </label>
                     <label className="settings-row-grid">
                       <span className="settings-label">Persist search history (5000 lines)</span>
                       <span className="settings-control">

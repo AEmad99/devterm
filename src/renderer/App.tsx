@@ -61,6 +61,8 @@ import Toasts from './components/common/Toasts'
 import GitPanel from './components/git/GitPanel'
 import { initBrowserControl } from './lib/browser-control'
 import { initAgentHandoff } from './lib/agent-handoff'
+import { initPreviewControl } from './lib/preview'
+import PreviewOpenModal, { type PreviewOpenKind } from './components/modals/PreviewOpenModal'
 import type { HostContext } from '@shared/types'
 import type { View, BottomPanelMode } from './components/chrome/types'
 
@@ -85,12 +87,19 @@ function restoreStructureKey(): string {
               username: s.restoreProfile.username,
               privateKeyPath: s.restoreProfile.privateKeyPath,
               jump: s.restoreProfile.jump
-                ? {
-                    host: s.restoreProfile.jump.host,
-                    port: s.restoreProfile.jump.port,
-                    username: s.restoreProfile.jump.username,
-                    privateKeyPath: s.restoreProfile.jump.privateKeyPath
-                  }
+                ? Array.isArray(s.restoreProfile.jump)
+                  ? s.restoreProfile.jump.map((h) => ({
+                      host: h.host,
+                      port: h.port,
+                      username: h.username,
+                      privateKeyPath: h.privateKeyPath
+                    }))
+                  : {
+                      host: s.restoreProfile.jump.host,
+                      port: s.restoreProfile.jump.port,
+                      username: s.restoreProfile.jump.username,
+                      privateKeyPath: s.restoreProfile.jump.privateKeyPath
+                    }
                 : undefined
             }
           : undefined
@@ -129,6 +138,7 @@ export default function App() {
   useEffect(() => initBrowserControl(), [])
   // Local-agent handoff: turn main's request into a visible sibling tab.
   useEffect(() => initAgentHandoff(), [])
+  useEffect(() => initPreviewControl(), [])
   const transfersPanelOpen = useSettings((s) => s.transfersPanelOpen)
   const setTransfersPanelOpen = useSettings((s) => s.setTransfersPanelOpen)
   const agentActivityCollapsed = useSettings((s) => s.agentActivityCollapsed)
@@ -138,7 +148,14 @@ export default function App() {
   const setGitPanelOpen = useSettings((s) => s.setGitPanelOpen)
   const welcomeHintSeen = useSettings((s) => s.welcomeHintSeen)
   const setWelcomeHintSeen = useSettings((s) => s.setWelcomeHintSeen)
+  const firstRun = useSettings((s) => s.firstRun)
+  const markFirstRun = useSettings((s) => s.markFirstRun)
   const keybindings = useSettings((s) => s.keybindings)
+
+  useEffect(() => {
+    if (sessionsRef.some((s) => s.kind === 'local' && !s.closed)) markFirstRun('localTerminal')
+    if (sessionsRef.some((s) => s.agentUiMode)) markFirstRun('openedAgent')
+  }, [sessionsRef, markFirstRun])
 
   const bottomPanelMode: BottomPanelMode = transfersPanelOpen
     ? 'transfers'
@@ -166,6 +183,7 @@ export default function App() {
   const [showPalette, setShowPalette] = useState(false)
   const [showShortcuts, setShowShortcuts] = useState(false)
   const [showAgents, setShowAgents] = useState(false)
+  const [previewOpen, setPreviewOpen] = useState<PreviewOpenKind | null>(null)
   const [restoreNotice, setRestoreNotice] = useState<string | null>(null)
   const [restoreProgress, setRestoreProgress] = useState<RestoreProgress | null>(null)
   const [startupHydrated, setStartupHydrated] = useState(false)
@@ -975,6 +993,14 @@ export default function App() {
             {!welcomeHintSeen && view === 'terminals' && !zenMode && sessionCount > 0 && (
               <div className="welcome-hint">
                 <span className="welcome-hint-title">Getting started</span>
+                <ol className="welcome-checklist">
+                  <li className={firstRun.localTerminal ? 'is-done' : ''}>Open a local terminal</li>
+                  <li className={firstRun.importedSsh ? 'is-done' : ''}>
+                    Import ~/.ssh/config or save a connection
+                  </li>
+                  <li className={firstRun.openedAgent ? 'is-done' : ''}>Open Agent once</li>
+                  <li className={firstRun.pickedTheme ? 'is-done' : ''}>Pick a theme</li>
+                </ol>
                 <span className="welcome-hint-keys">
                   <kbd>{welcomeHintKeys.palette}</kbd> palette ·{' '}
                   <kbd>{welcomeHintKeys.newTerminal}</kbd> new terminal ·{' '}
@@ -1071,8 +1097,14 @@ export default function App() {
           onShortcuts={() => setShowShortcuts(true)}
           onGlobalSearch={() => setGlobalSearchOpen(true)}
           onAgents={() => setShowAgents(true)}
+          onPreview={(kind) => setPreviewOpen(kind)}
         />
       )}
+      <PreviewOpenModal
+        open={!!previewOpen}
+        kind={previewOpen ?? 'localhost'}
+        onClose={() => setPreviewOpen(null)}
+      />
       {showShortcuts && <ShortcutsModal onClose={() => setShowShortcuts(false)} />}
       <AgentsOverviewModal open={showAgents} onClose={() => setShowAgents(false)} />
       <ConfirmDialog

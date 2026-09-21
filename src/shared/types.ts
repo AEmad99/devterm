@@ -99,14 +99,25 @@ export interface SSHHop {
   /** Path to a private key file on the local machine. */
   privateKeyPath?: string
   passphrase?: string
+  /**
+   * Use the system OpenSSH agent (Windows named pipe, or SSH_AUTH_SOCK).
+   * Defaults to on when no password or private key is set.
+   */
+  useAgent?: boolean
 }
 
 export interface SSHProfile extends SSHHop {
   /** Stable id; if omitted on connect, one is generated. */
   id?: string
   name?: string
-  /** Optional single bastion/ProxyJump hop. */
-  jump?: SSHHop
+  /**
+   * Optional ProxyJump hop(s). A single hop is stored as an object so older
+   * connections.json files keep loading; two hops (host → j1 → j2 → target)
+   * are stored as an array. Total hops including the target is capped at 3.
+   */
+  jump?: SSHHop | SSHHop[]
+  /** Local-only labels used to filter Connections and rank the palette. */
+  tags?: string[]
 }
 
 /**
@@ -855,6 +866,20 @@ export const IPC = {
 
   // native dialogs
   dialogChooseImage: 'dialog:chooseImage',
+  dialogChooseDirectory: 'dialog:chooseDirectory',
+
+  // preview panes (local static serve + annotation store)
+  previewServeFolder: 'preview:serve-folder',
+  previewStopServe: 'preview:stop-serve',
+  previewAnnotationsLoad: 'preview:annotations:load',
+  previewAnnotationsSave: 'preview:annotations:save',
+  previewCapture: 'preview:capture',
+  previewOpenRequest: 'preview:open-request',
+  previewOpenAck: 'preview:open-ack',
+
+  // optional idle/approval notify (webhook / telegram)
+  notifyIdle: 'notify:idle',
+  notifySecrets: 'notify:secrets',
 
   // system clipboard
   clipboardWrite: 'clipboard:write',
@@ -975,6 +1000,7 @@ export const IPC = {
   transfersEnqueueDownload: 'transfers:enqueue-download',
   transfersCancel: 'transfers:cancel',
   transfersRetry: 'transfers:retry',
+  transfersResume: 'transfers:resume',
   transfersClearFinished: 'transfers:clear-finished',
   transfersEvent: 'transfers:event', // suffixed :<id>
   transfersStatus: 'transfers:status',
@@ -1191,6 +1217,23 @@ export interface DevTermApi {
   dialog: {
     /** Open an image picker; resolves to a `data:` URL of the chosen file, or null if canceled. */
     chooseImage(): Promise<string | null>
+    /** Open a folder picker; resolves to an absolute path, or null if canceled. */
+    chooseDirectory(): Promise<string | null>
+  }
+  /** Local preview pane: static folder serve, annotations, screenshot. */
+  preview: {
+    serveFolder(folderPath: string): Promise<PreviewServeResult>
+    stopServe(serveId: string): Promise<void>
+    loadAnnotations(sessionId: string): Promise<PreviewAnnotation[]>
+    saveAnnotations(sessionId: string, annotations: PreviewAnnotation[]): Promise<void>
+    capture(webContentsId: number): Promise<string>
+    onOpenRequest(cb: (req: PreviewOpenRequest) => void): () => void
+    ackOpen(ack: PreviewOpenAck): void
+  }
+  /** Optional idle/approval webhook. Secrets never travel in settings export. */
+  notify: {
+    idle(event: IdleNotifyEvent): Promise<void>
+    setSecrets(secrets: IdleNotifySecrets): Promise<void>
   }
   /** System clipboard (the sandboxed renderer can't reach Electron's clipboard directly). */
   clipboard: {
@@ -1202,7 +1245,7 @@ export interface DevTermApi {
      * paste so a coding agent in the shell can attach a pasted image by path
      * (xterm can't forward binary image data through the PTY).
      */
-    saveImage(): Promise<string | null>
+    saveImage(destDir?: string): Promise<string | null>
   }
   /** OS shell integration. */
   shell: {
@@ -1599,11 +1642,10 @@ export interface DevTermApi {
   // Cluster D: persistent transfer queue
   // -------------------------------------------------------------------------
   /**
-   * Persistent transfer queue. Items survive restarts; in-flight items are
-   * marked canceled with reason "interrupted by restart" on next launch
-   * (we never try to resume bytes mid-flight). `progress` is a per-item live
-   * stream; `status` is the full list (subscribed via `onStatus`, the same
-   * shape every other namespace uses).
+   * Persistent transfer queue. Incomplete items survive restarts as paused
+   * rows (partial files keep a `.partial` suffix) and can be resumed from
+   * the persisted offset. `progress` is a per-item live stream; `status` is
+   * the full list (subscribed via `onStatus`).
    */
   transfers: {
     list(): Promise<TransferListResult>
@@ -1615,20 +1657,28 @@ export interface DevTermApi {
       sessionId: string
       localPath: string
       remotePath: string
+      connectionId?: string
     }): Promise<TransferItemV2>
     enqueueDownload(opts: {
       sessionId: string
       localPath: string
       remotePath: string
+      connectionId?: string
     }): Promise<TransferItemV2>
     /** Mark a queued or running transfer as canceled. */
     cancel(id: string): Promise<void>
     /**
      * Re-enqueue a previously failed/canceled item. The path pair is
      * preserved; the item gets a new id and is pushed to the back of the
-     * queue. Items that were interrupted by a restart are retryable too.
+     * queue. Starts from byte 0 (does not resume a partial).
      */
     retry(id: string): Promise<TransferItemV2 | null>
+    /**
+     * Continue a paused incomplete transfer from its persisted offset.
+     * Fails without overwriting if the source mtime/size or partial size
+     * no longer match.
+     */
+    resume(id: string): Promise<TransferItemV2 | null>
     /** Drop all items that are done, canceled, or errored out of the list. */
     clearFinished(): Promise<TransferListResult>
     /**
@@ -1758,6 +1808,8 @@ export interface SettingsSnapshot {
   stt?: STTSettings
   /** Optional persistent global-search tail (off by default). */
   searchPersist?: boolean
+  /** In-memory global-search ring size per session (default 2000, cap 10000). */
+  searchIndexLines?: number
   density?: 'comfortable' | 'compact'
   pinned?: { connections: string[]; snippets: string[]; workspaces: string[] }
   lastConnectedAt?: Record<string, number>
@@ -1779,6 +1831,8 @@ export interface SessionRestoreSshHop {
   privateKeyPath?: string
   /** Whether a key passphrase was present without storing the passphrase itself. */
   hasPassphrase?: boolean
+  /** Explicit system-agent flag; omitted means default from authMethod. */
+  useAgent?: boolean
 }
 
 /**
@@ -1788,7 +1842,7 @@ export interface SessionRestoreSshHop {
  * the main-process sanitizer strips it before writing.
  */
 export interface SessionRestoreSshDraft extends SessionRestoreSshHop {
-  jump?: SessionRestoreSshHop
+  jump?: SessionRestoreSshHop | SessionRestoreSshHop[]
   /** Opaque id for the matching encrypted secret entry, when one exists. */
   secretId?: string
   /** Runtime-only credentials; never persisted to session-restore.json. */
@@ -1797,7 +1851,71 @@ export interface SessionRestoreSshDraft extends SessionRestoreSshHop {
     passphrase?: string
     jumpPassword?: string
     jumpPassphrase?: string
+    jumpSecrets?: Array<{ password?: string; passphrase?: string }>
   }
+}
+
+export type PreviewKind = 'localhost' | 'forward' | 'folder'
+
+export type PreviewAnnotationKind = 'pin' | 'rect' | 'text'
+
+/** Overlay pin/rectangle/comment stored at userData/annotations/<sessionId>.json. */
+export interface PreviewAnnotation {
+  id: string
+  kind: PreviewAnnotationKind
+  /** Normalized 0–1 coordinates relative to the preview viewport. */
+  x: number
+  y: number
+  w: number
+  h: number
+  body: string
+  createdAt: number
+  screenshotRef?: string
+}
+
+export interface PreviewMeta {
+  kind: PreviewKind
+  sourceSessionId?: string
+  port?: number
+  folderPath?: string
+  serveId?: string
+}
+
+export interface PreviewServeResult {
+  serveId: string
+  url: string
+  port: number
+}
+
+export interface PreviewOpenRequest {
+  requestId: string
+  ownerAgentSessionId: string
+  url?: string
+  folderPath?: string
+  title?: string
+  groupId?: string
+}
+
+export interface PreviewOpenAck {
+  requestId: string
+  sessionId?: string
+  url?: string
+  error?: string
+}
+
+export type IdleNotifyReason = 'idle' | 'approval'
+
+export interface IdleNotifyEvent {
+  sessionId: string
+  reason: IdleNotifyReason
+  title: string
+  body?: string
+}
+
+export interface IdleNotifySecrets {
+  webhookUrl?: string
+  telegramBotToken?: string
+  telegramChatId?: string
 }
 
 /** A browser pane tab that can be recreated after the renderer restarts. */
@@ -1959,11 +2077,22 @@ export interface TransferItemV2 {
   id: string
   direction: 'upload' | 'download'
   sessionId: string
+  /** Saved connection id when the session was opened from one. */
+  connectionId?: string
   localPath: string
   remotePath: string
+  /** Working path with a `.partial` suffix until the transfer succeeds. */
+  partialPath?: string
   total: number
+  /** Bytes written so far (the resume offset / bytesDone). */
   transferred: number
+  /** Source file size captured when the transfer started. */
+  sourceSize?: number
+  /** Source mtime in whole seconds, used to detect changes on resume. */
+  sourceMtimeSec?: number
   done: boolean
+  /** Incomplete after quit/crash; waiting for the operator to Resume. */
+  paused?: boolean
   error?: string
   canceled?: boolean
   enqueuedAt: number

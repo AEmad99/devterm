@@ -66,7 +66,7 @@ export default function TransfersPanel() {
       {items.length === 0 ? (
         <div className="transfers-empty">
           No transfers yet. Drag a file from one file pane to another, or use the per-row Upload /
-          Download buttons.
+          Download buttons. Incomplete files stay as *.partial until they finish or you resume.
         </div>
       ) : (
         <ul className="transfers-list">
@@ -77,6 +77,7 @@ export default function TransfersPanel() {
               live={progress[it.id]}
               onCancel={() => void window.devterm.transfers.cancel(it.id)}
               onRetry={() => void window.devterm.transfers.retry(it.id)}
+              onResume={() => void window.devterm.transfers.resume(it.id)}
             />
           ))}
         </ul>
@@ -91,6 +92,7 @@ function pct(transferred: number, total: number): number {
 }
 
 function statusOf(it: TransferItemV2): string {
+  if (it.paused && !it.done) return 'paused'
   if (it.error === 'interrupted by restart') return 'interrupted'
   if (it.error) return 'error'
   if (it.canceled) return 'canceled'
@@ -102,12 +104,14 @@ function TransferRow({
   item,
   live,
   onCancel,
-  onRetry
+  onRetry,
+  onResume
 }: {
   item: TransferItemV2
   live?: { transferred: number; total: number }
   onCancel: () => void
   onRetry: () => void
+  onResume: () => void
 }) {
   // The live overlay wins for in-flight items (it can lead the persisted
   // snapshot by a tick when the throttle is at the 250ms boundary).
@@ -156,7 +160,7 @@ function TransferRow({
       </span>
       <div className="transfers-bar">
         <div
-          className={`transfers-fill ${status === 'error' ? 'err' : status === 'canceled' || status === 'interrupted' ? 'cancel' : status === 'done' ? 'done' : ''}`}
+          className={`transfers-fill ${status === 'error' ? 'err' : status === 'canceled' || status === 'interrupted' || status === 'paused' ? 'cancel' : status === 'done' ? 'done' : ''}`}
           style={{ width: `${percent}%` }}
         />
       </div>
@@ -171,14 +175,28 @@ function TransferRow({
           {formatRate(stats.rateBps)} · {formatEta(stats.etaSec)}
         </span>
       )}
-      {status === 'error' && item.error && (
+      {(status === 'error' || status === 'paused') && item.error && (
         <span className="transfers-err" title={item.error}>
           {item.error}
+        </span>
+      )}
+      {status === 'paused' && !item.error && (
+        <span className="transfers-err" title="Incomplete file kept as *.partial">
+          resume from offset
         </span>
       )}
       {status === 'running' ? (
         <Button size="xs" className="transfers-row-action" onClick={onCancel}>
           Cancel
+        </Button>
+      ) : status === 'paused' ? (
+        <Button
+          size="xs"
+          variant="primary"
+          className="transfers-row-action transfers-row-retry"
+          onClick={onResume}
+        >
+          Resume
         </Button>
       ) : status === 'error' || status === 'canceled' || status === 'interrupted' ? (
         <Button

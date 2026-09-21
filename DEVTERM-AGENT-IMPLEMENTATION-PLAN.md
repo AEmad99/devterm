@@ -809,6 +809,15 @@ IPC/MCP additions: follow `.claude/skills/add-ipc/SKILL.md` or `.claude/skills/a
 _Agents: append dated bullets. Do not rewrite history._
 
 - 2026-09-19 — Plan written against v1.3.30. No implementation started in this file’s lifetime.
+- 2026-09-21 — Prompt 7 (v1.4-F): incomplete SFTP transfers rehydrate as paused, keep a `.partial` file, and resume from the persisted offset after source size/mtime and partial-size checks. Concurrency stays 2. Cancel/double-finish guards retained.
+- 2026-09-21 — Prompt 8 (v1.4-G): per-connection “Use system SSH agent” (default on when no key/password). Windows uses `\\.\pipe\openssh-ssh-agent`. Agent-only failures surface “system agent has no usable key”. Password and key-file auth unchanged when chosen.
+- 2026-09-21 — Prompt 9 (v1.4-H): “Ask agent about this” from xterm selection, command palette, and the file editor. `ensureAgent` then injects a quoted header + verbatim selection; no auto-fix. Floating agent PTYs receive the inject through the existing main-side write/broadcast path.
+- 2026-09-21 — Prompt 10 (v1.4-I): Settings → System performance presets (Balanced / Low memory / Full fidelity) set hibernate, scrollback, search index size, and remote connect mode. `performance:snapshot` remains on-demand while that page is open.
+- 2026-09-21 — Prompt 11 (v1.4 wrap-up): v1.4 items A–I are in tree (hibernate, poll pause, lazy restore connect, scrollback/ad-hoc/browser-tab restore, tray stay-resident, transfer resume, system ssh-agent, select→agent, performance presets). Exit criterion “memory stays roughly flat after hibernate” is a Settings snapshot guidance check, not a CI gate. Package version left at 1.3.30; no tag.
+- 2026-09-21 — Prompt 12 (v1.5-A): optional OSC 133 command input editor (shell highlighter, Enter sends keystrokes) and A-then-B gutters with Copy / Ask agent / Comment. Missing hooks keep today’s UI. No C/D exit coloring and no Warp block canvas. `detached-session.test.ts` still owns the tmux DCS / stray `]` contract.
+- 2026-09-21 — Prompts 13–20 (v1.5-B through v1.6-E): preview pane + annotations + MCP preview tools; cockpit focus/delegate; read-only `git_status`/`git_diff`/`search_terminals`; ProxyJump chains capped at 3 hops; first-run checklist + connection tags; image paste to agent artifacts; personal markdown skills folder; optional idle/approval webhook + Telegram. Package version left at 1.3.30; no tag. Prompt 21 (Electron upgrade spike) is a separate `spike/electron-upgrade` branch with `SPIKE.md`.
+- 2026-09-21 — Prompt 18 (v1.5 wrap-up): v1.5-A–E are in tree. Issue #1 close comment: highlighting lives on the OSC 133 input editor and CodeMirror files; the raw PTY stream stays the shell’s. Issue #2 close comment: preview + annotate MVP shipped (localhost / forwarded port / local folder, overlay comments, send to agent, MCP tools); leftover polish is port heuristics and richer drawing tools.
+- 2026-09-21 — Cut **v1.4.0** (installer + GitHub release). Ships v1.4 A–I, v1.5 A–E, and v1.6 A–E in one build. Electron-upgrade spike stays on `spike/electron-upgrade`. Package version bumped from 1.3.30.
 
 ---
 

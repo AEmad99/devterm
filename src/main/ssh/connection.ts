@@ -1,8 +1,9 @@
 import { dialog } from 'electron'
-import { readFileSync } from 'fs'
 import { Socket } from 'net'
 import { Client, type ConnectConfig, type KexAlgorithm } from 'ssh2'
-import type { SSHHop, SSHStatus } from '@shared/types'
+import type { SSHHop, SSHProfile, SSHStatus } from '@shared/types'
+import { listJumpHops } from '@shared/ssh-jump'
+import { authConfig, mapAuthError, missingAgentPathError } from './auth'
 import { trustHostKey, verifyHostKey } from './knownHosts'
 
 /** How long a bare TCP connect may take before we give up (OS SYN timeouts run ~2min). */
@@ -30,16 +31,6 @@ const LEGACY_WINDOWS_KEX: KexAlgorithm[] = [
 export interface EstablishOptions {
   /** Use the low-latency KEX order for auxiliary clients on a known Windows host. */
   preferLegacyWindowsKex?: boolean
-}
-
-function authConfig(hop: SSHHop): Partial<ConnectConfig> {
-  const cfg: Partial<ConnectConfig> = {}
-  if (hop.privateKeyPath) {
-    cfg.privateKey = readFileSync(hop.privateKeyPath)
-    if (hop.passphrase) cfg.passphrase = hop.passphrase
-  }
-  if (hop.password) cfg.password = hop.password
-  return cfg
 }
 
 /**
@@ -105,6 +96,11 @@ async function connectHop(
   onStatus: (s: SSHStatus) => void,
   options: EstablishOptions = {}
 ): Promise<Client> {
+  const missingAgent = missingAgentPathError(hop)
+  if (missingAgent) {
+    onStatus({ type: 'error', message: missingAgent.message })
+    throw missingAgent
+  }
   // Direct hops dial their own TCP_NODELAY socket; tunneled hops reuse the
   // bastion's forwarded stream (whose underlying socket already has NoDelay set).
   const transport = sock ?? (await tcpNoDelay(hop.host, hop.port))
@@ -115,8 +111,9 @@ async function connectHop(
     client
       .on('ready', () => resolve(client))
       .on('error', (err) => {
-        onStatus({ type: 'error', message: err.message })
-        reject(err)
+        const mapped = mapAuthError(err, hop)
+        onStatus({ type: 'error', message: mapped.message })
+        reject(mapped)
       })
 
     client.connect({
@@ -180,36 +177,56 @@ async function connectHop(
 
 export interface EstablishedClient {
   client: Client
-  /** Bastion client kept alive for the duration, if ProxyJump was used. */
+  /** First bastion client, kept for older cleanup sites. */
   jump?: Client
+  /** Every ProxyJump client that must stay alive for the tunnel. */
+  jumps?: Client[]
 }
 
-/**
- * Establish a client to the target, chaining through a single bastion if the
- * profile specifies `jump`. Reuses one TCP tunnel — no second SSH process.
- */
-export async function establish(
-  profile: { jump?: SSHHop } & SSHHop,
-  onStatus: (s: SSHStatus) => void,
-  options: EstablishOptions = {}
-): Promise<EstablishedClient> {
-  if (!profile.jump) {
-    const client = await connectHop(profile, undefined, onStatus, options)
-    return { client }
-  }
-
-  const jump = await connectHop(profile.jump, undefined, onStatus)
-  const stream = await new Promise<NodeJS.ReadableStream>((resolve, reject) => {
-    jump.forwardOut('127.0.0.1', 0, profile.host, profile.port, (err, ch) => {
+function forwardOut(client: Client, host: string, port: number): Promise<NodeJS.ReadableStream> {
+  return new Promise((resolve, reject) => {
+    client.forwardOut('127.0.0.1', 0, host, port, (err, ch) => {
       if (err) reject(err)
       else resolve(ch as unknown as NodeJS.ReadableStream)
     })
   })
+}
+
+/**
+ * Establish a client to the target, chaining through 0–2 ProxyJump hops
+ * (total hops including the target ≤ 3). Direct hops keep TCP_NODELAY.
+ */
+export async function establish(
+  profile: SSHHop & { jump?: SSHHop | SSHHop[] },
+  onStatus: (s: SSHStatus) => void,
+  options: EstablishOptions = {}
+): Promise<EstablishedClient> {
+  const hops = listJumpHops(profile.jump as SSHProfile['jump'])
+  if (!hops.length) {
+    const client = await connectHop(profile, undefined, onStatus, options)
+    return { client }
+  }
+
+  const jumps: Client[] = []
+  let stream: NodeJS.ReadableStream | undefined
   try {
+    for (let i = 0; i < hops.length; i++) {
+      const hop = hops[i]!
+      const next = hops[i + 1] ?? profile
+      const client = await connectHop(hop, stream, onStatus)
+      jumps.push(client)
+      stream = await forwardOut(client, next.host, next.port)
+    }
     const client = await connectHop(profile, stream, onStatus, options)
-    return { client, jump }
+    return { client, jump: jumps[0], jumps }
   } catch (err) {
-    jump.end()
+    for (const j of jumps) {
+      try {
+        j.end()
+      } catch {
+        /* ignore */
+      }
+    }
     throw err
   }
 }

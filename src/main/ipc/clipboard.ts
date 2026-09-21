@@ -1,4 +1,4 @@
-import { clipboard, ipcMain } from 'electron'
+import { app, clipboard, ipcMain } from 'electron'
 import { mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from 'fs'
 import { randomBytes } from 'crypto'
 import { tmpdir } from 'os'
@@ -46,15 +46,21 @@ export function registerClipboardIpc(): void {
   // pastes the returned path into the terminal so a coding agent (claude /
   // opencode / pi) running there can attach it — xterm cannot forward binary
   // image data through the PTY, and these CLIs accept images referenced by path.
-  ipcMain.handle(IPC.clipboardSaveImage, (): string | null => {
+  ipcMain.handle(IPC.clipboardSaveImage, (_e, destDir?: string): string | null => {
     const img = clipboard.readImage()
     if (img.isEmpty()) return null
     const png = img.toPNG()
     if (!png || png.length === 0) return null
     try {
-      mkdirSync(CLIP_DIR, { recursive: true })
-      pruneOldClips()
-      const file = join(CLIP_DIR, `paste-${Date.now()}-${randomBytes(3).toString('hex')}.png`)
+      const dir =
+        destDir === 'agent-artifacts'
+          ? join(app.getPath('userData'), 'agent-artifacts')
+          : typeof destDir === 'string' && destDir.trim()
+            ? destDir.trim()
+            : CLIP_DIR
+      mkdirSync(dir, { recursive: true })
+      if (dir === CLIP_DIR) pruneOldClips()
+      const file = join(dir, `paste-${Date.now()}-${randomBytes(3).toString('hex')}.png`)
       writeFileSync(file, png)
       return file
     } catch {

@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert'
-import { parseProxyJump, parseSshConfig } from './ssh-config-parse'
+import { parseProxyJump, parseProxyJumpList, parseSshConfig } from './ssh-config-parse'
 
 describe('parseProxyJump', () => {
   it('parses user@host:port', () => {
@@ -22,6 +22,13 @@ describe('parseProxyJump', () => {
   it('uses the first hop of a comma list', () => {
     const j = parseProxyJump('a@h1:22,b@h2:22')
     assert.strictEqual(j?.host, 'h1')
+  })
+
+  it('parses a two-hop ProxyJump list', () => {
+    const hops = parseProxyJumpList('a@h1:22,b@h2:2222')
+    assert.equal(hops.length, 2)
+    assert.equal(hops[1]?.host, 'h2')
+    assert.equal(hops[1]?.port, 2222)
   })
 })
 
@@ -80,8 +87,21 @@ Host app
   ProxyJump jump@bastion:22
 `
     const hosts = parseSshConfig(text)
-    assert.strictEqual(hosts[0].jump?.host, 'bastion')
-    assert.strictEqual(hosts[0].jump?.username, 'jump')
+    assert.ok(hosts[0].jump && !Array.isArray(hosts[0].jump))
+    assert.strictEqual(hosts[0].jump.host, 'bastion')
+    assert.strictEqual(hosts[0].jump.username, 'jump')
+  })
+
+  it('parses a ProxyJump chain', () => {
+    const text = `
+Host app
+  HostName 10.1.2.3
+  ProxyJump jump@bastion:22,inner@mid:22
+`
+    const hosts = parseSshConfig(text)
+    assert.ok(Array.isArray(hosts[0].jump))
+    assert.equal(hosts[0].jump.length, 2)
+    assert.equal(hosts[0].jump[1]?.host, 'mid')
   })
 
   it('uses Host alias as HostName when HostName is omitted', () => {

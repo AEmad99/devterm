@@ -42,4 +42,15 @@ export function registerDialogIpc(getWindow: () => BrowserWindow | null): void {
     const mime = MIME[extname(file).toLowerCase()] || 'image/png'
     return `data:${mime};base64,${data.toString('base64')}`
   })
+
+  ipcMain.handle(IPC.dialogChooseDirectory, async (): Promise<string | null> => {
+    const win = getWindow()
+    const opts = {
+      title: 'Choose a folder to preview',
+      properties: ['openDirectory' as const]
+    }
+    const result = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
+    if (result.canceled || result.filePaths.length === 0) return null
+    return result.filePaths[0]
+  })
 }

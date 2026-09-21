@@ -25,11 +25,15 @@ import {
 import SearchBar from './SearchBar'
 import Autosuggest from './Autosuggest'
 import TmuxPicker from './TmuxPicker'
+import CommandInput from './CommandInput'
 import {
   attachAutosuggest,
   type AutosuggestController,
   type SuggestView
 } from '../../lib/autosuggest'
+import { attachCommandBlocks, type CommandBlocksController } from '../../lib/command-blocks'
+import { askAgentAboutSelection } from '../../lib/agent-selection'
+import { sendTerminalInput } from '../../lib/terms'
 
 // A TUI that dies without cleaning up (e.g. opencode killing its whole console
 // on Ctrl+C — sst/opencode#6189) leaves xterm stuck in alternate-screen, mouse
@@ -121,6 +125,7 @@ function applyHostBg(host: HTMLElement, bg: TerminalBg, theme: Theme): void {
  */
 function TerminalView({ session, hibernated = false }: { session: Session; hibernated?: boolean }) {
   const isWindowsRemote = session.kind === 'remote' && session.context?.os === 'windows'
+  const isActive = useSessions((s) => s.activeId === session.id)
   const isHibernated = hibernated && session.kind !== 'browser'
   const hibernatedRef = useRef(isHibernated)
   const wasHibernated = hibernatedRef.current
@@ -169,6 +174,10 @@ function TerminalView({ session, hibernated = false }: { session: Session; hiber
   const [findFocusToken, setFindFocusToken] = useState(0)
   const [suggestView, setSuggestView] = useState<SuggestView | null>(null)
   const suggestRef = useRef<AutosuggestController | null>(null)
+  const blocksRef = useRef<CommandBlocksController | null>(null)
+  const [hooksHealthy, setHooksHealthy] = useState(false)
+  const [atPrompt, setAtPrompt] = useState(false)
+  const [promptFocusToken, setPromptFocusToken] = useState(0)
   const findOpenRef = useRef(false)
   findOpenRef.current = findOpen
   // Cached bell setting, refreshed by the prefs effect below. Read on every PTY
@@ -321,7 +330,7 @@ function TerminalView({ session, hibernated = false }: { session: Session; hiber
     const seedSearch = () => {
       try {
         const buffer = term.buffer.active
-        const maxLines = 2000
+        const maxLines = useSettings.getState().searchIndexLines
         const end = buffer.length
         const start = Math.max(0, end - maxLines)
         const lines: string[] = []
@@ -347,7 +356,12 @@ function TerminalView({ session, hibernated = false }: { session: Session; hiber
     }, 0)
 
     const disposeRenderer = attachRenderer(term)
-    const disposeClipboard = attachClipboard(term, host)
+    const disposeClipboard = attachClipboard(term, host, {
+      sessionId: session.id,
+      onAskAgent: (selection) => {
+        void askAgentAboutSelection({ sessionId: session.id, selection, source: 'terminal' })
+      }
+    })
 
     // History autocomplete: track the OSC 133 prompt anchor and surface a
     // completion popup. `sendInput` is wired once the pty/ssh backend is known.
@@ -374,6 +388,18 @@ function TerminalView({ session, hibernated = false }: { session: Session; hiber
       acceptTab: !isWindowsRemote
     })
     suggestRef.current = suggest
+    const blocks = attachCommandBlocks(term, host, {
+      sessionId: session.id,
+      onHooksChange: (healthy, prompt) => {
+        setHooksHealthy(healthy)
+        setAtPrompt(prompt)
+        if (healthy && prompt) setPromptFocusToken((n) => n + 1)
+      },
+      onAskAgent: (selection) => {
+        void askAgentAboutSelection({ sessionId: session.id, selection, source: 'terminal' })
+      }
+    })
+    blocksRef.current = blocks
 
     // Single custom key handler (xterm allows only one). Handles copy/paste, the
     // find bar, and blocks app hotkeys (Ctrl/Cmd+K …) from reaching the shell as
@@ -852,6 +878,10 @@ function TerminalView({ session, hibernated = false }: { session: Session; hiber
       clearTimeout(seedTimer)
       suggest.dispose()
       suggestRef.current = null
+      blocks.dispose()
+      blocksRef.current = null
+      setHooksHealthy(false)
+      setAtPrompt(false)
       cleanups.forEach((fn) => fn())
       unregisterTerminal(session.id)
       resizeRef.current = null
@@ -993,6 +1023,19 @@ function TerminalView({ session, hibernated = false }: { session: Session; hiber
         onAccept={(i) => suggestRef.current?.accept(i)}
         onHover={(i) => suggestRef.current?.hover(i)}
         acceptTab={!isWindowsRemote}
+      />
+      <CommandInput
+        visible={hooksHealthy && atPrompt && !isHibernated && !tmuxPicker}
+        dialect={isWindowsRemote ? 'powershell' : 'shell'}
+        focusToken={promptFocusToken}
+        autoFocus={isActive}
+        onSubmit={(cmd) => {
+          setAtPrompt(false)
+          if (cmd.trim()) useSessions.getState().setCurrentCommand(session.id, cmd.trim())
+          sendTerminalInput(session.id, `${cmd}\r`)
+        }}
+        onPassToShell={(data) => sendTerminalInput(session.id, data)}
+        onEscape={() => termRef.current?.focus()}
       />
       {findOpen && (
         <SearchBar

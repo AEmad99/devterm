@@ -17,12 +17,32 @@ import { useSettings } from '../store/settings'
 import { toLiveSnapshot } from './workspace'
 import { setAgentUiMode } from './agent-ui'
 import { waitForRemoteConnectStagger } from './remote-connect'
+import { encodeJump, listJumpHops } from '@shared/ssh-jump'
+import type { SessionRestoreSshHop } from '@shared/types'
+
+function restoreJumpList(
+  jump: SessionRestoreSshHop | SessionRestoreSshHop[] | undefined
+): SessionRestoreSshHop[] {
+  if (!jump) return []
+  return Array.isArray(jump) ? jump : [jump]
+}
 
 const newItemId = () => `sr-${crypto.randomUUID()}`
+
+function hopUsesAgent(profile: {
+  useAgent?: boolean
+  password?: string
+  privateKeyPath?: string
+}): boolean {
+  if (profile.useAgent === true) return true
+  if (profile.useAgent === false) return false
+  return !profile.password && !profile.privateKeyPath
+}
 
 function authMethodFor(profile: SSHProfile): SessionRestoreAuthMethod {
   if (profile.password) return 'password'
   if (profile.privateKeyPath) return 'key'
+  if (hopUsesAgent(profile)) return 'agent'
   return 'none'
 }
 
@@ -33,7 +53,8 @@ function sshDraftFor(profile: SSHProfile, secretId?: string): SessionRestoreSshD
     username: profile.username,
     authMethod: authMethodFor(profile),
     privateKeyPath: profile.privateKeyPath,
-    hasPassphrase: !!profile.passphrase
+    hasPassphrase: !!profile.passphrase,
+    useAgent: hopUsesAgent(profile)
   }
   return {
     ...hop,
@@ -41,19 +62,27 @@ function sshDraftFor(profile: SSHProfile, secretId?: string): SessionRestoreSshD
     restoreSecret: {
       password: profile.password,
       passphrase: profile.passphrase,
-      jumpPassword: profile.jump?.password,
-      jumpPassphrase: profile.jump?.passphrase
+      jumpPassword: listJumpHops(profile.jump)[0]?.password,
+      jumpPassphrase: listJumpHops(profile.jump)[0]?.passphrase,
+      jumpSecrets: listJumpHops(profile.jump).map((h) => ({
+        password: h.password,
+        passphrase: h.passphrase
+      }))
     },
-    jump: profile.jump
-      ? {
-          host: profile.jump.host,
-          port: profile.jump.port,
-          username: profile.jump.username,
-          authMethod: authMethodFor(profile.jump),
-          privateKeyPath: profile.jump.privateKeyPath,
-          hasPassphrase: !!profile.jump.passphrase
-        }
-      : undefined
+    jump: (() => {
+      const hops = listJumpHops(profile.jump)
+      if (!hops.length) return undefined
+      const mapped: SessionRestoreSshHop[] = hops.map((h) => ({
+        host: h.host,
+        port: h.port,
+        username: h.username,
+        authMethod: authMethodFor(h),
+        privateKeyPath: h.privateKeyPath,
+        hasPassphrase: !!h.passphrase,
+        useAgent: hopUsesAgent(h)
+      }))
+      return mapped.length === 1 ? mapped[0] : mapped
+    })()
   }
 }
 
@@ -69,26 +98,38 @@ function profileFromSshDraft(draft: SessionRestoreSshDraft): {
     password: secret?.password,
     privateKeyPath: draft.privateKeyPath,
     passphrase: secret?.passphrase,
-    jump: draft.jump
-      ? {
-          host: draft.jump.host,
-          port: draft.jump.port,
-          username: draft.jump.username,
-          password: secret?.jumpPassword,
-          privateKeyPath: draft.jump.privateKeyPath,
-          passphrase: secret?.jumpPassphrase
+    useAgent: draft.useAgent ?? draft.authMethod === 'agent',
+    jump: encodeJump(
+      restoreJumpList(draft.jump).map((h, i) => {
+        const hopSecret = secret?.jumpSecrets?.[i]
+        const password = hopSecret?.password ?? (i === 0 ? secret?.jumpPassword : undefined)
+        const passphrase = hopSecret?.passphrase ?? (i === 0 ? secret?.jumpPassphrase : undefined)
+        return {
+          host: h.host,
+          port: h.port,
+          username: h.username,
+          password,
+          privateKeyPath: h.privateKeyPath,
+          passphrase,
+          useAgent: h.useAgent ?? h.authMethod === 'agent'
         }
-      : undefined
+      })
+    )
   }
   const primaryNeedsAuth =
     (draft.authMethod === 'password' && !secret?.password) ||
     (draft.authMethod === 'key' && !!draft.hasPassphrase && !secret?.passphrase) ||
-    (draft.authMethod === 'none' && !draft.privateKeyPath)
-  const jumpNeedsAuth =
-    !!draft.jump &&
-    ((draft.jump.authMethod === 'password' && !secret?.jumpPassword) ||
-      (draft.jump.authMethod === 'key' && !!draft.jump.hasPassphrase && !secret?.jumpPassphrase) ||
-      (draft.jump.authMethod === 'none' && !draft.jump.privateKeyPath))
+    (draft.authMethod === 'none' && !draft.privateKeyPath && draft.useAgent !== true)
+  const jumpNeedsAuth = restoreJumpList(draft.jump).some((h, i) => {
+    const hopSecret = secret?.jumpSecrets?.[i]
+    const password = hopSecret?.password ?? (i === 0 ? secret?.jumpPassword : undefined)
+    const passphrase = hopSecret?.passphrase ?? (i === 0 ? secret?.jumpPassphrase : undefined)
+    return (
+      (h.authMethod === 'password' && !password) ||
+      (h.authMethod === 'key' && !!h.hasPassphrase && !passphrase) ||
+      (h.authMethod === 'none' && !h.privateKeyPath && h.useAgent !== true)
+    )
+  })
   return { profile, needsAuth: primaryNeedsAuth || jumpNeedsAuth }
 }
 
