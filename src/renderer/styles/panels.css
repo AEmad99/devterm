@@ -2227,6 +2227,9 @@
      the bottom — leaving the inner scrollers at scrollHeight == clientHeight
      (never scrollable) and every option below the fold unreachable. */
   grid-template-rows: minmax(0, 1fr);
+  /* `.modal` is a flex column with a 10px gap; in the grid shell that gap
+     opens a dead strip between the sidebar border and the content pane. */
+  gap: 0;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
@@ -2372,6 +2375,13 @@
   color: var(--fg);
 }
 
+/* The dialog shell carries `.modal`, whose `h3` rule (margin + 15px size) is
+   more specific than a bare class and would push the subtitle down. */
+.settings-modal-overhaul .settings-tab-title {
+  margin: 0;
+  font-size: 16.5px;
+}
+
 .settings-content-sub {
   margin: 0;
   font-size: 11.5px;
@@ -2438,13 +2448,37 @@
   padding-top: 10px;
 }
 
-.settings-row-grid {
+/* A setting row is a single line: label left, control right. `.modal label`
+   (specificity 0-1-1) is stronger than a lone class, so without the scoped
+   selector below it wins on `flex-direction`, `gap`, `font-size` and `color` —
+   stacking and horizontally centring every row in the dialog. */
+.settings-modal-overhaul .settings-row-grid {
   display: flex;
+  flex-direction: row;
   align-items: center;
   justify-content: space-between;
   gap: 14px;
   font-size: 12.5px;
   color: var(--fg);
+}
+
+.settings-modal-overhaul .settings-row-grid > .settings-label {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.settings-modal-overhaul .settings-row-grid > .settings-control {
+  flex: 0 0 auto;
+  justify-content: flex-end;
+}
+
+/* Fields match the 220px range width so controls line up down a card instead
+   of every text box falling back to the ~165px UA default. */
+.settings-modal-overhaul
+  .settings-row-grid
+  > .settings-control
+  input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='color']) {
+  width: 220px;
 }
 
 .settings-val-badge {
@@ -2738,9 +2772,13 @@
   color: var(--muted);
   padding: 6px 0;
 }
+/* Only indent hints that trail a control inline; card-level hints align with
+   the rest of the card body. */
 .settings-hint {
   font-size: 11.5px;
   color: var(--muted);
+}
+.settings-modal-overhaul .settings-control .settings-hint {
   margin-left: 10px;
 }
 .settings-version-badge {
@@ -3000,6 +3038,12 @@
 }
 .theme-swatch-preview {
   position: relative;
+  /* The preview must always fill its tile. As a flex child it normally
+     stretches, but any non-stretch alignment collapses it to the width of its
+     own text (~84px inside a ~245px swatch), leaving the tile mostly empty.
+     Pin the size instead of relying on the parent's alignment. */
+  display: block;
+  width: 100%;
   height: 64px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--sw-border, var(--border));
