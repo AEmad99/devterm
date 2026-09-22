@@ -3,7 +3,26 @@
 All notable changes to DevTerm are documented here. The most recent section is
 at the top. Dates are ISO `YYYY-MM-DD`.
 
-## Unreleased
+## 1.5.0 — 2026-09-22
+
+### Changed
+
+- The README and first-run hint now lead with DevTerm's remote-agent workflow: agents run locally and work over SSH without a server-side agent install or outbound internet requirement. The checklist lists only the steps that are still open.
+- The file explorer, connections, workspaces, and snippets open from a left rail beside the terminal and start closed. The shell stays on screen.
+- Lists in that rail keep each name on one line and show pin / edit / delete as icon buttons beside the primary action, so rows never shift or clip when you hover.
+- Completed commands show a full-height bar, and the newest command has a header with Copy and Ask agent. The bar and header pick up an exit status when the shell sends OSC 133 D.
+- The agent control on each pane shows the backend name. The status bar can open that agent, agent activity, and the transfer queue.
+- The focused split uses an accent outline.
+
+### Fixed
+
+- Settings rows render on one line again. A generic `.modal label` rule outranked the dialog's own row style, so every row stacked and centred its label above the control. The dialog also drops the modal's inherited gap, and text fields now share the slider width instead of the narrower default.
+- Theme swatches show a full-width preview. The mini-terminal preview had no width of its own and relied on flex stretch, so it collapsed to the width of its own text and left most of the tile empty.
+
+### Removed
+
+- The titlebar Activity / Transfers / Off switch. Those panels toggle from the status bar.
+- The unwired command-input component left behind when the bottom input strip was removed. The shell still owns the prompt.
 
 ## 1.4.2 — 2026-09-21
 

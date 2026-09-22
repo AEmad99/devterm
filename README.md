@@ -5,8 +5,8 @@
 </p>
 
 <p align="center">
-  <strong>The Windows terminal for local machines and remote SSH hosts, with AI coding agents that never land on the server.</strong><br>
-  Tiling panes, SFTP, git, preview/annotate, and a built-in multi-provider agent. Remote hosts need nothing installed and no outbound internet.
+  <strong>The Windows SSH workspace where coding agents run on your PC and work on remote hosts through SSH.</strong><br>
+  No agent runtime to install on the server. Tiling panes, SFTP, Git, file editing, and annotated previews share one workspace.
 </p>
 
 <p align="center">
@@ -15,9 +15,9 @@
   <img alt="Windows" src="https://img.shields.io/badge/platform-Windows-0a7cff">
 </p>
 
-DevTerm is a normal framed Windows app. You open it and you are in a terminal — local PowerShell, SSH, or both — with splits, groups, a file sidebar, an editor, an in-app browser, and an agent that can work on the connected host through the same SSH session.
+DevTerm is a normal framed Windows app. You open it and you are in a terminal — local PowerShell, SSH, or both — with splits, groups, an optional file sidebar, an editor, an in-app browser, and an agent that can work on the connected host through SSH. Connections, workspaces, and snippets open beside the shell.
 
-**Current release: [v1.4.2](https://github.com/AEmad99/devterm/releases/tag/v1.4.2)**
+**Current release: [v1.5.0](https://github.com/AEmad99/devterm/releases/tag/v1.5.0)**
 
 ![DevTerm terminal workspace](resources/screens/terminal.png)
 
@@ -25,7 +25,7 @@ DevTerm is a normal framed Windows app. You open it and you are in a terminal �
 
 ## Why it exists
 
-Most agent terminals either install a runtime on the server or send host work out through the model vendor. DevTerm keeps the agent on your machine and reaches the remote through an in-process MCP bridge on the **same** ssh2 connection as the shell and SFTP. The server stays a normal SSH host.
+DevTerm runs the selected coding-agent CLI on your PC. For remote sessions, its in-process MCP bridge sends host commands and file operations over the SSH connection DevTerm already manages. The server needs no DevTerm agent runtime, helper, or outbound internet connection. Provider credentials stay in the local agent runtime; model access still depends on the provider and your PC's network settings.
 
 ---
 
