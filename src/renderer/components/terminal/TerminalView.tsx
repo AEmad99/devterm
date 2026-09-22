@@ -30,7 +30,11 @@ import {
   type AutosuggestController,
   type SuggestView
 } from '../../lib/autosuggest'
-import { attachCommandBlocks, type CommandBlocksController } from '../../lib/command-blocks'
+import {
+  attachCommandBlocks,
+  type CommandBlock,
+  type CommandBlocksController
+} from '../../lib/command-blocks'
 import { askAgentAboutSelection } from '../../lib/agent-selection'
 
 // A TUI that dies without cleaning up (e.g. opencode killing its whole console
@@ -129,6 +133,7 @@ function TerminalView({ session, hibernated = false }: { session: Session; hiber
   const wasHibernated = hibernatedRef.current
   hibernatedRef.current = isHibernated
   const hostRef = useRef<HTMLDivElement>(null)
+  const [lastBlock, setLastBlock] = useState<CommandBlock | null>(null)
   const termRef = useRef<Terminal | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
   const searchRef = useRef<SearchAddon | null>(null)
@@ -388,6 +393,9 @@ function TerminalView({ session, hibernated = false }: { session: Session; hiber
       onHooksChange: () => undefined,
       onAskAgent: (selection) => {
         void askAgentAboutSelection({ sessionId: session.id, selection, source: 'terminal' })
+      },
+      onCompleted: (block) => {
+        if (block.command) setLastBlock(block)
       }
     })
     blocksRef.current = blocks
@@ -853,6 +861,7 @@ function TerminalView({ session, hibernated = false }: { session: Session; hiber
 
     return () => {
       disposed = true
+      setLastBlock(null)
       blockInputRef.current = false
       // If the picker itself was visible when the renderer was hibernated,
       // allow the restored surface to offer it again. A picker already
@@ -996,8 +1005,46 @@ function TerminalView({ session, hibernated = false }: { session: Session; hiber
     window.devterm.ssh.reconnect(session.id)
   }
 
+  const blockTone =
+    lastBlock?.exitCode == null ? '' : lastBlock.exitCode === 0 ? 'is-ok' : 'is-fail'
+
   return (
     <div className="terminal-wrap">
+      {lastBlock?.command && (
+        <div className={`cmd-block-header ${blockTone}`}>
+          <span className="cmd-block-header-mark" aria-hidden="true" />
+          <span className="cmd-block-header-cmd" title={lastBlock.command}>
+            {lastBlock.command}
+          </span>
+          {lastBlock.exitCode != null && (
+            <span className="cmd-block-header-exit">
+              {lastBlock.exitCode === 0 ? 'exit 0' : `exit ${lastBlock.exitCode}`}
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={() => {
+              void window.devterm.clipboard.writeText(lastBlock.command)
+              termRef.current?.focus()
+            }}
+          >
+            Copy
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              void askAgentAboutSelection({
+                sessionId: session.id,
+                selection: lastBlock.command,
+                source: 'terminal'
+              })
+              termRef.current?.focus()
+            }}
+          >
+            Ask agent
+          </button>
+        </div>
+      )}
       <div className="terminal-host" ref={hostRef} />
       <Autosuggest
         view={suggestView}

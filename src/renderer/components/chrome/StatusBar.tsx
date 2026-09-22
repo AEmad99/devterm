@@ -75,6 +75,54 @@ function transferAggregate(items: { transferred: number; total: number }[]): num
   return Math.min(100, Math.round((done / total) * 100))
 }
 
+function DockToggles() {
+  const transfersOpen = useSettings((s) => s.transfersPanelOpen)
+  const setTransfersOpen = useSettings((s) => s.setTransfersPanelOpen)
+  const activityCollapsed = useSettings((s) => s.agentActivityCollapsed)
+  const setActivityCollapsed = useSettings((s) => s.setAgentActivityCollapsed)
+  const pendingApprovals = useSessions(
+    (s) => s.sessions.filter((x) => x.agentPendingApproval).length
+  )
+  const runningTransfers = useTransfers(useShallow((s) => s.items.filter((it) => !it.done)))
+  const running = runningTransfers.length
+  const pct = transferAggregate(runningTransfers)
+
+  return (
+    <>
+      <button
+        type="button"
+        className="status-cell status-link status-toggle"
+        aria-pressed={!activityCollapsed}
+        title={
+          pendingApprovals
+            ? `${pendingApprovals} approval(s) waiting — click to ${activityCollapsed ? 'show' : 'hide'} activity`
+            : activityCollapsed
+              ? 'Show agent activity'
+              : 'Hide agent activity'
+        }
+        onClick={() => setActivityCollapsed(!activityCollapsed)}
+      >
+        Activity{pendingApprovals > 0 ? ` ${pendingApprovals}` : ''}
+      </button>
+      <button
+        type="button"
+        className="status-cell status-link status-toggle"
+        aria-pressed={transfersOpen}
+        title={
+          running
+            ? `${running} transfer(s) in flight — click to ${transfersOpen ? 'hide' : 'show'} the queue`
+            : transfersOpen
+              ? 'Hide the transfers panel'
+              : 'Show the transfers panel'
+        }
+        onClick={() => setTransfersOpen(!transfersOpen)}
+      >
+        Transfers{running > 0 ? ` ${running} · ${pct}%` : ''}
+      </button>
+    </>
+  )
+}
+
 const SSH_PING_INITIAL_MS = 30_000
 const SSH_PING_MAX_MS = 5 * 60_000
 
@@ -86,10 +134,7 @@ export default function StatusBar() {
   const [latency, setLatency] = useState<{ ms: number | null; err?: string } | null>(null)
   // Bumped when the operator clicks the SSH pill to force an immediate sample.
   const [probeNonce, setProbeNonce] = useState(0)
-  // useShallow: the filter returns a fresh array per snapshot; without it
-  // the store looks "changed" on every render (same React #185 trap as the
-  // transfers panel).
-  const runningTransfers = useTransfers(useShallow((s) => s.items.filter((it) => !it.done)))
+  const settingsKind = useSettings((s) => s.agentKind)
 
   const activeId = active?.id
   const activeKind = active?.kind
@@ -140,6 +185,9 @@ export default function StatusBar() {
       <div className="statusbar" role="status" aria-label="Session status">
         <span className="status-cell">Ready</span>
         <span className="spacer" />
+        <span className="statusbar-right">
+          <DockToggles />
+        </span>
       </div>
     )
   }
@@ -155,6 +203,10 @@ export default function StatusBar() {
       ? 'err'
       : ''
   const msgTone = statusTone(active.status)
+  const kind = active.agentKind ?? settingsKind
+  const kindName = agentKindLabel(kind)
+  const canStartAgent =
+    !active.closed && (active.kind === 'local' || (active.kind === 'remote' && !!active.context))
 
   return (
     <div className="statusbar" role="status" aria-label="Session status">
@@ -210,25 +262,12 @@ export default function StatusBar() {
       <span className="spacer" />
 
       <span className="statusbar-right">
-        {runningTransfers.length > 0 && (
-          <button
-            type="button"
-            className="status-cell status-link status-transfers"
-            title={`${runningTransfers.length} transfer(s) in flight — click to open the transfers panel`}
-            onClick={() => {
-              const s = useSettings.getState()
-              s.setTransfersPanelOpen(true)
-              s.setAgentActivityCollapsed(true)
-            }}
-          >
-            ⇅ {runningTransfers.length} · {transferAggregate(runningTransfers)}%
-          </button>
-        )}
-        {agentText && (
+        <DockToggles />
+        {agentText ? (
           <button
             type="button"
             className={`status-cell status-link status-agent ${agentTone}`}
-            title={`${agentKindLabel(active.agentKind ?? 'devterm')}: ${
+            title={`${kindName}: ${
               active.agentStartError
                 ? active.agentStartError
                 : active.agentExited
@@ -236,10 +275,8 @@ export default function StatusBar() {
                   : (active.agentBridgeState ?? 'starting')
             }${active.agentPendingApproval ? ' — awaiting approval' : ''} — click to show`}
             onClick={() => {
-              // Hidden/floating agents come back into view; a visible agent's
-              // activity panel opens instead.
               if (active.agentUiMode === 'hidden' || active.agentUiMode === 'floating') {
-                void setAgentUiMode(active.id, 'docked', { kind: active.agentKind ?? 'devterm' })
+                void setAgentUiMode(active.id, 'docked', { kind })
               } else {
                 const s = useSettings.getState()
                 s.setTransfersPanelOpen(false)
@@ -247,8 +284,26 @@ export default function StatusBar() {
               }
             }}
           >
+            {kindName}
+            {' · '}
             {active.agentPendingApproval ? 'Approval needed' : agentText}
           </button>
+        ) : (
+          canStartAgent && (
+            <button
+              type="button"
+              className="status-cell status-link status-agent"
+              title={`Open ${kindName} in this pane`}
+              onClick={() => {
+                void setAgentUiMode(active.id, 'docked', {
+                  kind,
+                  title: active.context?.hostname ?? active.title
+                })
+              }}
+            >
+              {kindName}
+            </button>
+          )
         )}
       </span>
     </div>

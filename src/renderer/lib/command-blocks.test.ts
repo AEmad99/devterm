@@ -26,6 +26,7 @@ describe('OSC 133 command blocks', () => {
     assert.equal(a2.completed?.inputX, 8)
     assert.equal(a2.completed?.endLine, 24)
     assert.equal(a2.completed?.id, 'b1')
+    assert.equal(a2.completed?.exitCode, null)
   })
 
   it('does not complete a prompt that never saw B', () => {
@@ -35,14 +36,18 @@ describe('OSC 133 command blocks', () => {
     assert.equal(next.completed, null)
   })
 
-  it('ignores C/D for completion (no exit-code coloring)', () => {
+  it('keeps a D exit code until the next A completes the block', () => {
     let state = emptyBlockTracker()
     state = reduceOsc133(state, { kind: 'A', line: 1, x: 0 }).state
     state = reduceOsc133(state, { kind: 'B', line: 1, x: 2 }).state
     const c = reduceOsc133(state, { kind: 'C', line: 2, x: 0 })
     assert.equal(c.completed, null)
-    const d = reduceOsc133(c.state, { kind: 'D', line: 8, x: 0 })
+    const d = reduceOsc133(c.state, { kind: 'D', line: 8, x: 0, exitCode: 1 })
     assert.equal(d.completed, null)
+    const a2 = reduceOsc133(d.state, { kind: 'A', line: 9, x: 0 })
+    assert.equal(a2.completed?.exitCode, 1)
+    assert.equal(a2.completed?.startLine, 1)
+    assert.equal(a2.completed?.endLine, 9)
   })
 })
 

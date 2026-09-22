@@ -137,6 +137,7 @@ export default function PaneAgentControls({ session }: { session: Session }) {
               onClick={() => setMenuOpen((v) => !v)}
             >
               <KindMark kind={kind} />
+              <span className="pane-agent-name">{label}</span>
               <IconChevron size={10} />
             </button>
           </Tooltip>
@@ -147,6 +148,7 @@ export default function PaneAgentControls({ session }: { session: Session }) {
             <span className="pane-agent-status">
               <IconAgent size={14} />
               <KindMark kind={kind} />
+              <span className="pane-agent-name">{label}</span>
             </span>
           </Tooltip>
           {pending && (

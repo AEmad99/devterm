@@ -17,6 +17,7 @@ import { GlobalSearchModal } from './components/modals/GlobalSearchModal'
 import SaveWorkspaceModal from './components/workspaces/SaveWorkspaceModal'
 import SettingsModal from './components/modals/SettingsModal'
 import AppToolbar from './components/chrome/AppToolbar'
+import SideRail from './components/chrome/SideRail'
 import TerminalsView from './components/chrome/TerminalsView'
 import StatusBar from './components/chrome/StatusBar'
 import TransfersPanel from './components/transfers/TransfersPanel'
@@ -68,7 +69,7 @@ import { initAgentHandoff } from './lib/agent-handoff'
 import { initPreviewControl } from './lib/preview'
 import PreviewOpenModal, { type PreviewOpenKind } from './components/modals/PreviewOpenModal'
 import type { HostContext } from '@shared/types'
-import type { View, BottomPanelMode } from './components/chrome/types'
+import type { LibraryId } from './components/chrome/types'
 
 /** Survives an error-boundary remount so recovery does not launch every session again. */
 let appStartupStarted = false
@@ -146,10 +147,6 @@ export default function App() {
   // Local-agent handoff: turn main's request into a visible sibling tab.
   useEffect(() => initAgentHandoff(), [])
   useEffect(() => initPreviewControl(), [])
-  const transfersPanelOpen = useSettings((s) => s.transfersPanelOpen)
-  const setTransfersPanelOpen = useSettings((s) => s.setTransfersPanelOpen)
-  const agentActivityCollapsed = useSettings((s) => s.agentActivityCollapsed)
-  const setAgentActivityCollapsed = useSettings((s) => s.setAgentActivityCollapsed)
   const zenMode = useSettings((s) => s.zenMode)
   const gitPanelOpen = useSettings((s) => s.gitPanelOpen)
   const setGitPanelOpen = useSettings((s) => s.setGitPanelOpen)
@@ -160,24 +157,6 @@ export default function App() {
     if (sessionsRef.some((s) => s.kind === 'local' && !s.closed)) markFirstRun('localTerminal')
     if (sessionsRef.some((s) => s.agentUiMode)) markFirstRun('openedAgent')
   }, [sessionsRef, markFirstRun])
-
-  const bottomPanelMode: BottomPanelMode = transfersPanelOpen
-    ? 'transfers'
-    : agentActivityCollapsed
-      ? 'off'
-      : 'activity'
-  const setBottomPanelMode = (mode: BottomPanelMode) => {
-    if (mode === 'transfers') {
-      setTransfersPanelOpen(true)
-      setAgentActivityCollapsed(true)
-    } else if (mode === 'activity') {
-      setTransfersPanelOpen(false)
-      setAgentActivityCollapsed(false)
-    } else {
-      setTransfersPanelOpen(false)
-      setAgentActivityCollapsed(true)
-    }
-  }
 
   const [showConnect, setShowConnect] = useState(false)
   const [showPicker, setShowPicker] = useState(false)
@@ -205,10 +184,9 @@ export default function App() {
     run: () => void
   } | null>(null)
   const [infoNotice, setInfoNotice] = useState<{ title: string; message: string } | null>(null)
-  const [view, setView] = useState<View>('terminals')
   const [dragOverGroup, setDragOverGroup] = useState<string | null>(null)
-  const [showSidebar, setShowSidebar] = useState(true)
-  const [sidebarWidth, setSidebarWidth] = useState(280)
+  const [library, setLibrary] = useState<LibraryId | null>(null)
+  const [libraryWidth, setLibraryWidth] = useState(280)
   const [gitWidth, setGitWidth] = useState(280)
   const [local, setLocal] = useState<HostContext | null>(null)
   const [globalSearchOpen, setGlobalSearchOpen] = useState(false)
@@ -338,7 +316,7 @@ export default function App() {
       useLayout.getState().setActiveGroup(s.groupId || DEFAULT_GROUP)
       useSessions.getState().setActive(sid)
       focusTerminal(sid)
-      setView('terminals')
+      setLibrary(null)
     })
   }, [])
 
@@ -547,11 +525,9 @@ export default function App() {
             setShowPalette((v) => !v)
             break
           case 'newTerminal':
-            setView('terminals')
             setShowPicker(true)
             break
           case 'newGrid':
-            setView('terminals')
             setShowGrid(true)
             break
           case 'closeTerminal': {
@@ -563,7 +539,7 @@ export default function App() {
             void duplicateActive()
             break
           case 'toggleSidebar':
-            setShowSidebar((v) => !v)
+            setLibrary((cur) => (cur === 'files' ? null : 'files'))
             break
           case 'clearTerminal': {
             const activeId = useSessions.getState().activeId
@@ -624,7 +600,6 @@ export default function App() {
             setGlobalSearchOpen((v) => !v)
             break
           case 'newGroup':
-            setView('terminals')
             createGroupAndLocal()
             break
           case 'nextGroup':
@@ -634,11 +609,9 @@ export default function App() {
             cycleGroup(-1)
             break
           case 'splitRight':
-            setView('terminals')
             splitActive('right')
             break
           case 'splitDown':
-            setView('terminals')
             splitActive('bottom')
             break
           case 'agents':
@@ -769,7 +742,7 @@ export default function App() {
     if (!session) return
     setActiveGroup(failure.groupId)
     setSessionActive(failure.sessionId)
-    setView('terminals')
+    setLibrary(null)
     focusTerminal(failure.sessionId)
   }
   const editorCloseForSession = useEditors((s) => s.closeForSession)
@@ -897,17 +870,14 @@ export default function App() {
       return h ? comboLabel(h, !!isMac) : ''
     }
   }, [keybindings, isMac])
+  const toggleLibrary = (id: LibraryId) => {
+    setLibrary((cur) => (cur === id ? null : id))
+    if (id !== 'files') setLibraryWidth((w) => Math.max(w, 440))
+  }
   return (
     <div className="app" data-zen={zenMode ? 'on' : undefined}>
       {!zenMode && (
         <AppToolbar
-          view={view}
-          setView={setView}
-          setShowSidebar={setShowSidebar}
-          sidebarOpen={showSidebar}
-          bottomPanelMode={bottomPanelMode}
-          setBottomPanelMode={setBottomPanelMode}
-          local={local}
           gitPanelOpen={gitPanelOpen}
           setGitPanelOpen={(v) => setGitPanelOpen(typeof v === 'function' ? v(gitPanelOpen) : v)}
           onSettings={() => setShowSettings(true)}
@@ -918,14 +888,26 @@ export default function App() {
       )}
 
       <div className="body">
-        {showSidebar && !zenMode && (
+        {!zenMode && (
+          <SideRail
+            active={library}
+            onToggle={toggleLibrary}
+            filesHotkey={hotkeyLabel('toggleSidebar')}
+          />
+        )}
+        {library && !zenMode && (
           <>
-            <aside className="sidebar" style={{ width: sidebarWidth }}>
-              <FileExplorer />
+            <aside className="library-panel" style={{ width: libraryWidth }}>
+              {library === 'files' && <FileExplorer />}
+              {library === 'connections' && (
+                <ConnectionsManager onConnect={() => setLibrary(null)} />
+              )}
+              {library === 'workspaces' && <WorkspacesManager onLaunch={() => setLibrary(null)} />}
+              {library === 'snippets' && <SnippetsManager onRun={() => setLibrary(null)} />}
             </aside>
             <Splitter
               direction="horizontal"
-              onDelta={(d) => setSidebarWidth((w) => clamp(w + d, 180, 600))}
+              onDelta={(d) => setLibraryWidth((w) => clamp(w + d, 320, 640))}
             />
           </>
         )}
@@ -933,18 +915,11 @@ export default function App() {
         <div className="main">
           <div className="panes-area">
             {/*
-              The terminals view stays mounted at all times — switching to
-              Connections/Workspaces only hides it. Unmounting it would tear
-              down every TerminalView, killing the local PTYs and dropping the
-              SSH shells. Hidden via `.term-hidden` (visibility:hidden + an
-              off-screen translate), never display:none: the terminals keep
-              their real dimensions and stay fitted while another view is shown
-              (a display-hidden terminal is 0×0 and can't refit until reveal,
-              which corrupted/clipped output), and being off-screen makes xterm
-              pause their render loops so a background view doesn't keep every
-              terminal repainting.
+              Terminals stay mounted for the life of the window. Library panels
+              open beside them. Unmounting this view would tear down every
+              TerminalView, killing local PTYs and dropping SSH shells.
             */}
-            <div className={`view-pane${view === 'terminals' ? '' : ' term-hidden'}`}>
+            <div className="view-pane">
               <TerminalsView
                 showGroupBar={showGroupBar}
                 groups={groups}
@@ -974,21 +949,6 @@ export default function App() {
                 spinOffGroup={spinOffGroup}
               />
             </div>
-            {view === 'connections' && (
-              <div className="view-pane">
-                <ConnectionsManager onConnect={() => setView('terminals')} />
-              </div>
-            )}
-            {view === 'workspaces' && (
-              <div className="view-pane">
-                <WorkspacesManager onLaunch={() => setView('terminals')} />
-              </div>
-            )}
-            {view === 'snippets' && (
-              <div className="view-pane">
-                <SnippetsManager onRun={() => setView('terminals')} />
-              </div>
-            )}
           </div>
 
           <StatusBar />
@@ -1011,22 +971,18 @@ export default function App() {
       {showPicker && (
         <NewTerminalModal
           onLocal={() => {
-            setView('terminals')
             addLocal()
             setShowPicker(false)
           }}
           onRemote={() => {
-            setView('terminals')
             setShowPicker(false)
             setShowConnect(true)
           }}
           onBrowser={() => {
-            setView('terminals')
             addBrowser()
             setShowPicker(false)
           }}
           onGrid={() => {
-            setView('terminals')
             setShowPicker(false)
             setShowGrid(true)
           }}
@@ -1062,7 +1018,7 @@ export default function App() {
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
       {showPalette && (
         <CommandPalette
-          onRun={() => setView('terminals')}
+          onRun={() => setLibrary(null)}
           onClose={() => setShowPalette(false)}
           onCreateGrid={() => setShowGrid(true)}
           onNewRemote={() => setShowConnect(true)}
@@ -1077,7 +1033,7 @@ export default function App() {
         open={!!previewOpen}
         kind={previewOpen ?? 'localhost'}
         onClose={() => setPreviewOpen(null)}
-        onFocusTerminals={() => setView('terminals')}
+        onFocusTerminals={() => setLibrary(null)}
       />
       {showShortcuts && <ShortcutsModal onClose={() => setShowShortcuts(false)} />}
       <AgentsOverviewModal open={showAgents} onClose={() => setShowAgents(false)} />
@@ -1125,7 +1081,7 @@ export default function App() {
             }
           }
           setSessionActive(sid)
-          setView('terminals')
+          setLibrary(null)
           focusTerminal(sid)
           revealTerminalLine(sid, line, total)
           setGlobalSearchOpen(false)

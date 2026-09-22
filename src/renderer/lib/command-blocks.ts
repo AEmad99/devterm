@@ -4,6 +4,8 @@ export interface Osc133Event {
   kind: 'A' | 'B' | 'C' | 'D'
   line: number
   x: number
+  /** Present on OSC 133 D when the shell reported an exit status. */
+  exitCode?: number | null
 }
 
 export interface CommandBlock {
@@ -14,6 +16,8 @@ export interface CommandBlock {
   endLine: number
   command: string
   comment?: string
+  /** Null when the shell never sent OSC 133 D. */
+  exitCode: number | null
 }
 
 export interface BlockTrackerState {
@@ -22,6 +26,7 @@ export interface BlockTrackerState {
     inputLine?: number
     inputX?: number
     sawB: boolean
+    exitCode: number | null
   } | null
   nextId: number
 }
@@ -32,14 +37,25 @@ export function emptyBlockTracker(): BlockTrackerState {
 
 /**
  * A completed command is A then B, closed by the next prompt A.
- * C/D are ignored (no exit-code coloring until those markers exist).
+ * D stores the exit status on that block so the gutter can be colored.
+ * C does not complete a block.
  */
 export function reduceOsc133(
   state: BlockTrackerState,
   event: Osc133Event
 ): { state: BlockTrackerState; completed: Omit<CommandBlock, 'command' | 'comment'> | null } {
+  if (event.kind === 'D') {
+    if (!state.pending) return { state, completed: null }
+    return {
+      state: {
+        ...state,
+        pending: { ...state.pending, exitCode: event.exitCode ?? null }
+      },
+      completed: null
+    }
+  }
   if (event.kind === 'B') {
-    const pending = state.pending ?? { startLine: event.line, sawB: false }
+    const pending = state.pending ?? { startLine: event.line, sawB: false, exitCode: null }
     return {
       state: {
         ...state,
@@ -58,12 +74,13 @@ export function reduceOsc133(
       startLine: state.pending.startLine,
       inputLine: state.pending.inputLine,
       inputX: state.pending.inputX ?? 0,
-      endLine: event.line
+      endLine: event.line,
+      exitCode: state.pending.exitCode ?? null
     }
   }
   return {
     state: {
-      pending: { startLine: event.line, sawB: false },
+      pending: { startLine: event.line, sawB: false, exitCode: null },
       nextId: completed ? state.nextId + 1 : state.nextId
     },
     completed
@@ -170,8 +187,8 @@ export interface CommandBlocksController {
 }
 
 /**
- * Track OSC 133 A/B on a live xterm and paint a capped set of faint gutters.
- * There is no command-input strip; the shell still owns the line being typed.
+ * Track OSC 133 A/B/D on a live xterm and paint a capped set of command bars.
+ * The shell still owns the line being typed. There is no input strip.
  */
 export function attachCommandBlocks(
   term: Terminal,
@@ -180,6 +197,7 @@ export function attachCommandBlocks(
     sessionId: string
     onHooksChange: (healthy: boolean, atPrompt: boolean) => void
     onAskAgent: (text: string) => void
+    onCompleted?: (block: CommandBlock) => void
   }
 ): CommandBlocksController {
   let tracker = emptyBlockTracker()
@@ -266,14 +284,28 @@ export function attachCommandBlocks(
         block.startLine - (term.buffer.active.baseY + term.buffer.active.cursorY)
       )
       if (!marker) return
-      const decoration = term.registerDecoration({ marker })
+      const rows = Math.min(80, Math.max(1, block.endLine - block.startLine))
+      const failed = block.exitCode != null && block.exitCode !== 0
+      const decoration = term.registerDecoration({
+        marker,
+        width: 1,
+        height: rows
+      })
       if (!decoration) {
         marker.dispose()
         return
       }
       decoration.onRender((el) => {
         el.classList.add('cmd-block-gutter')
-        el.title = block.command ? `Command: ${block.command}` : 'Command block'
+        el.classList.toggle('is-ok', block.exitCode === 0)
+        el.classList.toggle('is-fail', failed)
+        const exit =
+          block.exitCode == null
+            ? ''
+            : block.exitCode === 0
+              ? ' · exit 0'
+              : ` · exit ${block.exitCode}`
+        el.title = `${block.command || 'Command'}${exit}`
         el.onclick = (ev) => {
           ev.preventDefault()
           ev.stopPropagation()
@@ -317,7 +349,15 @@ export function attachCommandBlocks(
     } else if (k === 'C' || k === 'D') {
       atPrompt = false
     }
-    const reduced = reduceOsc133(tracker, { kind: k, line, x: b.cursorX })
+    let exitCode: number | null = null
+    if (k === 'D') {
+      const raw = data.slice(1).replace(/^;/, '').split(';')[0] ?? ''
+      if (raw !== '') {
+        const n = Number(raw)
+        exitCode = Number.isFinite(n) ? n : null
+      }
+    }
+    const reduced = reduceOsc133(tracker, { kind: k, line, x: b.cursorX, exitCode })
     tracker = reduced.state
     if (k === 'A') atPrompt = false
     if (reduced.completed) {
@@ -328,6 +368,7 @@ export function attachCommandBlocks(
         comment: loadBlockComment(opts.sessionId, command)
       }
       paintGutter(block)
+      opts.onCompleted?.(block)
     }
     emitHooks()
     return false

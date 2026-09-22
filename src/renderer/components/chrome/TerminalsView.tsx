@@ -102,6 +102,11 @@ export default function TerminalsView({
       settings: label('settings')
     }
   }, [keybindings])
+  const welcomeSteps = [
+    !firstRun.localTerminal ? 'Open a local terminal' : null,
+    !firstRun.importedSsh ? 'Import ~/.ssh/config or save a connection' : null,
+    !firstRun.openedAgent ? 'Open Agent once' : null
+  ].filter((step): step is string => step !== null)
   // Dirty editor close confirmation (a single doc, so one pending id is enough).
   const [pendingEditorClose, setPendingEditorClose] = useState<string | null>(null)
   const requestEditorClose = (id: string, dirty: boolean) => {
@@ -160,10 +165,10 @@ export default function TerminalsView({
         </div>
       )}
 
-      {!welcomeHintSeen && !zenMode && sessionCount > 0 && (
+      {!welcomeHintSeen && !zenMode && sessionCount > 0 && welcomeSteps.length > 0 && (
         <div className="welcome-hint">
           <div className="welcome-hint-head">
-            <span className="welcome-hint-title">Getting started</span>
+            <span className="welcome-hint-title">Remote coding, without a server install</span>
             <button
               className="welcome-hint-close"
               aria-label="Dismiss"
@@ -173,12 +178,14 @@ export default function TerminalsView({
               <IconClose size={12} />
             </button>
           </div>
+          <p className="welcome-hint-copy">
+            DevTerm Agent runs on this PC and uses your SSH connection to work on remote files and
+            commands. The server needs no agent install or internet access.
+          </p>
           <ol className="welcome-checklist">
-            <li className={firstRun.localTerminal ? 'is-done' : ''}>Open a local terminal</li>
-            <li className={firstRun.importedSsh ? 'is-done' : ''}>
-              Import ~/.ssh/config or save a connection
-            </li>
-            <li className={firstRun.openedAgent ? 'is-done' : ''}>Open Agent once</li>
+            {welcomeSteps.map((step) => (
+              <li key={step}>{step}</li>
+            ))}
           </ol>
           <span className="welcome-hint-keys">
             <kbd>{welcomeKeys.palette}</kbd> palette · <kbd>{welcomeKeys.newTerminal}</kbd> new

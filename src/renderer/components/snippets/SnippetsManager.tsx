@@ -8,7 +8,15 @@ import SnippetForm from './SnippetForm'
 import ManagerList, { ManagerSkeleton } from '../common/ManagerList'
 import ManagerRow from '../common/ManagerRow'
 import Button from '../common/Button'
-import { IconKeyboard, IconPlus, IconConnect, IconEdit, IconTrash, IconPin } from '../common/Icons'
+import {
+  IconKeyboard,
+  IconPlus,
+  IconConnect,
+  IconEdit,
+  IconTrash,
+  IconPin,
+  IconArrowDown
+} from '../common/Icons'
 
 /**
  * Full-pane manager for saved command snippets — its own top-level tab. Lists
@@ -145,14 +153,20 @@ export default function SnippetsManager({ onRun }: { onRun?: () => void }) {
                     >
                       <IconPin size={14} />
                     </Button>
-                    <Button onClick={() => run(s, false)}>Insert</Button>
-                    <Button onClick={() => setEditing(s)}>
-                      <IconEdit size={14} />
-                      Edit
+                    <Button
+                      title="Insert this snippet without running it"
+                      onClick={() => run(s, false)}
+                    >
+                      <IconArrowDown size={14} />
+                      <span className="btn-label">Insert</span>
                     </Button>
-                    <Button variant="danger" onClick={() => del(s)}>
+                    <Button title="Edit this snippet" onClick={() => setEditing(s)}>
+                      <IconEdit size={14} />
+                      <span className="btn-label">Edit</span>
+                    </Button>
+                    <Button variant="danger" title="Delete this snippet" onClick={() => del(s)}>
                       <IconTrash size={14} />
-                      Delete
+                      <span className="btn-label">Delete</span>
                     </Button>
                   </>
                 }

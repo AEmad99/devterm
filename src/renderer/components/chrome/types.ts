@@ -1,3 +1,2 @@
-export type View = 'terminals' | 'connections' | 'workspaces' | 'snippets'
-
-export type BottomPanelMode = 'transfers' | 'activity' | 'off'
+/** Side panel beside the always-visible terminal. Null means the shell is full width. */
+export type LibraryId = 'files' | 'connections' | 'workspaces' | 'snippets'

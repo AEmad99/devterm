@@ -186,13 +186,13 @@ export default function ConnectionsManager({ onConnect }: { onConnect: () => voi
                     >
                       <IconPin size={14} />
                     </Button>
-                    <Button onClick={() => setForm({ initial: c })}>
+                    <Button title="Edit this connection" onClick={() => setForm({ initial: c })}>
                       <IconEdit size={14} />
-                      Edit
+                      <span className="btn-label">Edit</span>
                     </Button>
-                    <Button variant="danger" onClick={() => del(c)}>
+                    <Button variant="danger" title="Delete this connection" onClick={() => del(c)}>
                       <IconTrash size={14} />
-                      Delete
+                      <span className="btn-label">Delete</span>
                     </Button>
                   </>
                 }

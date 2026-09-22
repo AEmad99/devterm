@@ -1,23 +1,12 @@
-import TopNav from './TopNav'
-import BottomPanelToggle from './BottomPanelToggle'
 import Button from '../common/Button'
 import Tooltip from '../common/Tooltip'
-import { LogoMark, IconMenu, IconSettings, IconKeyboard } from '../common/Icons'
+import { LogoMark, IconKeyboard, IconSettings } from '../common/Icons'
 import { IconBranch } from '../git/GitIcons'
 import MicButton from '../dictation/MicButton'
 import { useActiveGitStatus, gitChangeCount } from '../../lib/use-git-status'
-import type { HostContext } from '@shared/types'
 import type { HotkeyId } from '../../lib/hotkeys'
-import type { View, BottomPanelMode } from './types'
 
 interface AppToolbarProps {
-  view: View
-  setView: (view: View) => void
-  setShowSidebar: (v: boolean | ((prev: boolean) => boolean)) => void
-  sidebarOpen: boolean
-  bottomPanelMode: BottomPanelMode
-  setBottomPanelMode: (mode: BottomPanelMode) => void
-  local?: HostContext | null
   gitPanelOpen: boolean
   setGitPanelOpen: (v: boolean | ((prev: boolean) => boolean)) => void
   onSettings: () => void
@@ -28,12 +17,6 @@ interface AppToolbarProps {
 }
 
 export default function AppToolbar({
-  view,
-  setView,
-  setShowSidebar,
-  sidebarOpen,
-  bottomPanelMode,
-  setBottomPanelMode,
   gitPanelOpen,
   setGitPanelOpen,
   onSettings,
@@ -47,21 +30,10 @@ export default function AppToolbar({
 
   return (
     <div className="titlebar">
-      <Tooltip tip={sidebarOpen ? 'Hide file explorer' : 'Show file explorer'} pos="bottom">
-        <Button
-          variant="icon"
-          aria-label="Toggle file explorer"
-          aria-expanded={sidebarOpen}
-          onClick={() => setShowSidebar((v) => !v)}
-        >
-          <IconMenu size={16} />
-        </Button>
-      </Tooltip>
       <span className="brand" aria-label="DevTerm">
         <LogoMark size={18} />
         <span className="brand-name">DevTerm</span>
       </span>
-      <TopNav view={view} setView={setView} />
       <span className="spacer" />
       <Tooltip
         tip={
@@ -87,7 +59,6 @@ export default function AppToolbar({
           )}
         </Button>
       </Tooltip>
-      <BottomPanelToggle mode={bottomPanelMode} setMode={setBottomPanelMode} />
       <span className="toolbar-sep" aria-hidden="true" />
       <MicButton hotkey={dictateHotkey} />
       <span className="toolbar-sep" aria-hidden="true" />

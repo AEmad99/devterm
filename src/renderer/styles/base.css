@@ -231,6 +231,8 @@ select option {
 :root[data-glass='on'] .titlebar,
 :root[data-glass='on'] .statusbar,
 :root[data-glass='on'] .sidebar,
+:root[data-glass='on'] .side-rail,
+:root[data-glass='on'] .library-panel,
 :root[data-glass='on'] .group-bar,
 :root[data-glass='on'] .pane-tabstrip,
 :root[data-glass='on'] .tabs,
@@ -279,7 +281,9 @@ select option {
     inset 0 1px 0 var(--glass-hi),
     0 1px 0 color-mix(in srgb, var(--bg) 28%, transparent);
 }
-:root[data-glass='on'] .sidebar {
+:root[data-glass='on'] .sidebar,
+:root[data-glass='on'] .library-panel,
+:root[data-glass='on'] .side-rail {
   box-shadow: inset -1px 0 0 var(--glass-hi);
 }
 :root[data-glass='on'] .pane-tabstrip,

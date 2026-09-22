@@ -18,8 +18,7 @@ import type { TransferItemV2 } from '@shared/types'
  * Bottom-docked panel showing the persistent transfer queue. One row per
  * TransferItemV2 with direction, name, a progress bar, status text, and
  * per-item Cancel / Retry / Open-in-folder actions. Open/closed state is
- * persisted in the settings store; the App toolbar's "Activity | Transfers |
- * Off" segmented control is the canonical way to flip it.
+ * persisted in the settings store. The status bar Transfers button flips it.
  */
 export default function TransfersPanel() {
   const open = useSettings((s) => s.transfersPanelOpen)

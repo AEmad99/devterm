@@ -267,15 +267,19 @@ export default function WorkspacesManager({ onLaunch }: { onLaunch: () => void }
                       </Button>
                       <Button onClick={() => startEdit(ws)} title="Rename / edit description">
                         <IconEdit size={14} />
-                        Update
+                        <span className="btn-label">Update</span>
                       </Button>
                       <Button onClick={() => duplicate(ws)} title="Create a copy of this workspace">
                         <IconCopy size={14} />
-                        Duplicate
+                        <span className="btn-label">Duplicate</span>
                       </Button>
-                      <Button variant="danger" onClick={() => del(ws)}>
+                      <Button
+                        variant="danger"
+                        onClick={() => del(ws)}
+                        title="Delete this workspace"
+                      >
                         <IconTrash size={14} />
-                        Delete
+                        <span className="btn-label">Delete</span>
                       </Button>
                     </>
                   )

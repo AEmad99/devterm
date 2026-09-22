@@ -54,12 +54,202 @@
   display: flex;
 }
 
-.sidebar {
+.sidebar,
+.library-panel {
   flex: 0 0 auto;
   background: var(--panel);
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  min-height: 0;
+  position: relative;
+}
+.library-panel .manager {
+  padding: 12px 12px 20px;
+}
+.library-panel .manager-head {
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.library-panel .manager-head h2 {
+  flex: 1 0 100%;
+  font-size: 15px;
+}
+.library-panel .manager-head .spacer {
+  display: none;
+}
+.library-panel .manager-filter {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0 0 10px;
+  padding: 6px 10px;
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.library-panel .manager-filter::placeholder {
+  color: var(--muted);
+}
+.library-panel .manager-filter:focus {
+  border-color: color-mix(in srgb, var(--fg) 28%, var(--border));
+  box-shadow: none;
+}
+/* Flat controls. The shared manager rules use a gradient and a glow that
+   read as neon in this narrow panel. */
+.library-panel .manager button,
+.library-panel .manager .btn {
+  background: transparent;
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: none;
+  font-weight: 500;
+  padding: 4px 8px;
+  font-size: 12px;
+  transform: none;
+  filter: none;
+}
+.library-panel .manager button:hover,
+.library-panel .manager .btn:hover,
+.library-panel .manager button:active,
+.library-panel .manager .btn:active {
+  background: var(--hover);
+  border-color: color-mix(in srgb, var(--fg) 18%, var(--border));
+  box-shadow: none;
+  transform: none;
+  filter: none;
+}
+.library-panel .manager .btn--primary,
+.library-panel .manager button.primary {
+  background: color-mix(in srgb, var(--accent) 14%, var(--panel));
+  border-color: color-mix(in srgb, var(--accent) 32%, var(--border));
+  color: var(--fg);
+  box-shadow: none;
+}
+.library-panel .manager .btn--primary:hover,
+.library-panel .manager button.primary:hover {
+  background: color-mix(in srgb, var(--accent) 22%, var(--panel));
+  filter: none;
+  transform: none;
+}
+.library-panel .manager .btn--danger,
+.library-panel .manager button.danger {
+  background: transparent;
+  border-color: color-mix(in srgb, var(--danger) 35%, var(--border));
+  color: color-mix(in srgb, var(--danger) 80%, var(--fg));
+  box-shadow: none;
+}
+.library-panel .manager .btn--danger:hover,
+.library-panel .manager button.danger:hover {
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  transform: none;
+  filter: none;
+}
+.library-panel .manager .btn--icon {
+  border-color: transparent;
+  color: var(--muted);
+  padding: 4px;
+}
+.library-panel .manager-row {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 4px 8px;
+  padding: 8px 10px;
+}
+.library-panel .mr-icon {
+  width: 22px;
+}
+.library-panel .mr-name,
+.library-panel .mr-sub,
+.library-panel .mr-desc,
+.library-panel .mr-stats {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Connect / Run / Launch hold the last column. */
+.library-panel .mr-actions:not(.mr-secondary) {
+  grid-column: 4;
+  grid-row: 1;
+}
+/* Pin / Edit / Delete are icon-only here; there is no room for labels. They
+   stay in place at all times so the row never shifts or clips Connect. */
+.library-panel .mr-secondary {
+  display: flex;
+  grid-column: 3;
+  grid-row: 1;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+  opacity: 0.55;
+}
+.library-panel .manager-row:hover .mr-secondary,
+.library-panel .manager-row:focus-within .mr-secondary {
+  opacity: 1;
+}
+.library-panel .mr-secondary .btn-label {
+  display: none;
+}
+.library-panel .mr-secondary .btn {
+  padding: 4px;
+  background: transparent;
+  border-color: transparent;
+  color: var(--muted);
+}
+.library-panel .mr-secondary .btn:hover {
+  background: var(--hover);
+  border-color: var(--border);
+  color: var(--fg);
+}
+.library-panel .mr-secondary .btn.is-active {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
+}
+.library-panel .mr-secondary .btn--danger:hover {
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  border-color: color-mix(in srgb, var(--danger) 35%, var(--border));
+  color: var(--danger);
+}
+.side-rail {
+  flex: 0 0 auto;
+  width: 40px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 0;
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+}
+.side-rail .tip-anchor {
+  display: flex;
+}
+.side-rail button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.side-rail button:hover {
+  background: var(--hover);
+  color: var(--fg);
+}
+.side-rail button.active {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--fg);
 }
 
 /* Draggable splitters */
@@ -445,14 +635,10 @@
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 92%, transparent);
 }
 .pane-group.active::after {
-  box-shadow:
-    inset 0 0 0 1px color-mix(in srgb, var(--accent) 42%, var(--border)),
-    inset 0 1px 0 color-mix(in srgb, var(--fg) 5%, transparent);
+  box-shadow: inset 0 0 0 1px var(--accent);
 }
-/* Active-pane indication is intentionally subtle — only a faint tab-strip tint,
-   no bright outline around the pane (that read as a distracting highlight). */
 .pane-group.active > .pane-tabstrip {
-  border-bottom-color: var(--border);
+  border-bottom-color: var(--accent);
 }
 .pane-tabstrip {
   position: absolute;
@@ -653,6 +839,12 @@
   font-size: var(--fs-100, 11px);
   color: var(--muted);
 }
+.welcome-hint-copy {
+  margin: 0;
+  font-size: var(--fs-100, 11px);
+  line-height: 1.45;
+  color: var(--muted);
+}
 .welcome-checklist li.is-done {
   color: var(--ok, var(--accent));
   text-decoration: line-through;
@@ -743,6 +935,11 @@ button.status-cell.status-link:hover {
 }
 button.status-cell.status-link:active {
   transform: translateY(1px);
+}
+button.status-cell.status-toggle[aria-pressed='true'] {
+  color: var(--fg);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
 }
 .status-transfers {
   color: var(--accent);
@@ -856,7 +1053,7 @@ button.status-cell.status-link:active {
   color: var(--fg);
 }
 
-/* Compact agent cluster on the pane tab strip (icon-only; kind menu is portaled). */
+/* Compact agent cluster on the pane tab strip. The kind name stays visible. */
 .pane-agent {
   flex: 0 0 auto;
   align-self: center;
@@ -902,6 +1099,15 @@ button.status-cell.status-link:active {
 }
 .pane-agent-kind[aria-expanded='true'] svg {
   transform: rotate(180deg);
+}
+.pane-agent-name {
+  max-width: 84px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
 }
 .pane-agent-glyph {
   display: inline-grid;
@@ -1574,7 +1780,8 @@ button.danger:hover:not(:disabled) {
 
 /* ===========================================================================
    Tooltip — CSS-only bubble driven by `data-tip` (see Tooltip.tsx). Theme-
-   aware, instant on hover/focus, positionable via `data-tip-pos`. The hotkey
+   aware, instant on hover, positionable via `data-tip-pos`. A click does not
+   keep the bubble: only keyboard focus (`:focus-visible`) does. The hotkey
    (`data-hotkey`) renders as a trailing kbd-style chip.
    =========================================================================== */
 .tip-anchor {
@@ -1584,7 +1791,7 @@ button.danger:hover:not(:disabled) {
   justify-content: center;
 }
 .tip-anchor[data-tip]:hover::after,
-.tip-anchor[data-tip]:focus-within::after {
+.tip-anchor[data-tip]:has(:focus-visible)::after {
   content: attr(data-tip);
   position: absolute;
   z-index: 400;
@@ -1603,36 +1810,36 @@ button.danger:hover:not(:disabled) {
   pointer-events: none;
 }
 .tip-anchor[data-hotkey]:hover::after,
-.tip-anchor[data-hotkey]:focus-within::after {
+.tip-anchor[data-hotkey]:has(:focus-visible)::after {
   content: attr(data-tip) '  ' attr(data-hotkey);
 }
 .tip-anchor[data-tip-pos='top']:hover::after,
-.tip-anchor[data-tip-pos='top']:focus-within::after {
+.tip-anchor[data-tip-pos='top']:has(:focus-visible)::after {
   bottom: calc(100% + 7px);
   left: 50%;
   transform: translateX(-50%);
 }
 .tip-anchor[data-tip-pos='bottom']:hover::after,
-.tip-anchor[data-tip-pos='bottom']:focus-within::after {
+.tip-anchor[data-tip-pos='bottom']:has(:focus-visible)::after {
   top: calc(100% + 7px);
   left: 50%;
   transform: translateX(-50%);
 }
 .tip-anchor[data-tip-pos='left']:hover::after,
-.tip-anchor[data-tip-pos='left']:focus-within::after {
+.tip-anchor[data-tip-pos='left']:has(:focus-visible)::after {
   right: calc(100% + 7px);
   top: 50%;
   transform: translateY(-50%);
 }
 .tip-anchor[data-tip-pos='right']:hover::after,
-.tip-anchor[data-tip-pos='right']:focus-within::after {
+.tip-anchor[data-tip-pos='right']:has(:focus-visible)::after {
   left: calc(100% + 7px);
   top: 50%;
   transform: translateY(-50%);
 }
 @media (prefers-reduced-motion: no-preference) {
   .tip-anchor[data-tip]:hover::after,
-  .tip-anchor[data-tip]:focus-within::after {
+  .tip-anchor[data-tip]:has(:focus-visible)::after {
     animation: dt-fade-in var(--dur-fast) ease both;
   }
 }
@@ -1872,6 +2079,8 @@ button.danger:hover:not(:disabled) {
 /* Zen mode — hide all chrome except the terminal workspace and pane tabs. */
 .app[data-zen='on'] .titlebar,
 .app[data-zen='on'] .sidebar,
+.app[data-zen='on'] .side-rail,
+.app[data-zen='on'] .library-panel,
 .app[data-zen='on'] .splitter,
 .app[data-zen='on'] .statusbar,
 .app[data-zen='on'] .group-bar {
