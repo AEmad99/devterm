@@ -3,6 +3,12 @@
 All notable changes to DevTerm are documented here. The most recent section is
 at the top. Dates are ISO `YYYY-MM-DD`.
 
+## 1.6.1 — 2026-09-23
+
+### Improved
+
+- Agent browser control uses trusted CDP clicks/types with DOM fallback, plus fill / select / scroll / hover / wait / focus, SPA settle waits, stale-ref remapping, and console / navigation / download notes for every agent kind.
+
 ## 1.6.0 — 2026-09-23
 
 ### Added
