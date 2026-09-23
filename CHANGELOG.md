@@ -9,6 +9,7 @@ at the top. Dates are ISO `YYYY-MM-DD`.
 
 - The top bar is gone. Git, dictation, shortcuts, and settings live in the left sidebar, and the terminal panes use that full row of height.
 - The first-run hint is a full-width row of three cards above the terminal panes. Each card is one step (local terminal, SSH connection, DevTerm Agent), finished steps stay marked done, and an open card jumps to that surface. Dismiss still hides the row, and importing settings does not bring it back.
+- The Windows installer no longer carries speech models, a second copy of the dictation runtime, or unused Chromium locales. Dictation still downloads a Whisper model only when you turn it on.
 
 ## 1.6.2 — 2026-09-23
 

@@ -33,7 +33,51 @@ function nestedClosureDest(appOutDir) {
   )
 }
 
-function mirrorAgentClosure(projectDir, appOutDir) {
+const SKIP_DIR_NAMES = new Set([
+  'docs',
+  'doc',
+  'examples',
+  'example',
+  'test',
+  'tests',
+  '__tests__',
+  '.github'
+])
+
+/** builder-util Arch enum → esbuild package arch. */
+function archName(arch) {
+  if (typeof arch === 'string') return arch
+  return { 0: 'ia32', 1: 'x64', 2: 'armv7l', 3: 'arm64', 4: 'universal' }[arch] || 'x64'
+}
+
+function esbuildTarget(platform, arch) {
+  if (!platform) return null
+  const name = archName(arch)
+  if (platform === 'win32') return `win32-${name === 'arm64' ? 'arm64' : name === 'ia32' ? 'ia32' : 'x64'}`
+  if (platform === 'darwin') return `darwin-${name === 'arm64' ? 'arm64' : 'x64'}`
+  if (platform === 'linux') return `linux-${name === 'arm64' ? 'arm64' : name === 'armv7l' ? 'arm' : 'x64'}`
+  return null
+}
+
+function shouldMirrorFile(rel, target) {
+  const parts = rel.split('/')
+  if (parts.some((part) => SKIP_DIR_NAMES.has(part))) return false
+  const base = parts[parts.length - 1]
+  if (
+    base.endsWith('.map') ||
+    base.endsWith('.md') ||
+    base.endsWith('.d.ts') ||
+    base.endsWith('.d.mts') ||
+    base.endsWith('.d.cts')
+  ) {
+    return false
+  }
+  const esbuild = rel.match(/(?:^|\/)@esbuild\/([^/]+)/)
+  if (esbuild && target && esbuild[1] !== target) return false
+  return true
+}
+
+function mirrorAgentClosure(projectDir, appOutDir, opts = {}) {
   const src = nestedClosureSource(projectDir)
   if (!fs.existsSync(src)) {
     throw new Error(
@@ -41,13 +85,25 @@ function mirrorAgentClosure(projectDir, appOutDir) {
     )
   }
   const dest = nestedClosureDest(appOutDir)
+  const target = esbuildTarget(opts.platform, opts.arch)
   fs.mkdirSync(dest, { recursive: true })
-  fs.cpSync(src, dest, { recursive: true, force: true })
+  fs.cpSync(src, dest, {
+    recursive: true,
+    force: true,
+    filter: (source) => {
+      const rel = path.relative(src, source).replace(/\\/g, '/')
+      if (!rel) return true
+      return shouldMirrorFile(rel, target)
+    }
+  })
   return fs.readdirSync(dest).length
 }
 
 async function afterPack(context) {
-  const mirrored = mirrorAgentClosure(context.packager.projectDir, context.appOutDir)
+  const mirrored = mirrorAgentClosure(context.packager.projectDir, context.appOutDir, {
+    platform: context.electronPlatformName,
+    arch: context.arch
+  })
   console.log(`[pack] mirrored agent nested closure (${mirrored} entries) into app.asar.unpacked`)
 }
 
@@ -55,5 +111,7 @@ module.exports = {
   nestedClosureSource,
   nestedClosureDest,
   mirrorAgentClosure,
+  shouldMirrorFile,
+  esbuildTarget,
   afterPack
 }

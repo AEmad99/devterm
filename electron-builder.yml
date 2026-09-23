@@ -36,6 +36,12 @@ files:
   # Hashed ORT wasm asset emitted by transformers' `new URL(...)` fallback — only
   # referenced when wasmPaths is unset, and the STT worker always sets it to /ort/.
   - '!**/assets/ort-wasm-*.wasm'
+  - '!out/renderer/assets/*.wasm'
+  # Whisper weights are never shipped. Dictation downloads a model from Hugging
+  # Face the first time someone turns it on. The JS library is already inside
+  # the worker bundle, so the npm package (and any .onnx files) stay out.
+  - '!**/node_modules/@huggingface/**'
+  - '!**/*.onnx'
   # VCS/sandbox metadata dirs: never ship, and prune them from the file walk
   # (some sandboxes deny even listing them, which fails the build on scandir).
   - '!.sl{,/**/*}'
@@ -84,15 +90,41 @@ asarUnpack:
   # onnxruntime-web's wasm for local speech-to-text. Large WASM binaries can fail
   # to instantiate from inside the asar archive over file://, so keep them on disk.
   - '**/ort/*.wasm'
+compression: maximum
 win:
   icon: resources/icon.ico
+  # Keep Chromium's English locale pack only. Page content does not need the
+  # other ~50 locale paks (~37MB unpacked).
+  electronLanguages:
+    - en-US
   files:
+    # A positive pattern is required. An ignore-only win.files list makes
+    # electron-builder inject `**/*`, which packs the source tree, a second
+    # copy of the dictation wasm, and the unused Vite asyncify wasm.
+    - out/**/*
+    - package.json
+    - resources/icon.ico
+    - resources/icon.png
+    - '!out/renderer/assets/*.wasm'
+    - '!**/*.onnx'
+    - '!**/node_modules/@huggingface/**'
     # Windows-only trim: node-pty's tarball ships linux-* prebuilds, useless on
     # Windows (we install the win32-x64 binary via scripts/setup-native.mjs).
     # Scoped to win so Linux builds keep their loadable prebuilds.
     - '!**/node_modules/node-pty/prebuilds/linux-*/**'
-    # VCS/sandbox metadata dirs: this win.files list forms its own root matcher
-    # (broad `**/*` + excludes), so prune unreadable dirs here as well as above.
+    # esbuild's optional binary follows the machine that ran npm. A Windows
+    # installer must not ship the Linux/macOS copies. The win32-x64 binary is
+    # mirrored with the agent closure.
+    - '!**/node_modules/@esbuild/linux-*/**'
+    - '!**/node_modules/@esbuild/darwin-*/**'
+    - '!**/node_modules/@esbuild/android-*/**'
+    - '!**/node_modules/@esbuild/freebsd-*/**'
+    - '!**/node_modules/@esbuild/netbsd-*/**'
+    - '!**/node_modules/@esbuild/openbsd-*/**'
+    - '!**/node_modules/@esbuild/sunos-*/**'
+    - '!**/node_modules/@esbuild/aix-*/**'
+    - '!**/node_modules/@esbuild/win32-ia32/**'
+    - '!**/node_modules/@esbuild/win32-arm64/**'
     - '!.sl{,/**/*}'
     - '!.hg{,/**/*}'
     - '!.eden{,/**/*}'
