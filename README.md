@@ -17,7 +17,7 @@
 
 DevTerm is a normal framed Windows app. You open it and you are in a terminal — local PowerShell, SSH, or both — with splits, groups, an optional file sidebar, an editor, an in-app browser, and an agent that can work on the connected host through SSH. Connections, workspaces, and snippets open beside the shell.
 
-**Current release: [v1.6.2](https://github.com/AEmad99/devterm/releases/tag/v1.6.2)**
+**Current release: [v1.6.3](https://github.com/AEmad99/devterm/releases/tag/v1.6.3)**
 
 ![DevTerm terminal workspace](resources/screens/terminal.png)
 
