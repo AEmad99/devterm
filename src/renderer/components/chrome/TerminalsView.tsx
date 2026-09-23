@@ -4,17 +4,20 @@ import GroupBar from './GroupBar'
 import ConfirmDialog from '../common/ConfirmDialog'
 import {
   IconTerminals,
+  IconLocal,
   IconRemote,
+  IconAgent,
   IconEdit,
   IconPlus,
   IconGrid,
   IconClose,
   EmptyTerminalArt
 } from '../common/Icons'
-import { DEFAULT_GROUP, type Group } from '../../store/layout'
+import { DEFAULT_GROUP, useLayout, type Group } from '../../store/layout'
 import type { Session } from '../../store/sessions'
 import type { EditorDoc } from '../../store/editors'
 import { useSettings } from '../../store/settings'
+import { setAgentUiMode } from '../../lib/agent-ui'
 import { comboLabel, resolveHotkeys, type HotkeyId } from '../../lib/hotkeys'
 
 // CodeMirror and its editor-only UI are unnecessary for the terminal-first
@@ -36,6 +39,8 @@ interface TerminalsViewProps {
   editorClose: (id: string) => void
   onNewTerminal: () => void
   onNewTerminalInGroup?: () => void
+  /** Open the Connections library so the SSH step has somewhere to go. */
+  onOpenConnections?: () => void
   onCreateGrid?: () => void
   onSaveWorkspace: () => void
   saveBackToWorkspace: () => void
@@ -67,6 +72,7 @@ export default function TerminalsView({
   editorClose,
   onNewTerminal,
   onNewTerminalInGroup,
+  onOpenConnections,
   onCreateGrid,
   onSaveWorkspace,
   saveBackToWorkspace,
@@ -88,7 +94,9 @@ export default function TerminalsView({
   const welcomeHintSeen = useSettings((s) => s.welcomeHintSeen)
   const setWelcomeHintSeen = useSettings((s) => s.setWelcomeHintSeen)
   const firstRun = useSettings((s) => s.firstRun)
+  const agentKind = useSettings((s) => s.agentKind)
   const keybindings = useSettings((s) => s.keybindings)
+  const focusedId = useLayout((s) => s.focusedId)
   const effectiveShowGroupBar = showGroupBar && !zenMode
   const welcomeKeys = useMemo(() => {
     const hs = resolveHotkeys(keybindings)
@@ -102,11 +110,50 @@ export default function TerminalsView({
       settings: label('settings')
     }
   }, [keybindings])
+  const openWelcomeAgent = () => {
+    const inGroup = (s: Session) =>
+      (s.groupId || DEFAULT_GROUP) === activeGroupId && !s.closed && s.kind !== 'browser'
+    const candidates = sessionsRef.filter(inGroup)
+    const session =
+      candidates.find((s) => s.id === focusedId) ??
+      candidates.find((s) => s.kind === 'local') ??
+      candidates[0]
+    if (!session || (session.kind === 'remote' && !session.context)) return
+    void setAgentUiMode(session.id, 'docked', {
+      kind: session.agentKind ?? agentKind,
+      title: session.context?.hostname ?? session.title
+    })
+  }
   const welcomeSteps = [
-    !firstRun.localTerminal ? 'Open a local terminal' : null,
-    !firstRun.importedSsh ? 'Import ~/.ssh/config or save a connection' : null,
-    !firstRun.openedAgent ? 'Open Agent once' : null
-  ].filter((step): step is string => step !== null)
+    {
+      id: 'local',
+      done: firstRun.localTerminal,
+      title: 'Local terminal',
+      copy: 'A shell in this group, ready to type.',
+      action: 'Open',
+      icon: IconLocal,
+      onClick: onNewTerminalInGroup ?? onNewTerminal
+    },
+    {
+      id: 'ssh',
+      done: firstRun.importedSsh,
+      title: 'SSH connection',
+      copy: 'Import SSH config or save a host.',
+      action: 'Add',
+      icon: IconRemote,
+      onClick: onOpenConnections
+    },
+    {
+      id: 'agent',
+      done: firstRun.openedAgent,
+      title: 'DevTerm Agent',
+      copy: 'Runs on this PC and works over SSH.',
+      action: 'Start',
+      icon: IconAgent,
+      onClick: openWelcomeAgent
+    }
+  ]
+  const welcomeOpen = welcomeSteps.some((step) => !step.done)
   // Dirty editor close confirmation (a single doc, so one pending id is enough).
   const [pendingEditorClose, setPendingEditorClose] = useState<string | null>(null)
   const requestEditorClose = (id: string, dirty: boolean) => {
@@ -165,34 +212,6 @@ export default function TerminalsView({
         </div>
       )}
 
-      {!welcomeHintSeen && !zenMode && sessionCount > 0 && welcomeSteps.length > 0 && (
-        <div className="welcome-hint">
-          <div className="welcome-hint-head">
-            <span className="welcome-hint-title">Remote coding, without a server install</span>
-            <button
-              className="welcome-hint-close"
-              aria-label="Dismiss"
-              title="Dismiss"
-              onClick={() => setWelcomeHintSeen(true)}
-            >
-              <IconClose size={12} />
-            </button>
-          </div>
-          <p className="welcome-hint-copy">
-            DevTerm Agent runs on this PC and uses your SSH connection to work on remote files and
-            commands. The server needs no agent install or internet access.
-          </p>
-          <ol className="welcome-checklist">
-            {welcomeSteps.map((step) => (
-              <li key={step}>{step}</li>
-            ))}
-          </ol>
-          <span className="welcome-hint-keys">
-            <kbd>{welcomeKeys.palette}</kbd> palette · <kbd>{welcomeKeys.newTerminal}</kbd> new
-            terminal · <kbd>{welcomeKeys.settings}</kbd> settings
-          </span>
-        </div>
-      )}
       {effectiveShowGroupBar && (
         <GroupBar
           groups={groups}
@@ -210,6 +229,61 @@ export default function TerminalsView({
           onSaveNew={onSaveWorkspace}
           onSaveBack={saveBackToWorkspace}
         />
+      )}
+      {!welcomeHintSeen && !zenMode && sessionCount > 0 && welcomeOpen && (
+        <section className="welcome-hint" aria-label="Getting started">
+          <div className="welcome-hint-head">
+            <span className="welcome-hint-title">Getting started</span>
+            <div className="welcome-hint-keys">
+              {welcomeKeys.palette && (
+                <span>
+                  <kbd>{welcomeKeys.palette}</kbd> palette
+                </span>
+              )}
+              {welcomeKeys.newTerminal && (
+                <span>
+                  <kbd>{welcomeKeys.newTerminal}</kbd> new terminal
+                </span>
+              )}
+              {welcomeKeys.settings && (
+                <span>
+                  <kbd>{welcomeKeys.settings}</kbd> settings
+                </span>
+              )}
+            </div>
+            <button
+              type="button"
+              className="welcome-hint-close"
+              onClick={() => setWelcomeHintSeen(true)}
+            >
+              <IconClose size={12} />
+              Dismiss
+            </button>
+          </div>
+          <div className="welcome-cards">
+            {welcomeSteps.map((step) => {
+              const Icon = step.icon
+              return (
+                <button
+                  key={step.id}
+                  type="button"
+                  className={`welcome-card${step.done ? ' is-done' : ''}`}
+                  disabled={step.done || !step.onClick}
+                  onClick={step.onClick}
+                >
+                  <span className="welcome-card-icon">
+                    <Icon size={15} />
+                  </span>
+                  <span className="welcome-card-body">
+                    <span className="welcome-card-title">{step.title}</span>
+                    <span className="welcome-card-copy">{step.copy}</span>
+                  </span>
+                  <span className="welcome-card-state">{step.done ? 'Done' : step.action}</span>
+                </button>
+              )
+            })}
+          </div>
+        </section>
       )}
       <div className="terminals-body">
         <div className={`layout-wrap${editorFocused || sessionCount === 0 ? ' term-hidden' : ''}`}>
