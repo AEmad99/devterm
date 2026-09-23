@@ -48,6 +48,7 @@ describe('agent handoff binary pre-check', () => {
       'kimi',
       'antigravity',
       'muse',
+      'cursor',
       'claude',
       'codex',
       'grok',

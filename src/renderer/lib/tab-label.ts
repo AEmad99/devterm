@@ -86,6 +86,7 @@ function agentLabel(kind?: AgentKind): string {
   if (kind === 'opencode') return 'OpenCode'
   if (kind === 'antigravity') return 'Antigravity'
   if (kind === 'muse') return 'Muse Code'
+  if (kind === 'cursor') return 'Cursor'
   return kind.charAt(0).toUpperCase() + kind.slice(1)
 }
 

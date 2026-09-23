@@ -14,7 +14,8 @@ const AGENT_DISPLAY: Record<AgentKind, string> = {
   grok: 'Grok',
   codex: 'Codex',
   antigravity: 'Antigravity',
-  muse: 'Muse Code'
+  muse: 'Muse Code',
+  cursor: 'Cursor'
 }
 
 function agentName(kind: AgentKind | undefined): string {

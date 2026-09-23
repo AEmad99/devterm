@@ -35,6 +35,35 @@ export type PtyExitListener = (exitCode: number | undefined, signal?: number) =>
 export type PtyDataListener = (data: string) => void
 
 /**
+ * Environment passed to every local PTY (shells and agent CLIs).
+ *
+ * xterm.js renders 24-bit ANSI, so we always set `COLORTERM=truecolor` and
+ * refuse to inherit a parent `NO_COLOR` / `FORCE_COLOR=0` — otherwise Muse and
+ * similar TUIs auto-detect a 16-color terminal and skip syntax themes.
+ */
+export function buildPtyBaseEnv(
+  source: NodeJS.ProcessEnv = process.env
+): Record<string, string> {
+  const baseEnv: Record<string, string> = {}
+  for (const [k, v] of Object.entries(source)) {
+    if (v == null) continue
+    const upper = k.toUpperCase()
+    if (
+      upper.startsWith('ELECTRON_') ||
+      upper.startsWith('NODE_') ||
+      upper === 'VITE_DEV_SERVER_URL' ||
+      upper === 'NO_COLOR'
+    ) {
+      continue
+    }
+    if (upper === 'FORCE_COLOR' && (v === '0' || v.trim() === '')) continue
+    baseEnv[k] = v
+  }
+  baseEnv.COLORTERM = 'truecolor'
+  return baseEnv
+}
+
+/**
  * Startup args for the chosen shell. For PowerShell we inject a `prompt`
  * function that emits, on every prompt:
  *  - OSC 7 (file:// URI of $PWD) so the UI can track the working directory, and
@@ -221,19 +250,12 @@ export class PtyManager {
     // Explicit args (e.g. launching `pi`) bypass the default prompt-injection.
     const args = opts.args ?? shellArgs(shell)
     // Inherit the OS environment but strip Electron/node-specific variables so
-    // user shells don't detect/depend on the app runtime.
-    const baseEnv: Record<string, string> = {}
-    for (const [k, v] of Object.entries(process.env)) {
-      if (v == null) continue
-      const upper = k.toUpperCase()
-      if (
-        upper.startsWith('ELECTRON_') ||
-        upper.startsWith('NODE_') ||
-        upper === 'VITE_DEV_SERVER_URL'
-      )
-        continue
-      baseEnv[k] = v
-    }
+    // user shells don't detect/depend on the app runtime. Also advertise a
+    // truecolor-capable xterm: CLIs like Muse gate TextMate syntax themes on
+    // COLORTERM / color_depth, and without that they fall back to 16-color UI
+    // accents only. Drop inherited NO_COLOR / FORCE_COLOR=0 from parent hosts
+    // (CI, IDE agent shells) so interactive panes stay colorful.
+    const baseEnv = buildPtyBaseEnv(process.env)
     const cwd = opts.cwd || os.homedir()
     const ptyOpts: IWindowsPtyForkOptions = {
       name: 'xterm-256color',

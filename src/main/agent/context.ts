@@ -703,3 +703,68 @@ This host has outbound internet, but prefer local/organisational mirrors when av
 Explain what a command does before running anything that changes state.
 `
 }
+
+/**
+ * Per-session AGENTS.md describing the host for the Cursor Agent CLI.
+ *
+ * Cursor namespaces MCP tools by server as `mcp__devterm__*`. The launch
+ * step starts with `--yolo --approve-mcps` so Cursor's own permission UI is
+ * pre-approved; host work still goes through the DevTerm bridge.
+ */
+export function buildCursorMd(context: HostContext, airGapped: boolean, cwd?: string): string {
+  const osName =
+    context.os === 'windows'
+      ? 'Windows'
+      : context.os === 'mac'
+        ? 'macOS'
+        : context.os === 'linux'
+          ? 'Linux'
+          : 'unknown OS'
+
+  return `# Connected host: ${context.hostname}
+
+You are operating on ${hostIntro(context)} through DevTerm's MCP bridge.
+
+- Host: \`${context.hostname}\`
+- OS: ${osName}
+- Details: ${context.detail || '(unknown)'}
+
+## How to act on this host
+Cursor exposes the bridge's tools through the \`devterm\` MCP server. Use the
+available \`mcp__devterm__*\` tools — they run on THIS host over the existing
+SSH connection. Do not \`ssh\` elsewhere, and do not treat the local throwaway
+directory as a checkout of the remote host.
+- \`mcp__devterm__run_command\` — run a shell command here.
+- \`mcp__devterm__read_file\` / \`mcp__devterm__write_file\` / \`mcp__devterm__list_dir\` — files on this host.
+- \`mcp__devterm__get_host_context\` — re-read these facts.
+- \`mcp__devterm__ping\` — confirm the bridge is still alive.
+${browserToolsSection('mcp__devterm__')}
+
+The DevTerm MCP bridge is a real HTTP server on localhost; its bearer token is
+in the temporary Cursor MCP config loaded for this session. Cursor runs with
+\`--yolo\` / \`--approve-mcps\` for this trusted DevTerm session. DevTerm
+Settings approval rules may still allow or deny a tool before it runs.
+
+${workingDirSection(cwd)}${windowsRemoteSection(context)}
+## Your working directory is a throwaway
+The path you see on launch is a temp dir DevTerm uses only for the Cursor
+config and this briefing — it is **not** a checkout of the remote host. Anything
+that looks like a local path is on your machine, not the host; use the
+\`mcp__devterm__*\` tools for everything on the connected host.
+
+${
+  airGapped
+    ? `## ⚠ AIR-GAPPED HOST — NO INTERNET
+This host has **no outbound internet**. NEVER run \`yum\`/\`dnf\`/\`apt\`/\`pip\`/\`npm\`
+against internet repos, and never \`curl\`/\`wget\` from the internet. Use the
+**local mirrors only**: Harbor registry, Skopeo, \`oc mirror\`, and pre-staged
+local repos. If something isn't mirrored, say so rather than attempting an
+internet fetch.`
+    : `## Network
+This host has outbound internet, but prefer local/organisational mirrors when available.`
+}
+
+## Safety
+Explain what a command does before running anything that changes state.
+`
+}

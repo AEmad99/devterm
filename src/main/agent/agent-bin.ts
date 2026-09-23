@@ -8,6 +8,7 @@ import { resolveGrokBin } from './grok-launch'
 import { resolveCodexBin } from './codex-launch'
 import { resolveAntigravityBin } from './antigravity-launch'
 import { resolveMuseBin } from './muse-launch'
+import { resolveCursorBin } from './cursor-launch'
 
 function agentBinLabel(kind: AgentKind): string {
   switch (kind) {
@@ -27,6 +28,8 @@ function agentBinLabel(kind: AgentKind): string {
       return 'Antigravity'
     case 'muse':
       return 'Muse Code'
+    case 'cursor':
+      return 'Cursor'
     default:
       return 'Pi'
   }
@@ -57,6 +60,8 @@ export async function resolveAgentBin(kind: AgentKind): Promise<string | undefin
       return resolveAntigravityBin()
     case 'muse':
       return resolveMuseBin()
+    case 'cursor':
+      return resolveCursorBin()
   }
 }
 

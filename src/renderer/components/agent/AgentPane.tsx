@@ -283,7 +283,9 @@ export default function AgentPane({
                           ? 'use mcp__devterm__* tools for host work'
                           : kind === 'muse'
                             ? 'Muse --yolo; built-in shell and writes off, MCP devterm server'
-                            : 'built-in tools off'
+                            : kind === 'cursor'
+                              ? 'Cursor --yolo --approve-mcps; MCP devterm server'
+                              : 'built-in tools off'
           term.write(
             isLocal
               ? `\x1b[90m${toolNote}${url ? ` | browser MCP: ${url}` : ''}\x1b[0m\r\n`

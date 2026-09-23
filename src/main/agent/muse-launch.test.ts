@@ -64,7 +64,7 @@ describe('Muse Code CLI launch', () => {
     assert.equal(settings.provider, 'meta')
     assert.equal(settings.model, 'muse-spark-1.3')
     assert.equal(settings.reasoning_effort, 'max')
-    assert.deepEqual(settings.tui, { theme: 'one-dark-pro' })
+    assert.deepEqual(settings.tui, { theme: 'one-dark-pro', color_depth: 'truecolor' })
     assert.equal(settings.permissions, undefined)
     assert.equal(settings.hooks, undefined)
     assert.deepEqual(Object.keys(settings.mcp_servers as object), ['devterm'])
@@ -75,7 +75,21 @@ describe('Muse Code CLI launch', () => {
     )
     assert.equal(echoSettings.provider, 'meta')
     assert.equal(echoSettings.model, undefined)
-    assert.deepEqual(echoSettings.tui, { theme: 'one-dark-pro' })
+    assert.deepEqual(echoSettings.tui, { theme: 'one-dark-pro', color_depth: 'truecolor' })
+  })
+
+  it('forces truecolor even when the operator left color_depth on auto/16', () => {
+    const settings = buildMuseSettings(
+      { url: 'http://127.0.0.1:12345/mcp', token: 'test-token', port: 12345 },
+      { tui: { theme: 'one-dark-pro', color_depth: '16' } }
+    )
+    assert.deepEqual(settings.tui, { theme: 'one-dark-pro', color_depth: 'truecolor' })
+
+    const bare = buildMuseSettings(
+      { url: 'http://127.0.0.1:12345/mcp', token: 'test-token', port: 12345 },
+      {}
+    )
+    assert.deepEqual(bare.tui, { color_depth: 'truecolor' })
   })
 
   it('maps reasoning effort and keeps an interactive positional prompt', async () => {

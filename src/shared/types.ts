@@ -353,11 +353,21 @@ export type PolicyMode = 'read_only' | 'confirm' | 'full'
  * isolated `CODEX_HOME/config.toml` HTTP MCP entry; `antigravity` runs the Google
  * Antigravity CLI (agy) wired through a per-session `.antigravity/mcp.json` HTTP MCP
  * entry; `muse` runs Meta's Muse Code CLI with an isolated settings file and
- * streamable HTTP MCP entry. Every agent reaches this host only through DevTerm's
- * MCP bridge.
+ * streamable HTTP MCP entry; `cursor` runs the Cursor Agent CLI with
+ * `--yolo --approve-mcps` and an isolated `.cursor/mcp.json` HTTP MCP entry.
+ * Every agent reaches this host only through DevTerm's MCP bridge.
  */
 export type AgentKind =
-  'devterm' | 'claude' | 'pi' | 'opencode' | 'kimi' | 'grok' | 'codex' | 'antigravity' | 'muse'
+  | 'devterm'
+  | 'claude'
+  | 'pi'
+  | 'opencode'
+  | 'kimi'
+  | 'grok'
+  | 'codex'
+  | 'antigravity'
+  | 'muse'
+  | 'cursor'
 
 export interface AgentTrustedSkill {
   name: string

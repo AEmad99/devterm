@@ -17,7 +17,7 @@
 
 DevTerm is a normal framed Windows app. You open it and you are in a terminal — local PowerShell, SSH, or both — with splits, groups, an optional file sidebar, an editor, an in-app browser, and an agent that can work on the connected host through SSH. Connections, workspaces, and snippets open beside the shell.
 
-**Current release: [v1.5.0](https://github.com/AEmad99/devterm/releases/tag/v1.5.0)**
+**Current release: [v1.6.0](https://github.com/AEmad99/devterm/releases/tag/v1.6.0)**
 
 ![DevTerm terminal workspace](resources/screens/terminal.png)
 
@@ -39,7 +39,7 @@ DevTerm runs the selected coding-agent CLI on your PC. For remote sessions, its 
 - **In-app browser and Preview** — tabbed http(s) panes for docs and dashboards. Preview localhost, a forwarded port, or a local folder; pin/rectangle/comment overlays send to the pane agent. Agents drive both through `browser_*` and `preview_*` tools.
 - **Command palette, snippets, search** — Ctrl/Cmd+K for actions, snippets (`{{placeholders}}`), connections, workspaces, and history. Per-pane find and global search across terminals (`search_terminals` for agents).
 - **Command block gutters** — on shells with OSC 133 hooks, completed commands get Copy / Ask agent / Comment. The raw PTY stream stays the shell's.
-- **DevTerm Agent** — bundled multi-provider agent, plus Claude, Codex, Grok, OpenCode, Kimi, pi, Antigravity, and Muse Code. Dock, float, or hide the UI without killing the process. Remote host tools ride MCP on the same ssh2 connection; local agents work in the folder that terminal is in. Cockpit (Ctrl/Cmd+Alt+A) focuses, restarts, stops, and delegates local siblings. Select terminal or editor text → **Ask agent about this**.
+- **DevTerm Agent** — bundled multi-provider agent, plus Claude, Codex, Grok, OpenCode, Kimi, pi, Antigravity, Muse Code, and Cursor Agent. Dock, float, or hide the UI without killing the process. Remote host tools ride MCP on the same ssh2 connection; local agents work in the folder that terminal is in. Cockpit (Ctrl/Cmd+Alt+A) focuses, restarts, stops, and delegates local siblings. Select terminal or editor text → **Ask agent about this**.
 - **Session restore** — last-session groups come back with scrollback tails, every browser tab, editors, agents, and ad-hoc SSH drafts. Credentials stay in a safeStorage sidecar; missing secrets prompt. Background remotes connect on focus by default.
 - **Optional tray residency** — close-to-tray keeps local PTYs, SSH sessions, and agents alive while the window is hidden; explicit Quit performs normal cleanup. Reboot survival is not implied.
 - **Port forwards, dictation, themes, notify** — local `-L` and SOCKS `-D`, offline Whisper push-to-talk, nine themes (including Glass), performance presets, personal markdown skills, image-paste-to-agent, and an optional idle/approval webhook or Telegram notify.
@@ -112,7 +112,7 @@ Open Agent from the pane tab strip. Hide and Float do not stop it; Stop / close 
 | App | Electron 29, React 19, TypeScript, Zustand |
 | Terminal | xterm.js (canvas renderer), node-pty, ssh2 |
 | Editor | CodeMirror 6 |
-| Agent | bundled pi-coding-agent + MCP SDK; 8 optional CLIs |
+| Agent | bundled pi-coding-agent + MCP SDK; 9 optional CLIs |
 | Packaged as | unsigned Windows NSIS (`com.devterm.app`) |
 
 ---

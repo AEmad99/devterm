@@ -47,6 +47,7 @@ import { buildGrokMd, prepareGrokLaunch } from '../agent/grok-launch'
 import { buildCodexMd, prepareCodexLaunch } from '../agent/codex-launch'
 import { buildAntigravityMd, prepareAntigravityLaunch } from '../agent/antigravity-launch'
 import { buildMuseMd, prepareMuseLaunch } from '../agent/muse-launch'
+import { buildCursorMd, prepareCursorLaunch } from '../agent/cursor-launch'
 import {
   LocalHostBackend,
   SshHostBackend,
@@ -131,7 +132,8 @@ const AGENT_KINDS: readonly AgentOpenOpts['kind'][] = [
   'grok',
   'codex',
   'antigravity',
-  'muse'
+  'muse',
+  'cursor'
 ]
 
 function sleep(ms: number): Promise<void> {
@@ -156,6 +158,8 @@ function agentKindLabel(kind: AgentOpenOpts['kind']): string {
       return 'Antigravity'
     case 'muse':
       return 'Muse Code'
+    case 'cursor':
+      return 'Cursor'
     default:
       return 'Pi'
   }
@@ -844,10 +848,12 @@ export function registerAgentIpc(
                         )
                       : opts.kind === 'muse'
                         ? await prepareMuseLaunch(remoteBriefing(buildMuseMd), info, extras)
-                        : await (async () => {
-                            mkdirSync(piOpts.sessionDir, { recursive: true })
-                            return prepareAgentLaunch(remoteBriefing(buildAgentsMd), info, piOpts)
-                          })()
+                        : opts.kind === 'cursor'
+                          ? prepareCursorLaunch(remoteBriefing(buildCursorMd), info, extras)
+                          : await (async () => {
+                              mkdirSync(piOpts.sessionDir, { recursive: true })
+                              return prepareAgentLaunch(remoteBriefing(buildAgentsMd), info, piOpts)
+                            })()
       const { id: ptyId } = pty.create(
         {
           shell: spec.bin,
@@ -1077,7 +1083,7 @@ export function registerAgentIpc(
       transparent: false,
       backgroundColor: '#16161e',
       title: hostLabel ? `Agent · ${hostLabel}` : 'DevTerm Agent',
-      icon: loadAppIcon() ?? resolveAppIconPath(),
+      icon: resolveAppIconPath() ?? loadAppIcon(),
       autoHideMenuBar: true,
       webPreferences: {
         preload: join(__dirname, '../preload/index.js'),
@@ -1089,8 +1095,12 @@ export function registerAgentIpc(
         webviewTag: false
       }
     })
-    const floatIcon = loadAppIcon()
-    if (floatIcon) win.setIcon(floatIcon)
+    const floatIconPath = resolveAppIconPath()
+    if (floatIconPath) win.setIcon(floatIconPath)
+    else {
+      const floatIcon = loadAppIcon()
+      if (floatIcon) win.setIcon(floatIcon)
+    }
     agentWindows.set(sessionId, win)
 
     const isLocalSession = sessions.get(sessionId)?.lastOpts?.sessionKind === 'local'

@@ -3,6 +3,18 @@
 All notable changes to DevTerm are documented here. The most recent section is
 at the top. Dates are ISO `YYYY-MM-DD`.
 
+## 1.6.0 — 2026-09-23
+
+### Added
+
+- **Cursor Agent** as a ninth external CLI backend. Launch prefers the official `%LOCALAPPDATA%\cursor-agent\` install (and the `cursor-agent` shim) over a bare `agent` on PATH, wires an isolated `.cursor/mcp.json` HTTP MCP bridge, and starts with `--yolo --approve-mcps --sandbox disabled`. Remote sessions get a temporary `AGENTS.md`; local sessions plant guidance under `~/.cursor/rules/devterm-local.mdc`.
+
+### Fixed
+
+- Local PTYs advertise `COLORTERM=truecolor` and no longer inherit parent `NO_COLOR` / `FORCE_COLOR=0`, so agent TUIs (especially Muse’s TextMate themes) get full syntax highlighting instead of a 16-color fallback.
+- Isolated Muse sessions pin `tui.color_depth: truecolor` so ConPTY does not probe down to 16 colors and skip the TextMate theme.
+- Windows taskbar / titlebar icon prefers the multi-size `.ico` path, and unpackaged dev builds use a distinct AppUserModelID so they do not steal the installed shortcut’s icon association.
+
 ## 1.5.0 — 2026-09-22
 
 ### Changed

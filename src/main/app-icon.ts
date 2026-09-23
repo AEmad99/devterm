@@ -30,9 +30,14 @@ function candidates(name: string): string[] {
   return app.isPackaged ? packed : [...unpacked, ...packed]
 }
 
+/**
+ * Path to the app logo. On Windows, prefer the multi-size `.ico` — Electron and
+ * the shell use those sizes for the taskbar/titlebar. PNG is preferred elsewhere
+ * (notifications, Linux) where NativeImage/ICO support is weaker.
+ */
 export function resolveAppIconPath(): string | undefined {
-  // PNG loads reliably through Electron nativeImage; ICO is for the exe stamp.
-  const names = ['icon.png', 'icon.ico']
+  const names =
+    process.platform === 'win32' ? (['icon.ico', 'icon.png'] as const) : (['icon.png', 'icon.ico'] as const)
   for (const name of names) {
     for (const p of candidates(name)) {
       if (isFile(p)) return p

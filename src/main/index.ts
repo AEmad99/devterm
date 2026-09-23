@@ -292,7 +292,9 @@ function createWindow(): void {
     transparent: false,
     backgroundColor: '#16161e',
     title: 'DevTerm',
-    icon: loadAppIcon() ?? resolveAppIconPath(),
+    // Prefer a filesystem path (ICO on Windows) over a NativeImage — the shell
+    // picks the right size for the taskbar from the multi-res .ico.
+    icon: resolveAppIconPath() ?? loadAppIcon(),
     autoHideMenuBar: true,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
@@ -320,8 +322,12 @@ function createWindow(): void {
     }
   })
 
-  const icon = loadAppIcon()
-  if (icon) mainWindow.setIcon(icon)
+  const iconPath = resolveAppIconPath()
+  if (iconPath) mainWindow.setIcon(iconPath)
+  else {
+    const icon = loadAppIcon()
+    if (icon) mainWindow.setIcon(icon)
+  }
   mainWindow.on('ready-to-show', () => {
     if (state.maximized) mainWindow?.maximize()
     mainWindow?.show()
@@ -493,14 +499,12 @@ function registerIpc(): void {
 }
 
 /**
- * Tray icon: gives quick Show/Quit access for optional tray-resident mode. The
- * icon is pulled from the executable itself (works in dev and packaged builds
- * without shipping a separate asset).
+ * Tray icon: gives quick Show/Quit access for optional tray-resident mode.
+ * Prefer the bundled logo path; fall back to the executable's associated icon.
  */
 function createTray(): void {
   if (tray) return
-  const bundled = loadAppIcon()
-  const attach = (icon: Electron.NativeImage) => {
+  const attach = (icon: Electron.NativeImage | string) => {
     if (tray) return
     tray = new Tray(icon)
     tray.setToolTip('DevTerm')
@@ -519,6 +523,12 @@ function createTray(): void {
     )
     tray.on('click', () => showMainWindow())
   }
+  const iconPath = resolveAppIconPath()
+  if (iconPath) {
+    attach(iconPath)
+    return
+  }
+  const bundled = loadAppIcon()
   if (bundled) {
     attach(bundled)
     return
@@ -555,10 +565,11 @@ if (!gotSingleInstance) {
 
     // Identify the app to Windows so attention notifications (Notification in
     // ipc/window.ts) are attributed to "DevTerm" with the app icon and group
-    // under it in Action Center. Must match electron-builder's appId. No-op off
-    // Windows. In dev (unpackaged) toasts may be limited, but the taskbar flash
-    // still fires — packaged builds get full toast support via the install shim.
-    app.setAppUserModelId('com.devterm.app')
+    // under it in Action Center. Must match electron-builder's appId when
+    // packaged. Use a distinct id in unpackaged/dev so the live Electron process
+    // does not steal the installed shortcut's AUMID (that mismatch often blanked
+    // the taskbar icon). No-op off Windows.
+    app.setAppUserModelId(app.isPackaged ? 'com.devterm.app' : 'com.devterm.app.dev')
 
     // The in-app browser pane's persistent partition (must match BrowserPane.tsx).
     // Strip the `DevTerm/x` and `Electron/x` tokens from its user agent so it looks

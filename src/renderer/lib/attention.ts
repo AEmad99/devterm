@@ -239,6 +239,7 @@ const AGENT_COMMAND_NAMES = new Set([
   'antigravity', // Google Antigravity CLI (agy)
   'agy', // Google Antigravity CLI alias
   'muse', // Meta Muse Code CLI
+  'cursor-agent', // Cursor Agent CLI
   'goose', // Block Goose (@block/goose)
   'crush', // Charm Crush (@charmland/crush)
   'kiro' // AWS Kiro CLI (rebranded from Amazon Q Developer)

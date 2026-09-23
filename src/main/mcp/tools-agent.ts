@@ -36,7 +36,8 @@ const AGENT_KINDS = [
   'grok',
   'codex',
   'antigravity',
-  'muse'
+  'muse',
+  'cursor'
 ] as const
 
 const AGENT_EFFORTS = ['low', 'medium', 'high', 'max'] as const
@@ -50,6 +51,7 @@ const errorText = (value: string) => ({
 function cliLabel(kind: AgentKind): string {
   if (kind === 'devterm') return 'DevTerm Agent'
   if (kind === 'muse') return 'Muse Code'
+  if (kind === 'cursor') return 'Cursor'
   return kind[0].toUpperCase() + kind.slice(1)
 }
 

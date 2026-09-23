@@ -134,9 +134,20 @@ export function safeMusePreferences(value: unknown): MuseSettings {
 }
 
 export function buildMuseSettings(bridge: BridgeInfo, userSettings?: unknown): MuseSettings {
+  const prefs = safeMusePreferences(userSettings)
+  const tui: MuseSettings =
+    prefs.tui && typeof prefs.tui === 'object' && !Array.isArray(prefs.tui)
+      ? { ...(prefs.tui as MuseSettings) }
+      : {}
+  // DevTerm's agent xterm always renders truecolor ANSI. Muse's `auto` probe
+  // often settles on 16 colors inside ConPTY (no WT_SESSION / weak COLORTERM
+  // inheritance) and then skips the TextMate theme (`tui.theme`) — leaving
+  // tool-name accents only. Pin truecolor for the isolated session.
+  tui.color_depth = 'truecolor'
   return {
     schema_version: 1,
-    ...safeMusePreferences(userSettings),
+    ...prefs,
+    tui,
     provider: 'meta',
     mcp_servers: {
       devterm: {
