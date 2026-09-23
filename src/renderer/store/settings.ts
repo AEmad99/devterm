@@ -148,14 +148,14 @@ export interface AppSettings {
   /** In-memory global-search ring size per session. */
   searchIndexLines: number
   /**
-   * One-time onboarding hint (the floating "Getting started" card in the
-   * terminals view). Flipped to true when the user dismisses it; older saved
-   * payloads without the field default to false so the hint shows once.
+   * One-time onboarding row (three cards above the terminal panes). Flipped
+   * to true when the user dismisses it or finishes every step; older saved
+   * payloads without the field default to false so the row shows once.
    */
   welcomeHintSeen: boolean
   /**
    * First-run checklist. Never resurrected by settings import.
-   * The three setup steps hide the card. Picking a theme is recorded and is not required.
+   * All three steps hide the row. Picking a theme is recorded and is not required.
    */
   firstRun: {
     localTerminal: boolean

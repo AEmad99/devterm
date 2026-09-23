@@ -931,6 +931,10 @@ export default function App() {
                 editorClose={editorClose}
                 onNewTerminal={() => setShowPicker(true)}
                 onNewTerminalInGroup={() => addLocal({ groupId: activeGroupId })}
+                onOpenConnections={() => {
+                  setLibrary('connections')
+                  setLibraryWidth((w) => Math.max(w, 440))
+                }}
                 onCreateGrid={() => setShowGrid(true)}
                 onSaveWorkspace={() => setShowSaveWs(true)}
                 saveBackToWorkspace={() => void saveBackToWorkspace()}
