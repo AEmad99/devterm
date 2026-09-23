@@ -125,6 +125,9 @@ win:
     - '!**/node_modules/@esbuild/aix-*/**'
     - '!**/node_modules/@esbuild/win32-ia32/**'
     - '!**/node_modules/@esbuild/win32-arm64/**'
+    # The agent resolves esbuild from its nested node_modules. Drop the extra
+    # top-level copy electron-builder would otherwise hoist in.
+    - '!node_modules/@esbuild/**'
     - '!.sl{,/**/*}'
     - '!.hg{,/**/*}'
     - '!.eden{,/**/*}'
