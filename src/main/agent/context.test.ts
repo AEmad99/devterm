@@ -44,6 +44,7 @@ describe('agent briefings', () => {
     assert.match(md, /not registered/)
     assert.ok(md.includes('D:\\projects\\app'))
     assert.match(md, /mcp__devterm__browser_open/)
+    assert.match(md, /mcp__devterm__browser_fill/)
     assert.match(md, /first-class/i)
     assert.match(md, /tools \*\*are\*\* registered/)
     assert.match(md, /agent_delegate/)

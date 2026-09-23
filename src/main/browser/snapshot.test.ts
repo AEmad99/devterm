@@ -89,6 +89,27 @@ describe('snapshot formatOutline', () => {
     assert.ok(out.includes('[checked]'))
     assert.ok(out.includes('[unchecked]'))
   })
+  it('renders disabled, expanded, and select options', () => {
+    const out = formatOutline({
+      title: '',
+      url: 'x',
+      root: page([
+        { r: 'button', n: 'Save', dis: true, ref: 'e1' },
+        { r: 'combobox', n: 'Menu', exp: true, ref: 'e2' },
+        { r: 'select', n: 'Color', v: 'blue', opts: 'Red | Blue*| Green', ref: 'e3' }
+      ])
+    })
+    assert.ok(out.includes('[disabled]'))
+    assert.ok(out.includes('[expanded]'))
+    assert.ok(out.includes('options={Red | Blue*| Green}'))
+  })
+  it('snapshot script tags disabled/expanded and richer iframe placeholders', () => {
+    const s = buildSnapshotScript()
+    assert.ok(s.includes('aria-disabled'))
+    assert.ok(s.includes('aria-expanded'))
+    assert.ok(s.includes('content not yet traversable'))
+    assert.ok(s.includes('node.opts'))
+  })
   it('hard-caps output and marks the truncation', () => {
     const big = formatOutline(
       {

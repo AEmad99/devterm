@@ -19,6 +19,8 @@ type PaneOpener = (tabKey: string, url: string) => void
 const openers = new Map<string, PaneOpener>()
 /** tabKey → close fn, so main's browser_close tool can destroy the right tab. */
 const closers = new Map<string, () => void>()
+/** tabKey → focus/activate fn for browser_focus. */
+const focusers = new Map<string, () => void>()
 
 export function registerPaneOpener(paneSessionId: string, open: PaneOpener): () => void {
   openers.set(paneSessionId, open)
@@ -31,6 +33,13 @@ export function registerTabCloser(tabKey: string, close: () => void): () => void
   closers.set(tabKey, close)
   return () => {
     if (closers.get(tabKey) === close) closers.delete(tabKey)
+  }
+}
+
+export function registerTabFocuser(tabKey: string, focus: () => void): () => void {
+  focusers.set(tabKey, focus)
+  return () => {
+    if (focusers.get(tabKey) === focus) focusers.delete(tabKey)
   }
 }
 
@@ -76,6 +85,9 @@ export function initBrowserControl(): void {
   window.devterm.browserControl.onRequest(handleOpenRequest)
   window.devterm.browserControl.onCloseTab((tabKey) => {
     closers.get(tabKey)?.()
+  })
+  window.devterm.browserControl.onFocusTab((tabKey) => {
+    focusers.get(tabKey)?.()
   })
 }
 

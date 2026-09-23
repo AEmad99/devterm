@@ -15,6 +15,7 @@ import { registerBrowserGuest } from '../../lib/browserTabs'
 import {
   registerPaneOpener,
   registerTabCloser,
+  registerTabFocuser,
   reportTabRegistered,
   reportTabTitle,
   reportTabUnregistered,
@@ -173,6 +174,8 @@ const BrowserTab = memo(
       ownerAgentSessionId?: string
       /** Pane-level closeTab, registered so the browser_close tool can reach it. */
       onClose: () => void
+      /** Activate this tab in the pane (browser_focus tool). */
+      onActivate: () => void
     }
   >(function BrowserTab(
     {
@@ -184,7 +187,8 @@ const BrowserTab = memo(
       paneSessionId,
       agentOwned,
       ownerAgentSessionId,
-      onClose
+      onClose,
+      onActivate
     },
     ref
   ) {
@@ -270,8 +274,9 @@ const BrowserTab = memo(
       const wv = el.current
       if (!wv) return
       const id = tab.id
-      // Expose this tab to main's browser_close tool for its lifetime.
+      // Expose this tab to main's browser_close / browser_focus tools for its lifetime.
       const unclose = registerTabCloser(id, onClose)
+      const unfocus = registerTabFocuser(id, onActivate)
       const setLoading = (v: boolean) => {
         onState(id, { loading: v })
       }
@@ -420,6 +425,7 @@ const BrowserTab = memo(
       return () => {
         wv.removeEventListener('before-input-event', onBeforeInput)
         unclose()
+        unfocus()
         unregister()
         onWebContents(id, null)
         reportTabUnregistered(id)
@@ -1017,6 +1023,10 @@ function BrowserPane({ session }: { session: Session }) {
                 agentOwned={!!session.agentOwnedBy}
                 ownerAgentSessionId={session.agentOwnedBy}
                 onClose={() => closeTab(t.id)}
+                onActivate={() => {
+                  setActiveId(t.id)
+                  useSessions.getState().setActive(session.id)
+                }}
               />
             </div>
           ))}

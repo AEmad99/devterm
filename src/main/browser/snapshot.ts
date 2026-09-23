@@ -22,6 +22,9 @@ export interface OutlineNode {
   lvl?: number // heading level
   v?: string // current input value (capped)
   chk?: boolean // checked state
+  dis?: boolean // disabled
+  exp?: boolean // aria-expanded
+  opts?: string // select option labels summary
   kids?: OutlineNode[]
 }
 
@@ -80,8 +83,12 @@ function visit(el,depth,out){
   if(el.nodeType!==1)return;
   var tn=el.tagName.toLowerCase();
   if(tn==='svg')tn='svg';
-  if(SKIP.has(tn)){if(tn==='iframe')out.kids.push({r:'iframe',n:name(el)});
-    else if(tn==='canvas')out.kids.push({r:'img',n:'[canvas]'});return}
+  if(SKIP.has(tn)){
+    if(tn==='iframe'){
+      var src=(el.getAttribute('src')||'').slice(0,200);
+      out.kids.push({r:'iframe',n:(name(el)||src||'iframe')+' (content not yet traversable — navigate directly or interact inside the frame URL)'});
+    } else if(tn==='canvas')out.kids.push({r:'img',n:'[canvas]'});
+    return}
   if(hidden(el))return;
   var node={r:''};
   var m=/^h([1-6])$/.exec(tn);
@@ -95,12 +102,25 @@ function visit(el,depth,out){
     if(ty==='checkbox'||ty==='radio')node.chk=!!el.checked}
   else if(tn==='textarea'){node.r='textbox';node.n=name(el);
     var tv=String(el.value||'').slice(0,80);if(tv)node.v=tv}
-  else if(tn==='select'){node.r='select';node.n=name(el)}
+  else if(tn==='select'){
+    node.r='select';node.n=name(el);
+    var labels=[];
+    var selOpts=el.options||[];
+    for(var oi=0;oi<selOpts.length&&oi<12;oi++){
+      var ot=String(selOpts[oi].text||'').replace(/\\s+/g,' ').trim().slice(0,40);
+      if(ot)labels.push(ot+(selOpts[oi].selected?'*':''));
+    }
+    if(labels.length)node.opts=labels.join(' | ');
+    if(el.value)node.v=String(el.value).slice(0,80);
+  }
   else if(tn==='option'){node.r='option';node.n=txt(el)}
   else if(tn==='label'){node.r='label';node.n=txt(el)}
   else if(tn==='img'){node.r='img';node.n=name(el)}
   else{var ro=el.getAttribute('role');
     node.r=ro||(/^(nav|main|header|footer|form|table|ul|ol)$/.test(tn)?tn:'group')}
+  if(el.disabled||el.getAttribute('aria-disabled')==='true')node.dis=true;
+  var ax=el.getAttribute('aria-expanded');
+  if(ax==='true')node.exp=true;else if(ax==='false')node.exp=false;
   if(INTERACTIVE_SEL && el.matches(INTERACTIVE_SEL))node.ref=tag(el);
   var entry={kids:[]};entry.node=node;
   out.kids.push(node);out.count++;
@@ -151,6 +171,10 @@ export function formatOutline(payload: SnapshotPayload, maxChars = 20000): strin
     if (node.n) s += ` "${node.n}"`
     if (node.v) s += ` value="${node.v}"`
     if (node.chk !== undefined) s += node.chk ? ' [checked]' : ' [unchecked]'
+    if (node.dis) s += ' [disabled]'
+    if (node.exp === true) s += ' [expanded]'
+    else if (node.exp === false) s += ' [collapsed]'
+    if (node.opts) s += ` options={${node.opts}}`
     if (node.href && node.href !== '#') s += ` → ${node.href}`
     if (node.ref) s += ` [${node.ref}]`
     lines.push(s)

@@ -917,6 +917,8 @@ export const IPC = {
   browserControlUnregister: 'browser:control:unregister',
   /** Main → renderer: close the pane tab whose key matches (browser_close tool). */
   browserControlCloseTab: 'browser:control:close-tab',
+  /** Main → renderer: activate/focus the pane tab whose key matches (browser_focus tool). */
+  browserControlFocusTab: 'browser:control:focus-tab',
 
   // window appearance (glass/translucent material)
   windowSetGlass: 'window:set-glass',
@@ -1298,6 +1300,8 @@ export interface DevTermApi {
     onRequest(cb: (req: BrowserOpenRequest) => void): () => void
     /** Main asks the renderer to close the pane tab with this key. */
     onCloseTab(cb: (tabKey: string) => void): () => void
+    /** Main asks the renderer to activate the pane tab with this key. */
+    onFocusTab(cb: (tabKey: string) => void): () => void
   }
   /** Window appearance hooks. Native window controls are owned by the OS frame. */
   window: {

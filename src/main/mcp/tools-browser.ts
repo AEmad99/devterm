@@ -6,13 +6,17 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { IPC } from '@shared/types'
 import type { BrowserControlService, BrowserTabEntry } from '../browser/control'
 import { guestUrlOk, toLoadableUrl } from '../browser/url-guard'
-import { buildSnapshotScript, formatOutline, parseSnapshot } from '../browser/snapshot'
 import {
-  buildClickScript,
-  buildKeyPressScript,
-  buildTypeScript,
-  parseInteraction
-} from '../browser/interact'
+  actionClick,
+  actionFill,
+  actionHover,
+  actionPressKey,
+  actionSelect,
+  actionSnapshot,
+  actionType
+} from '../browser/actions'
+import { buildScrollScript, parseInteraction } from '../browser/interact'
+import { formatObsAppendix, lastNavFail } from '../browser/observers'
 import { recordBridgeActivity } from '../ipc/foundation'
 import { sanitizeDetail } from './server'
 import type { ToolDeps } from './tools'
@@ -40,6 +44,10 @@ function originOf(url: string): string {
   } catch {
     return url.slice(0, 80)
   }
+}
+
+function actionToMcp(r: { ok: boolean; text: string; isError?: boolean }) {
+  return r.ok && !r.isError ? text(r.text) : errorText(r.text)
 }
 
 export function registerBrowserTools(mcp: McpServer, deps: ToolDeps): void {
@@ -92,6 +100,35 @@ export function registerBrowserTools(mcp: McpServer, deps: ToolDeps): void {
     return null
   }
 
+  /** Password-field re-check shared by browser_type and browser_fill. */
+  const withPasswordPolicy = async (
+    tool: string,
+    origin: string,
+    run: (allowPassword: boolean) => Promise<{
+      ok: boolean
+      text: string
+      isError?: boolean
+      passwordField?: boolean
+    }>
+  ) => {
+    let out = await run(false)
+    if (out.passwordField) {
+      const verdict = policy.evaluateWrite()
+      if (!verdict.allow)
+        return errorText(
+          `Blocked by guardrail (policy mode: ${policy.mode}): typing into a password field on ${origin} is not allowed.`
+        )
+      if (verdict.needConfirm) {
+        const outcome = await confirmWithActivity(tool, `password field on ${origin}`)
+        if (outcome === 'timeout')
+          return errorText('Approval timed out for typing into the password field.')
+        if (outcome === 'denied') return errorText('Operator denied typing into the password field.')
+      }
+      out = await run(true)
+    }
+    return actionToMcp(out)
+  }
+
   mcp.registerTool(
     'browser_list',
     {
@@ -126,7 +163,7 @@ export function registerBrowserTools(mcp: McpServer, deps: ToolDeps): void {
         "FIRST-CLASS: open a tab in DevTerm's in-app browser and go to a URL (http/https only). " +
         'This is the correct way to open web pages — do not use bash, start, xdg-open, or the OS browser. ' +
         "Shares cookies with the operator's browsing; they can always see this tab. " +
-        'Later browser_* calls default to this tab.',
+        'Later browser_* calls default to this tab. Then browser_snapshot before clicking.',
       inputSchema: {
         url: z.string().describe('Absolute http(s) URL to load.')
       }
@@ -143,9 +180,14 @@ export function registerBrowserTools(mcp: McpServer, deps: ToolDeps): void {
           ownerAgentSessionId: sessionId
         })
         await service.waitForSettle(entry)
+        const fail = lastNavFail(entry.wcId)
+        if (fail && !entry.url.startsWith(normalized.slice(0, 32))) {
+          return errorText(`browser_open: ${fail}`)
+        }
         return text(
           `opened tab ${entry.tabKey} · ${entry.url}${entry.title ? ` · "${entry.title}"` : ''}\n` +
-            'Use browser_snapshot to read it.'
+            'Use browser_snapshot to read it.' +
+            formatObsAppendix(entry.wcId)
         )
       } catch (e) {
         return errorText(`browser_open failed: ${(e as Error).message}`)
@@ -184,9 +226,18 @@ export function registerBrowserTools(mcp: McpServer, deps: ToolDeps): void {
           const settled = await service.waitForSettle(t.entry)
           if (settled === 'timeout') note = '\n(note: page may still be loading)'
         }
-        return text(`navigated ${t.entry.tabKey} → ${normalized}${note}`)
+        const fail = lastNavFail(t.entry.wcId)
+        if (fail) {
+          return errorText(`browser_navigate: ${fail}${formatObsAppendix(t.entry.wcId)}`)
+        }
+        return text(
+          `navigated ${t.entry.tabKey} → ${normalized}${note}${formatObsAppendix(t.entry.wcId)}`
+        )
       } catch (e) {
-        return errorText(`browser_navigate failed: ${(e as Error).message}`)
+        const fail = lastNavFail(t.entry.wcId)
+        return errorText(
+          `browser_navigate failed: ${fail || (e as Error).message}${formatObsAppendix(t.entry.wcId)}`
+        )
       }
     }
   )
@@ -195,7 +246,7 @@ export function registerBrowserTools(mcp: McpServer, deps: ToolDeps): void {
     'browser_snapshot',
     {
       description:
-        'FIRST-CLASS in-app browser: read the page as a compact accessibility outline. Interactive elements carry refs like [e12] for browser_click / browser_type. Always snapshot after navigation or clicks before using refs.',
+        'FIRST-CLASS in-app browser: read the page as a compact accessibility outline. Interactive elements carry refs like [e12] for browser_click / browser_type / browser_fill. Always snapshot after navigation or clicks before using refs. Recent console errors are appended when present.',
       inputSchema: {
         tabId: z.string().optional(),
         max_chars: z.number().int().positive().max(60000).optional()
@@ -205,9 +256,8 @@ export function registerBrowserTools(mcp: McpServer, deps: ToolDeps): void {
       const t = target(tabId)
       if ('error' in t) return t.error
       try {
-        const raw = await service.executeJs<string>(t.entry, buildSnapshotScript())
-        const outline = formatOutline(parseSnapshot(raw), max_chars ?? 20000)
-        return text(`${UNTRUSTED_NOTE}\n\n${outline}`)
+        const r = await actionSnapshot(service, t.entry, max_chars ?? 20000)
+        return text(`${UNTRUSTED_NOTE}\n\n${r.text}`)
       } catch (e) {
         return errorText(`browser_snapshot failed: ${(e as Error).message}`)
       }
@@ -218,7 +268,7 @@ export function registerBrowserTools(mcp: McpServer, deps: ToolDeps): void {
     'browser_click',
     {
       description:
-        'FIRST-CLASS in-app browser: click an element by snapshot ref (e.g. e12). A visible agent cursor moves to the target. Snapshot again after the page may have changed.',
+        'FIRST-CLASS in-app browser: click an element by snapshot ref (e.g. e12). Uses trusted CDP input when available; a visible agent cursor moves to the target. Snapshot again after the page may have changed.',
       inputSchema: {
         ref: z.string().describe('Element ref from your last browser_snapshot.'),
         tabId: z.string().optional()
@@ -230,13 +280,7 @@ export function registerBrowserTools(mcp: McpServer, deps: ToolDeps): void {
       const blocked = await guard('browser_click', originOf(t.entry.url), true)
       if (blocked) return blocked
       try {
-        const out = parseInteraction(await service.executeJs(t.entry, buildClickScript(ref)))
-        if (out.err) return errorText(out.err)
-        const settled = await service.waitForSettle(t.entry, 4000)
-        return text(
-          `clicked ${ref}${out.detail ? ` (${out.detail})` : ''}` +
-            (settled === 'timeout' ? '\n(note: page may still be settling)' : '')
-        )
+        return actionToMcp(await actionClick(service, t.entry, ref))
       } catch (e) {
         return errorText(`browser_click failed: ${(e as Error).message}`)
       }
@@ -247,7 +291,7 @@ export function registerBrowserTools(mcp: McpServer, deps: ToolDeps): void {
     'browser_type',
     {
       description:
-        'FIRST-CLASS in-app browser: type into an input by snapshot ref (replaces existing value). A visible agent cursor moves to the field. submit=true presses Enter. Password fields follow the operator policy.',
+        'FIRST-CLASS in-app browser: type into an input by snapshot ref (replaces existing value via fill). Prefer browser_fill for forms. submit=true presses Enter. Password fields follow the operator policy. Uses trusted CDP input when available.',
       inputSchema: {
         ref: z.string(),
         text: z.string().max(10000),
@@ -259,30 +303,11 @@ export function registerBrowserTools(mcp: McpServer, deps: ToolDeps): void {
       const t = target(tabId)
       if ('error' in t) return t.error
       const origin = originOf(t.entry.url)
-      // First attempt refuses password fields so the policy verdict below can
-      // decide explicitly whether typing secrets is allowed.
-      const run = (allowPassword: boolean) =>
-        service.executeJs<unknown>(t.entry, buildTypeScript(ref, value, !!submit, allowPassword))
+      const blocked = await guard('browser_type', origin, true)
+      if (blocked) return blocked
       try {
-        let out = parseInteraction(await run(false))
-        if (out.passwordField) {
-          const verdict = policy.evaluateWrite()
-          if (!verdict.allow)
-            return errorText(
-              `Blocked by guardrail (policy mode: ${policy.mode}): typing into a password field on ${origin} is not allowed.`
-            )
-          if (verdict.needConfirm) {
-            const outcome = await confirmWithActivity('browser_type', `password field on ${origin}`)
-            if (outcome === 'timeout')
-              return errorText('Approval timed out for typing into the password field.')
-            if (outcome === 'denied')
-              return errorText('Operator denied typing into the password field.')
-          }
-          out = parseInteraction(await run(true))
-        }
-        if (out.err) return errorText(out.err)
-        return text(
-          `typed into ${ref}${submit ? ' + submitted' : ''}${out.detail ? ` (${out.detail})` : ''}`
+        return await withPasswordPolicy('browser_type', origin, (allow) =>
+          actionType(service, t.entry, ref, value, !!submit, allow)
         )
       } catch (e) {
         return errorText(`browser_type failed: ${(e as Error).message}`)
@@ -291,24 +316,207 @@ export function registerBrowserTools(mcp: McpServer, deps: ToolDeps): void {
   )
 
   mcp.registerTool(
-    'browser_press_key',
+    'browser_fill',
     {
       description:
-        'Send a key (Enter, Escape, ArrowDown, Tab…) to the focused element of a browser tab.',
+        'FIRST-CLASS in-app browser: clear and fill an input/textarea/contenteditable by snapshot ref (React-safe). Prefer this over browser_type for forms. submit=true presses Enter. Uses trusted CDP input when available.',
       inputSchema: {
-        key: z.string().min(1),
+        ref: z.string().describe('Element ref from browser_snapshot.'),
+        text: z.string().max(10000),
+        submit: z.boolean().optional(),
         tabId: z.string().optional()
       }
     },
-    async ({ key, tabId }) => {
+    async ({ ref, text: value, submit, tabId }) => {
+      const t = target(tabId)
+      if ('error' in t) return t.error
+      const origin = originOf(t.entry.url)
+      const blocked = await guard('browser_fill', origin, true)
+      if (blocked) return blocked
+      try {
+        return await withPasswordPolicy('browser_fill', origin, (allow) =>
+          actionFill(service, t.entry, ref, value, !!submit, allow)
+        )
+      } catch (e) {
+        return errorText(`browser_fill failed: ${(e as Error).message}`)
+      }
+    }
+  )
+
+  mcp.registerTool(
+    'browser_select',
+    {
+      description:
+        'FIRST-CLASS in-app browser: choose an option on a native <select> by value, visible label, or index. For custom comboboxes, use browser_click on option refs from browser_snapshot instead.',
+      inputSchema: {
+        ref: z.string(),
+        value: z.string().optional().describe('option value attribute'),
+        label: z.string().optional().describe('visible option text'),
+        index: z.number().int().nonnegative().optional().describe('0-based option index'),
+        tabId: z.string().optional()
+      }
+    },
+    async ({ ref, value, label, index, tabId }) => {
+      const t = target(tabId)
+      if ('error' in t) return t.error
+      if (value === undefined && label === undefined && index === undefined)
+        return errorText('browser_select requires value, label, or index')
+      const blocked = await guard('browser_select', originOf(t.entry.url), true)
+      if (blocked) return blocked
+      try {
+        return actionToMcp(await actionSelect(service, t.entry, ref, { value, label, index }))
+      } catch (e) {
+        return errorText(`browser_select failed: ${(e as Error).message}`)
+      }
+    }
+  )
+
+  mcp.registerTool(
+    'browser_scroll',
+    {
+      description:
+        'Scroll the page or a snapshot-ref element. direction defaults to down; pixels default 600.',
+      inputSchema: {
+        ref: z.string().optional().describe('Scroll this element; omit to scroll the page.'),
+        direction: z.enum(['up', 'down', 'left', 'right']).optional(),
+        pixels: z.number().int().positive().max(10000).optional(),
+        tabId: z.string().optional()
+      }
+    },
+    async ({ ref, direction, pixels, tabId }) => {
+      const t = target(tabId)
+      if ('error' in t) return t.error
+      const blocked = await guard('browser_scroll', originOf(t.entry.url), true)
+      if (blocked) return blocked
+      try {
+        const out = parseInteraction(
+          await service.executeJs(
+            t.entry,
+            buildScrollScript({ ref, direction, pixels })
+          )
+        )
+        if (out.err) return errorText(out.err)
+        return text(
+          `${out.detail ?? 'scrolled'}` +
+            (out.scrollX !== undefined ? ` · scroll=(${out.scrollX},${out.scrollY})` : '') +
+            formatObsAppendix(t.entry.wcId)
+        )
+      } catch (e) {
+        return errorText(`browser_scroll failed: ${(e as Error).message}`)
+      }
+    }
+  )
+
+  mcp.registerTool(
+    'browser_hover',
+    {
+      description:
+        'Hover a snapshot-ref element (opens menus/tooltips). Uses trusted CDP mouseMoved when available.',
+      inputSchema: {
+        ref: z.string(),
+        tabId: z.string().optional()
+      }
+    },
+    async ({ ref, tabId }) => {
+      const t = target(tabId)
+      if ('error' in t) return t.error
+      const blocked = await guard('browser_hover', originOf(t.entry.url), true)
+      if (blocked) return blocked
+      try {
+        return actionToMcp(await actionHover(service, t.entry, ref))
+      } catch (e) {
+        return errorText(`browser_hover failed: ${(e as Error).message}`)
+      }
+    }
+  )
+
+  mcp.registerTool(
+    'browser_wait',
+    {
+      description:
+        'Wait for a snapshot ref to become visible, for page text to appear, or for the page to settle after navigation/SPA updates. Pass ref and/or text; with neither, waits for DOM settle.',
+      inputSchema: {
+        ref: z.string().optional().describe('Wait until this data-dt-ref is visible.'),
+        text: z.string().optional().describe('Wait until this substring appears in page text.'),
+        timeout_ms: z
+          .number()
+          .int()
+          .positive()
+          .max(30000)
+          .optional()
+          .describe('Default 8000, max 30000.'),
+        tabId: z.string().optional()
+      }
+    },
+    async ({ ref, text: needle, timeout_ms, tabId }) => {
+      const t = target(tabId)
+      if ('error' in t) return t.error
+      const ms = timeout_ms ?? 8000
+      try {
+        if (ref) {
+          const r = await service.waitForRef(t.entry, ref, ms)
+          if (r === 'timeout')
+            return errorText(
+              `browser_wait timed out after ${ms}ms waiting for ref ${ref}. Run browser_snapshot to see current refs.`
+            )
+          return text(`ref ${ref} is visible`)
+        }
+        if (needle) {
+          const r = await service.waitForText(t.entry, needle, ms)
+          if (r === 'timeout')
+            return errorText(`browser_wait timed out after ${ms}ms waiting for text ${JSON.stringify(needle)}`)
+          return text(`text found: ${JSON.stringify(needle)}`)
+        }
+        const settled = await service.waitForSettle(t.entry, ms)
+        return text(
+          settled === 'settled'
+            ? 'page settled'
+            : `wait finished (page may still be settling after ${ms}ms)`
+        )
+      } catch (e) {
+        return errorText(`browser_wait failed: ${(e as Error).message}`)
+      }
+    }
+  )
+
+  mcp.registerTool(
+    'browser_focus',
+    {
+      description:
+        'Make a browser tab your default target and activate it in the UI so the operator can see what you are driving.',
+      inputSchema: {
+        tabId: z.string().describe('Tab id from browser_list / browser_open.')
+      }
+    },
+    async ({ tabId }) => {
+      const t = target(tabId)
+      if ('error' in t) return t.error
+      service.setLastOwned(sessionId, t.entry.tabKey)
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (!win.isDestroyed()) win.webContents.send(IPC.browserControlFocusTab, t.entry.tabKey)
+      }
+      return text(`focused ${t.entry.tabKey} · "${t.entry.title}" · ${t.entry.url}`)
+    }
+  )
+
+  mcp.registerTool(
+    'browser_press_key',
+    {
+      description:
+        'Send a key or combo (Enter, Escape, Tab, ArrowDown, Control+Enter, Ctrl+A, Shift+Tab…) to the focused element, or to a snapshot ref when provided. Uses trusted CDP input when available.',
+      inputSchema: {
+        key: z.string().min(1).describe('Key or combo, e.g. Enter, Escape, Control+Enter.'),
+        ref: z.string().optional().describe('Focus this snapshot ref before sending the key.'),
+        tabId: z.string().optional()
+      }
+    },
+    async ({ key, ref, tabId }) => {
       const t = target(tabId)
       if ('error' in t) return t.error
       const blocked = await guard('browser_press_key', originOf(t.entry.url), true)
       if (blocked) return blocked
       try {
-        const out = parseInteraction(await service.executeJs(t.entry, buildKeyPressScript(key)))
-        if (out.err) return errorText(out.err)
-        return text(out.detail ?? `sent ${key}`)
+        return actionToMcp(await actionPressKey(service, t.entry, key, ref))
       } catch (e) {
         return errorText(`browser_press_key failed: ${(e as Error).message}`)
       }
@@ -338,8 +546,6 @@ export function registerBrowserTools(mcp: McpServer, deps: ToolDeps): void {
           detail: sanitizeDetail(file),
           ok: true
         })
-        // Inline the image only when it is small enough to be useful as model
-        // context; the file path is always returned either way.
         const content: Array<
           { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }
         > = []
@@ -350,7 +556,8 @@ export function registerBrowserTools(mcp: McpServer, deps: ToolDeps): void {
           type: 'text',
           text:
             `saved screenshot (${(png.length / 1024).toFixed(0)} KB) → ${file}` +
-            (content.length === 1 ? '\n(image too large to inline)' : '')
+            (content.length === 1 ? '\n(image too large to inline)' : '') +
+            formatObsAppendix(t.entry.wcId)
         })
         return { content }
       } catch (e) {
@@ -372,8 +579,6 @@ export function registerBrowserTools(mcp: McpServer, deps: ToolDeps): void {
       if (e.agentOwned) return text(`${tabId} is already your own tab.`)
       if (!service.needsAttachConfirm(sessionId, tabId))
         return text(`already attached to ${tabId} · "${e.title}" · ${e.url}`)
-      // Attaching to an operator's tab ALWAYS asks once, regardless of policy
-      // mode — reading someone's logged-in pages deserves explicit consent.
       const detail = `control browser tab "${e.title || e.url}" (${originOf(e.url)})`
       const outcome = await confirmWithActivity('browser_attach', detail)
       if (outcome !== 'approved') {
@@ -421,7 +626,6 @@ export function registerBrowserTools(mcp: McpServer, deps: ToolDeps): void {
         if (!win.isDestroyed()) win.webContents.send(IPC.browserControlCloseTab, tabId)
       }
       service.detach(sessionId, tabId)
-      // Registry cleanup arrives via the renderer's unregister report.
       return text(`closed ${tabId}`)
     }
   )

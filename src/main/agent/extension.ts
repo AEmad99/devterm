@@ -157,7 +157,8 @@ function registerMcpTools(pi, tools, sessionIdRef) {
     const promptGuidelines = tool.name === 'browser_open'
       ? [
           'Any URL or web UI: call mcp__devterm__browser_open (in-app pane). Never bash, start, xdg-open, or open.',
-          'After open/navigate, mcp__devterm__browser_snapshot, then click/type by snapshot ref.'
+          'Loop: snapshot → click/fill/select/hover/press_key → wait → re-snapshot before using new refs.',
+          'Prefer mcp__devterm__browser_fill for forms; mcp__devterm__browser_select for native <select>.'
         ]
       : undefined
 

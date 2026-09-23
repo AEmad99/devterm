@@ -64,6 +64,27 @@ describe('MCP tool schemas', () => {
       names.some((n) => n.startsWith('browser_')),
       true
     )
+    for (const expected of [
+      'browser_list',
+      'browser_open',
+      'browser_navigate',
+      'browser_snapshot',
+      'browser_click',
+      'browser_type',
+      'browser_fill',
+      'browser_select',
+      'browser_scroll',
+      'browser_hover',
+      'browser_wait',
+      'browser_focus',
+      'browser_press_key',
+      'browser_screenshot',
+      'browser_attach',
+      'browser_detach',
+      'browser_close'
+    ]) {
+      assert.equal(names.includes(expected), true, `missing ${expected}`)
+    }
     for (const tool of tools) {
       assert.equal((tool.inputSchema as { type?: string }).type, 'object', tool.name)
     }

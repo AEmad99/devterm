@@ -11,6 +11,7 @@ import { existsSync } from 'fs'
 import { join } from 'path'
 import { IPC, type BrowserDownloadItem } from '@shared/types'
 import { BrowserZoomStore } from '../browser/browser-zoom'
+import { recordDownload } from '../browser/observers'
 
 interface DownloadRecord {
   id: string
@@ -62,7 +63,7 @@ export function registerBrowserIpc(getWindow: () => BrowserWindow | null): {
     // (it isn't, but the test would be annoying to debug).
     if ((sess as unknown as { __devtermDlWired?: boolean }).__devtermDlWired) return
 
-    sess.on('will-download', (_event, item) => {
+    sess.on('will-download', (_event, item, wc) => {
       const defaultDir = join(userData, 'Downloads')
       const filename = item.getFilename() || 'download'
       // Uniquify so two same-name downloads don't clobber each other.
@@ -83,6 +84,13 @@ export function registerBrowserIpc(getWindow: () => BrowserWindow | null): {
       const record: DownloadRecord = { id, item, rec }
       records.set(id, record)
       broadcast()
+      // Surface to agent browser tools when we know which guest started it.
+      try {
+        const wcId = wc && !wc.isDestroyed() ? wc.id : undefined
+        if (wcId != null) recordDownload(wcId, filename, savePath)
+      } catch {
+        /* guest may already be gone */
+      }
 
       item.on('updated', () => {
         const newTotal = item.getTotalBytes()

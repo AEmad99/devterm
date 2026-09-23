@@ -124,4 +124,28 @@ describe('BrowserControlService grants & targeting', () => {
     assert.ok(ra.mine && !ra.attachedByMe)
     assert.ok(!rb.mine && rb.attachedByMe)
   })
+  it('setLastOwned switches the default target', () => {
+    const s = svc()
+    s.register(reg('t1', 1, { agentOwned: true, ownerAgentSessionId: AGENT }))
+    s.register(reg('t2', 2, { agentOwned: true, ownerAgentSessionId: AGENT }))
+    s.setLastOwned(AGENT, 't1')
+    let t = s.resolveTarget(AGENT)
+    assert.ok(t.ok && t.entry.tabKey === 't1')
+    s.setLastOwned(AGENT, 't2')
+    t = s.resolveTarget(AGENT)
+    assert.ok(t.ok && t.entry.tabKey === 't2')
+  })
+  it('rememberSnapshot stores ref metadata for remapping', () => {
+    const s = svc()
+    s.register(reg('t1', 1, { agentOwned: true, ownerAgentSessionId: AGENT }))
+    s.rememberSnapshot('t1', {
+      title: 'x',
+      url: 'https://x.test/',
+      root: {
+        r: 'page',
+        kids: [{ r: 'button', n: 'Save', ref: 'e3' }]
+      }
+    })
+    assert.deepEqual(s.getRefMeta('t1', 'e3'), { role: 'button', name: 'Save' })
+  })
 })
