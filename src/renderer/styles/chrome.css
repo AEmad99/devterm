@@ -227,6 +227,25 @@
   background: var(--panel);
   border-right: 1px solid var(--border);
 }
+.side-rail-library,
+.side-rail-utilities {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+/* App actions live at the bottom of the rail so they never sit above the
+   terminals. The old title bar row is gone; this height belongs to the panes. */
+.side-rail-utilities {
+  margin-top: auto;
+}
+.side-rail-sep {
+  width: 18px;
+  height: 1px;
+  margin: 4px 0 2px;
+  background: var(--border);
+  flex: 0 0 auto;
+}
 .side-rail .tip-anchor {
   display: flex;
 }
@@ -250,6 +269,37 @@
 .side-rail button.active {
   background: color-mix(in srgb, var(--accent) 18%, transparent);
   color: var(--fg);
+}
+/* Shared icon buttons (git, mic, shortcuts, settings) match the rail glyphs
+   instead of the bordered toolbar control they used in the title bar. */
+.side-rail .btn--icon {
+  width: 32px;
+  height: 32px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted);
+}
+.side-rail .btn--icon:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--fg);
+}
+.side-rail .btn.is-active {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  border-color: transparent;
+  color: var(--fg);
+}
+.side-rail .has-badge {
+  position: relative;
+}
+.side-rail button.mic-btn.recording {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+.side-rail button.mic-btn.busy {
+  color: var(--accent);
+}
+.side-rail button.mic-btn.error {
+  color: var(--danger);
 }
 
 /* Draggable splitters */

@@ -6,7 +6,7 @@ import type { GitStatus } from '@shared/types'
 /**
  * Live git status for the active session's cwd (local or remote). Follows the
  * same subscribe + watch pattern the status bar always used; extracted so the
- * titlebar git badge can share it without duplicating the subscription logic.
+ * sidebar git badge can share it without duplicating the subscription logic.
  * Returns `null` when there is no active session, no cwd, or the path is not
  * followed (browser panes). Callers check `status?.isRepo` themselves.
  */

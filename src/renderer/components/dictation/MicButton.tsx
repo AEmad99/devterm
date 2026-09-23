@@ -1,10 +1,10 @@
-// Toolbar microphone button for voice dictation. Reflects the dictation status
+// Sidebar microphone button for voice dictation. Reflects the dictation status
 // (idle / loading / recording / transcribing / error) and toggles capture on
 // click. Hidden entirely when dictation is disabled in settings.
 
 import { IconMic } from '../common/Icons'
 import Button from '../common/Button'
-import Tooltip from '../common/Tooltip'
+import Tooltip, { type TooltipPos } from '../common/Tooltip'
 import { useDictation } from '../../store/dictation'
 import { useSettings } from '../../store/settings'
 import { dictation } from '../../lib/stt/dictation'
@@ -12,9 +12,11 @@ import { dictation } from '../../lib/stt/dictation'
 interface MicButtonProps {
   /** Human-readable hotkey label, e.g. "Ctrl+Shift+M". */
   hotkey?: string
+  /** Tooltip placement. The sidebar rail opens tips to the right. */
+  pos?: TooltipPos
 }
 
-export default function MicButton({ hotkey }: MicButtonProps) {
+export default function MicButton({ hotkey, pos = 'right' }: MicButtonProps) {
   const enabled = useSettings((s) => s.stt.enabled)
   const { status, progress, backend, error } = useDictation()
 
@@ -57,7 +59,7 @@ export default function MicButton({ hotkey }: MicButtonProps) {
     .join(' ')
 
   return (
-    <Tooltip tip={tip} hotkey={status === 'idle' ? hotkey : undefined} pos="bottom">
+    <Tooltip tip={tip} hotkey={status === 'idle' ? hotkey : undefined} pos={pos}>
       <Button
         variant="icon"
         className={cls}

@@ -16,7 +16,6 @@ import ShortcutsModal from './components/modals/ShortcutsModal'
 import { GlobalSearchModal } from './components/modals/GlobalSearchModal'
 import SaveWorkspaceModal from './components/workspaces/SaveWorkspaceModal'
 import SettingsModal from './components/modals/SettingsModal'
-import AppToolbar from './components/chrome/AppToolbar'
 import SideRail from './components/chrome/SideRail'
 import TerminalsView from './components/chrome/TerminalsView'
 import StatusBar from './components/chrome/StatusBar'
@@ -864,7 +863,7 @@ export default function App() {
   const dictateHotkeyLabel = dictateHotkey ? comboLabel(dictateHotkey, !!isMac) : undefined
 
   // First-run hint: show the user's actual (possibly overridden) combos.
-  // The same resolver feeds the toolbar tooltips so they stay in sync with
+  // The same resolver feeds the sidebar tooltips so they stay in sync with
   // user keybinding overrides.
   const hotkeyLabel = useMemo(() => {
     const hs = resolveHotkeys(keybindings)
@@ -879,23 +878,18 @@ export default function App() {
   }
   return (
     <div className="app" data-zen={zenMode ? 'on' : undefined}>
-      {!zenMode && (
-        <AppToolbar
-          gitPanelOpen={gitPanelOpen}
-          setGitPanelOpen={(v) => setGitPanelOpen(typeof v === 'function' ? v(gitPanelOpen) : v)}
-          onSettings={() => setShowSettings(true)}
-          onShortcuts={() => setShowShortcuts(true)}
-          dictateHotkey={dictateHotkeyLabel}
-          hotkeyLabel={hotkeyLabel}
-        />
-      )}
-
       <div className="body">
         {!zenMode && (
           <SideRail
             active={library}
             onToggle={toggleLibrary}
             filesHotkey={hotkeyLabel('toggleSidebar')}
+            gitPanelOpen={gitPanelOpen}
+            onToggleGit={() => setGitPanelOpen(!gitPanelOpen)}
+            onSettings={() => setShowSettings(true)}
+            onShortcuts={() => setShowShortcuts(true)}
+            dictateHotkey={dictateHotkeyLabel}
+            hotkeyLabel={hotkeyLabel}
           />
         )}
         {library && !zenMode && (
