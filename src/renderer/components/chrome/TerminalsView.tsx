@@ -224,13 +224,9 @@ export default function TerminalsView({
           <div className="empty empty-group-overlay">
             <div className="empty-card">
               <EmptyTerminalArt />
-              <div className="empty-title">
-                {activeGroupId === DEFAULT_GROUP ? 'No ungrouped terminals' : 'Empty group'}
-              </div>
+              <div className="empty-title">Empty group</div>
               <div className="empty-sub">
-                {activeGroupId === DEFAULT_GROUP
-                  ? 'Open a terminal here, or drag one out of a group to ungroup it.'
-                  : 'Open a terminal here, or drag a tab onto this group in the bar above.'}
+                Open a terminal here, or drag a tab onto this group in the bar above.
               </div>
               <button className="empty-cta" onClick={onNewTerminalInGroup ?? onNewTerminal}>
                 <IconPlus size={15} />

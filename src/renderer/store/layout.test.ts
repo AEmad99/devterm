@@ -1,6 +1,39 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { DEFAULT_GROUP, useLayout } from './layout'
+import { DEFAULT_GROUP, HOME_GROUP_NAME, useLayout } from './layout'
+
+describe('home group', () => {
+  it('keeps a fresh terminal inside the single home group', () => {
+    useLayout.setState({
+      groups: [{ id: DEFAULT_GROUP, name: HOME_GROUP_NAME, root: null, activeLeaf: null }],
+      activeGroupId: DEFAULT_GROUP,
+      focusedId: null,
+      groupFlags: {}
+    })
+    useLayout.getState().sync([{ id: 'local-1' }])
+    const { groups, activeGroupId } = useLayout.getState()
+    assert.equal(groups.length, 1)
+    assert.equal(activeGroupId, DEFAULT_GROUP)
+    assert.equal(groups[0]?.name, HOME_GROUP_NAME)
+    assert.equal(groups[0]?.root?.type, 'leaf')
+    if (groups[0]?.root?.type !== 'leaf') return
+    assert.deepEqual(groups[0].root.tabs, ['local-1'])
+  })
+
+  it('names the next group after the home group', () => {
+    useLayout.setState({
+      groups: [{ id: DEFAULT_GROUP, name: HOME_GROUP_NAME, root: null, activeLeaf: null }],
+      activeGroupId: DEFAULT_GROUP,
+      focusedId: null,
+      groupFlags: {}
+    })
+    const id = useLayout.getState().createGroup()
+    const created = useLayout.getState().groups.find((g) => g.id === id)
+    assert.equal(created?.name, 'Group 2')
+    assert.equal(useLayout.getState().activeGroupId, id)
+    assert.equal(useLayout.getState().groups[0]?.id, DEFAULT_GROUP)
+  })
+})
 
 describe('splitBeside', () => {
   it('pulls a sibling tab into a right-hand split so both panes stay on screen', () => {

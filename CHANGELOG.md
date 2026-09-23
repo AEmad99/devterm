@@ -3,6 +3,16 @@
 All notable changes to DevTerm are documented here. The most recent section is
 at the top. Dates are ISO `YYYY-MM-DD`.
 
+## 1.6.2 — 2026-09-23
+
+### Changed
+
+- The app opens in a terminal group. A fresh run is one group with one local terminal. Reopening restores the saved groups and however many terminals they held. The home group tab stays on the group bar even when it is the only group.
+
+### Fixed
+
+- Remote shell integration waits until the login banner goes quiet before installing prompt hooks, and no longer opens the PTY with echo disabled. Long MOTDs were racing that inject and leaving typed characters invisible.
+
 ## 1.6.1 — 2026-09-23
 
 ### Improved

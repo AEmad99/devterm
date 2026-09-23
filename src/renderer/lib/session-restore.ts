@@ -10,7 +10,13 @@ import type {
   SessionRestoreSnapshot,
   WorkspaceLayoutNode
 } from '@shared/types'
-import { useLayout, DEFAULT_GROUP, groupActiveSession, type LayoutNode } from '../store/layout'
+import {
+  useLayout,
+  DEFAULT_GROUP,
+  HOME_GROUP_NAME,
+  groupActiveSession,
+  type LayoutNode
+} from '../store/layout'
 import { useSessions, type Session } from '../store/sessions'
 import { useEditors } from '../store/editors'
 import { useSettings } from '../store/settings'
@@ -249,7 +255,7 @@ export function captureSessionRestoreSnapshot(
     const layoutSnap = snapshotNode(root, sidToItem)
     if (g.id === layout.activeGroupId) activeGroupIndex = groups.length
     groups.push({
-      name: g.name || 'Terminals',
+      name: g.name || HOME_GROUP_NAME,
       items,
       layout: layoutSnap
     })
@@ -510,7 +516,7 @@ export async function restoreSessionSnapshot(
 
     const groupId: string =
       firstGroupId === null && defEmpty ? DEFAULT_GROUP : `sr-${crypto.randomUUID()}`
-    const name = g.name || (i === 0 ? 'Terminals' : `Group ${i + 1}`)
+    const name = g.name || (i === 0 ? HOME_GROUP_NAME : `Group ${i + 1}`)
     useLayout.getState().ensureGroup(groupId, name)
 
     const sessionMap = new Map<string, string>()

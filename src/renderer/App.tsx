@@ -207,7 +207,8 @@ export default function App() {
     //  2) Last-session restore (if enabled and a snapshot exists) — always
     //     runs, even alongside auto-launched workspaces, so a browser/agent
     //     estate is never silently dropped
-    //  3) Empty local shell so the window is never blank
+    //  3) One local shell in the home group, so a fresh run is one group
+    //     with one terminal. Restored history keeps its own groups.
     void (async () => {
       // Until a complete load/restore proves otherwise, preserve any previous
       // snapshot. Startup service failures must not turn it into one local tab.
@@ -273,7 +274,9 @@ export default function App() {
       } catch (err) {
         console.error('[startup] failed to restore sessions:', err)
       } finally {
-        if (useSessions.getState().sessions.length === 0) addLocal()
+        if (useSessions.getState().sessions.length === 0) {
+          addLocal({ groupId: useLayout.getState().activeGroupId || DEFAULT_GROUP })
+        }
         const liveSessions = useSessions.getState().sessions
         useLayout.getState().sync(liveSessions.map((s) => ({ id: s.id, groupId: s.groupId })))
         preserveRestoreSnapshotRef.current = preserveRestoreSnapshot

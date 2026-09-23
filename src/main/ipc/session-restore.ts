@@ -267,7 +267,7 @@ export function registerSessionRestoreIpc(): void {
         .filter((g) => Array.isArray(g.items) && g.items.length > 0)
         .slice(0, 20)
         .map((g) => ({
-          name: typeof g.name === 'string' && g.name.trim() ? g.name.trim() : 'Terminals',
+          name: typeof g.name === 'string' && g.name.trim() ? g.name.trim() : 'Group 1',
           items: g.items.slice(0, 64).map((it) => {
             const draft = cleanSshDraft(it.sshDraft)
             if (draft?.secretId) referencedSecrets.add(draft.secretId)

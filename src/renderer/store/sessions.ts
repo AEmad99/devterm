@@ -78,8 +78,9 @@ export interface Session {
    */
   startCwd?: string
   /**
-   * Top-level terminal group this session belongs to (a launched workspace, or
-   * the default ungrouped group). Drives the group tabs; see store/layout.ts.
+   * Top-level terminal group this session belongs to. A fresh terminal lands in
+   * the active group, which is the home group until the operator switches.
+   * Drives the group tabs; see store/layout.ts.
    */
   groupId?: string
   /** Browser panes only: initial URL to load on mount (consumed once, like startCwd). */

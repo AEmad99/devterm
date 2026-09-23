@@ -17,7 +17,7 @@
 
 DevTerm is a normal framed Windows app. You open it and you are in a terminal — local PowerShell, SSH, or both — with splits, groups, an optional file sidebar, an editor, an in-app browser, and an agent that can work on the connected host through SSH. Connections, workspaces, and snippets open beside the shell.
 
-**Current release: [v1.6.1](https://github.com/AEmad99/devterm/releases/tag/v1.6.1)**
+**Current release: [v1.6.2](https://github.com/AEmad99/devterm/releases/tag/v1.6.2)**
 
 ![DevTerm terminal workspace](resources/screens/terminal.png)
 
@@ -32,7 +32,7 @@ DevTerm runs the selected coding-agent CLI on your PC. For remote sessions, its 
 ## What you get
 
 - **Local and SSH terminals** — PowerShell (or cmd / a custom shell) locally; password, key file, or system OpenSSH agent. ProxyJump of up to two extra hops (three including the target). POSIX remotes with a working tmux get a live session picker.
-- **Tiling panes and groups** — split any pane, drag to resize, and keep independent named groups. Launch a 4×4 remote grid when you need a wall of shells. Hidden groups can hibernate their renderer terminals after 30s while PTYs and SSH stay alive.
+- **Tiling panes and groups** — the app opens in a group: your last session's terminals, or one group with one local terminal on a fresh run. Split any pane, drag to resize, and keep further named groups. Launch a 4×4 remote grid when you need a wall of shells. Hidden groups can hibernate their renderer terminals after 30s while PTYs and SSH stay alive.
 - **Saved connections and workspaces** — OS-keychain secrets, `~/.ssh/config` import (including ProxyJump lists), local-only tags (`prod`, `homelab`, …), and workspace snapshots of a group's hosts, folders, and split tree.
 - **Files, SFTP, and an editor** — a sidebar that follows `cd`, a dual-pane transfer browser with a persistent queue that can resume mid-file, and CodeMirror 6 (Markdown Edit / Side / Preview).
 - **Git panel** — status, stage, commit, push/pull, branches, stash, tags, remotes, and a commit graph. Remote repos reuse the session's SSH exec channel. Agents can call read-only `git_status` / `git_diff`.
@@ -40,7 +40,7 @@ DevTerm runs the selected coding-agent CLI on your PC. For remote sessions, its 
 - **Command palette, snippets, search** — Ctrl/Cmd+K for actions, snippets (`{{placeholders}}`), connections, workspaces, and history. Per-pane find and global search across terminals (`search_terminals` for agents).
 - **Command block gutters** — on shells with OSC 133 hooks, completed commands get Copy / Ask agent / Comment. The raw PTY stream stays the shell's.
 - **DevTerm Agent** — bundled multi-provider agent, plus Claude, Codex, Grok, OpenCode, Kimi, pi, Antigravity, Muse Code, and Cursor Agent. Dock, float, or hide the UI without killing the process. Remote host tools ride MCP on the same ssh2 connection; local agents work in the folder that terminal is in. Cockpit (Ctrl/Cmd+Alt+A) focuses, restarts, stops, and delegates local siblings. Select terminal or editor text → **Ask agent about this**.
-- **Session restore** — last-session groups come back with scrollback tails, every browser tab, editors, agents, and ad-hoc SSH drafts. Credentials stay in a safeStorage sidecar; missing secrets prompt. Background remotes connect on focus by default.
+- **Session restore** — last-session groups come back with their terminals, scrollback tails, every browser tab, editors, agents, and ad-hoc SSH drafts. A machine with no history opens one group and one local terminal. Credentials stay in a safeStorage sidecar; missing secrets prompt. Background remotes connect on focus by default.
 - **Optional tray residency** — close-to-tray keeps local PTYs, SSH sessions, and agents alive while the window is hidden; explicit Quit performs normal cleanup. Reboot survival is not implied.
 - **Port forwards, dictation, themes, notify** — local `-L` and SOCKS `-D`, offline Whisper push-to-talk, nine themes (including Glass), performance presets, personal markdown skills, image-paste-to-agent, and an optional idle/approval webhook or Telegram notify.
 

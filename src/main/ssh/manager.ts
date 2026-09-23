@@ -116,6 +116,14 @@ interface Session {
   /** Pending shell-setup write timers; cleared on disconnect. */
   setupTimers?: Set<NodeJS.Timeout>
   /**
+   * True while we are waiting for the login banner / MOTD to finish before
+   * quietly injecting POSIX shell-integration. Cleared once the inject fires
+   * or setup is cancelled (tmux attach, disconnect).
+   */
+  shellIntegrationPending?: boolean
+  /** Re-arms the MOTD-idle timer; set only while `shellIntegrationPending`. */
+  shellIntegrationArmIdle?: () => void
+  /**
    * True while `disconnect()` is tearing the session down. Shell-channel
    * close must not auto-reopen a login shell in that window.
    */
@@ -197,6 +205,24 @@ export const DEFAULT_RECONNECT_POLICY: ReconnectPolicy = {
  */
 export const SHELL_INTEGRATION_RECLAIM_LINES = 3
 
+/**
+ * How long shell output must stay quiet before we treat the login MOTD as
+ * finished and inject OSC hooks. Long banners (Bazzite, Fedora Silverblue,
+ * some cloud images) print for well over the old fixed 250ms delay; injecting
+ * during that window left `stty -echo` / a failed script with echo off so
+ * typed characters never appeared.
+ */
+export const SHELL_INTEGRATION_IDLE_MS = 450
+
+/** Cap waiting for MOTD idle — still inject so hooks eventually land. */
+export const SHELL_INTEGRATION_MAX_WAIT_MS = 8000
+
+/**
+ * After writeQuiet disables echo for the inject, nudge it back on in case the
+ * setup one-liner never ran (or died before its trailing `stty echo`).
+ */
+const ECHO_RESTORE_FAILSAFE_MS = 1200
+
 export function buildPosixShellIntegrationSetup(): string {
   // DCS-wrapped OSC payloads: every ESC in the inner sequence is doubled.
   // BEL (`\007`) is left as-is. Terminator is ESC \ (ST).
@@ -208,8 +234,8 @@ export function buildPosixShellIntegrationSetup(): string {
   const osc133BPlain = `printf '\\033]133;B\\007'`
 
   return (
-    // Echo is already off (writeQuiet / pty ECHO=0). Do not `clear` — that
-    // wiped the login banner after the inject flashed on screen.
+    // Echo is already off for this one-liner (writeQuiet's `stty -echo`).
+    // Do not `clear` — that wiped the login banner after the inject flashed.
     `[ -n "\${TMUX-}" ] && tmux set-option allow-passthrough on 2>/dev/null; ` +
     `__dt7() { ` +
     `if [ -n "\${TMUX-}" ]; then ${osc7Tmux}; ` +
@@ -249,6 +275,9 @@ export function buildPosixShellIntegrationSetup(): string {
 
 /** First half of a quiet inject: turn off PTY echo (this line itself may flash). */
 export const STTY_DISABLE_ECHO = '\x15stty -echo 2>/dev/null\n'
+
+/** Failsafe / post-tmux restore so operator typing is always visible. */
+export const STTY_ENABLE_ECHO = '\x15stty echo 2>/dev/null\n'
 
 /** Wait for `stty -echo` to run before sending the payload on a slow SSH link. */
 const QUIET_WRITE_GAP_MS = 180
@@ -440,10 +469,7 @@ export class SSHManager {
 
   /** Tear down shell/SFTP/setup timers on a session without forgetting the entry. */
   private clearLiveChannels(s: Session): void {
-    if (s.setupTimers) {
-      for (const t of s.setupTimers) clearTimeout(t)
-      s.setupTimers.clear()
-    }
+    this.clearSetupTimers(s)
     if (s.tmuxResumeTimer) {
       clearTimeout(s.tmuxResumeTimer)
       s.tmuxResumeTimer = undefined
@@ -939,18 +965,11 @@ export class SSHManager {
     if (s.shellInflight) return s.shellInflight
     const client = s.client
     const inflight = new Promise<void>((resolve, reject) => {
-      // POSIX shells use a quiet post-open hook, so disable echo for that
-      // short injection. Windows receives its prompt hook in the process
-      // command line and must keep normal PTY echo for interactive input.
-      const pty =
-        s.context.os === 'windows'
-          ? { term: 'xterm-256color', cols, rows }
-          : {
-              term: 'xterm-256color',
-              cols,
-              rows,
-              modes: { ECHO: 0 as const }
-            }
+      // Keep PTY echo on for POSIX remotes. The quiet inject briefly disables
+      // it with `stty -echo` only for the setup one-liner. Opening with ECHO:0
+      // permanently hid keystrokes whenever that inject raced a long MOTD
+      // (Bazzite and similar) and never reached its trailing `stty echo`.
+      const pty = { term: 'xterm-256color', cols, rows }
       const onChannel = (err: Error | undefined | null, channel?: ClientChannel) => {
         s.shellInflight = undefined
         if (err) return reject(err)
@@ -966,6 +985,7 @@ export class SSHManager {
         const dec = s.shellDecoder
         const emitShellData = (chunk: string) => {
           if (!chunk) return
+          if (s.shellIntegrationPending) this.noteShellIntegrationOutput(s)
           if (s.tmuxClientRunning && TMUX_CLIENT_LEFT_RE.test(chunk)) {
             this.scheduleResumeAfterTmux(sessionId)
           }
@@ -1029,11 +1049,12 @@ export class SSHManager {
         // and append to whichever mechanism applies — preserving the distro's own
         // hooks and staying idempotent.
         //
-        // Injected quietly (pty ECHO off + stty -echo) and never `clear`s the
-        // login banner. Skipped when we are about to attach tmux — that path
-        // would otherwise type the script into the pane.
+        // Wait for the login MOTD to go quiet, then inject with a brief
+        // `stty -echo` window (never leave the PTY echo-off by default).
+        // Skipped when we are about to attach tmux — that path would otherwise
+        // type the script into the pane.
         if ((s.context.os === 'linux' || s.context.os === 'mac') && !s.shellRequest?.tmuxSession) {
-          this.scheduleQuietWrite(s, buildPosixShellIntegrationSetup(), 250)
+          this.schedulePosixShellIntegration(s)
         }
         resolve()
       }
@@ -1431,14 +1452,69 @@ export class SSHManager {
   }
 
   private clearSetupTimers(s: Session): void {
-    if (!s.setupTimers) return
-    for (const t of s.setupTimers) clearTimeout(t)
-    s.setupTimers.clear()
+    if (s.setupTimers) {
+      for (const t of s.setupTimers) clearTimeout(t)
+      s.setupTimers.clear()
+    }
+    s.shellIntegrationPending = false
+    s.shellIntegrationArmIdle = undefined
   }
 
   private trackTimer(s: Session, t: NodeJS.Timeout): void {
     if (!s.setupTimers) s.setupTimers = new Set()
     s.setupTimers.add(t)
+  }
+
+  /**
+   * Defer OSC hook install until login output goes quiet (MOTD finished) or
+   * {@link SHELL_INTEGRATION_MAX_WAIT_MS} elapses. Fixed short delays raced
+   * long banners and left the tty echo-off so typing was invisible.
+   */
+  private schedulePosixShellIntegration(s: Session): void {
+    if (s.shellIntegrationPending) return
+    s.shellIntegrationPending = true
+    let idleTimer: NodeJS.Timeout | undefined
+    const fire = (): void => {
+      if (!s.shellIntegrationPending) return
+      s.shellIntegrationPending = false
+      s.shellIntegrationArmIdle = undefined
+      if (idleTimer && s.setupTimers) {
+        clearTimeout(idleTimer)
+        s.setupTimers.delete(idleTimer)
+        idleTimer = undefined
+      }
+      // Attaching tmux cancels pending setup; never type hooks into a pane.
+      if (!s.shell || s.shellRequest?.tmuxSession) return
+      this.writeQuiet(s, buildPosixShellIntegrationSetup())
+      this.scheduleEchoRestore(s, ECHO_RESTORE_FAILSAFE_MS)
+    }
+    s.shellIntegrationArmIdle = (): void => {
+      if (!s.shellIntegrationPending) return
+      if (idleTimer) {
+        clearTimeout(idleTimer)
+        if (s.setupTimers) s.setupTimers.delete(idleTimer)
+      }
+      idleTimer = setTimeout(fire, SHELL_INTEGRATION_IDLE_MS)
+      this.trackTimer(s, idleTimer)
+    }
+    // Do not arm idle until the first output byte — a slow MOTD start must not
+    // look like "settled". Prompt-only hosts still inject via max-wait or the
+    // idle armed from their first prompt chunk.
+    const maxTimer = setTimeout(fire, SHELL_INTEGRATION_MAX_WAIT_MS)
+    this.trackTimer(s, maxTimer)
+  }
+
+  private noteShellIntegrationOutput(s: Session): void {
+    s.shellIntegrationArmIdle?.()
+  }
+
+  private scheduleEchoRestore(s: Session, delayMs: number): void {
+    const t = setTimeout(() => {
+      if (s.setupTimers) s.setupTimers.delete(t)
+      if (!s.shell || s.tmuxClientRunning) return
+      s.shell.write(STTY_ENABLE_ECHO)
+    }, delayMs)
+    this.trackTimer(s, t)
   }
 
   /**
@@ -1456,24 +1532,17 @@ export class SSHManager {
     this.trackTimer(s, t)
   }
 
-  private scheduleQuietWrite(s: Session, script: string, delayMs: number): void {
-    const t = setTimeout(() => {
-      if (s.setupTimers) s.setupTimers.delete(t)
-      this.writeQuiet(s, script)
-    }, delayMs)
-    this.trackTimer(s, t)
-  }
-
   private writeTmuxAttach(s: Session, name: string, create: boolean): void {
     if (!s.shell) return
     s.tmuxClientRunning = true
     // Drop a pending login-shell inject so it cannot land inside tmux.
     this.clearSetupTimers(s)
     this.writeQuiet(s, buildTmuxAttachCommand(name, { create }))
-    // Brand-new sessions start a login shell in the pane — safe to hook.
-    // Existing sessions may be vim/htop; never type the setup into those.
+    // Brand-new sessions start a login shell in the pane — safe to hook once
+    // that pane's MOTD settles. Existing sessions may be vim/htop; never type
+    // the setup into those.
     if (create && (s.context.os === 'linux' || s.context.os === 'mac')) {
-      this.scheduleQuietWrite(s, buildPosixShellIntegrationSetup(), 1000)
+      this.schedulePosixShellIntegration(s)
     }
   }
 
@@ -1538,10 +1607,7 @@ export class SSHManager {
       s.shellRecoveryTimer = undefined
     }
     // Cancel any pending shell-setup timers so they don't write to a closed channel.
-    if (s.setupTimers) {
-      for (const t of s.setupTimers) clearTimeout(t)
-      s.setupTimers.clear()
-    }
+    this.clearSetupTimers(s)
     // Cancel any in-flight reconnect loop first so the close handler does
     // not race a new attempt. Use the same flag the close handler checks
     // (`s.reconnect`) — clearTimeout + delete it from the session record.

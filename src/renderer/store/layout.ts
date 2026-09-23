@@ -188,14 +188,22 @@ export function computeLayout(root: LayoutNode | null): {
   return { leaves, handles }
 }
 
-/** The default group id holding all ungrouped (loose) terminals. */
+/**
+ * Home group id. The first terminal is spawned here, and the group tab stays
+ * visible even when it is the only group. Session restore and workspaces may
+ * reuse this id for the first saved group or add further groups beside it.
+ */
 export const DEFAULT_GROUP = 'default'
 
+/** Name of the home group before restore or a workspace renames it. */
+export const HOME_GROUP_NAME = 'Group 1'
+
 /**
- * A top-level terminal group. The default group holds loose terminals; each
- * launched workspace becomes its own group, shown as a tab in the group bar with
- * its own split tree. Groups keep terminals from different workspaces side by
- * side instead of one overwriting the other.
+ * A top-level terminal group. The home group is where a fresh run puts its
+ * single local terminal, and where session restore puts the saved terminals
+ * when they come back as one group. Each extra group (workspace launch, or
+ * the group-bar + button) has its own split tree so workspaces stay side by
+ * side.
  */
 export interface Group {
   id: string
@@ -364,7 +372,7 @@ function patchActive(s: LayoutState, fn: (g: RootState) => RootState | null): Pa
 }
 
 export const useLayout = create<LayoutState>((set) => ({
-  groups: [{ id: DEFAULT_GROUP, name: 'Terminals', root: null, activeLeaf: null }],
+  groups: [{ id: DEFAULT_GROUP, name: HOME_GROUP_NAME, root: null, activeLeaf: null }],
   activeGroupId: DEFAULT_GROUP,
   focusedId: null,
   groupFlags: {},
@@ -411,7 +419,7 @@ export const useLayout = create<LayoutState>((set) => ({
         const prev = known.get(DEFAULT_GROUP)
         groups.unshift({
           id: DEFAULT_GROUP,
-          name: prev?.name ?? 'Terminals',
+          name: prev?.name ?? HOME_GROUP_NAME,
           root: null,
           activeLeaf: null
         })
@@ -456,7 +464,9 @@ export const useLayout = create<LayoutState>((set) => ({
   createGroup: (name) => {
     const id = `grp-${crypto.randomUUID()}`
     set((s) => {
-      const n = s.groups.filter((g) => g.id !== DEFAULT_GROUP).length + 1
+      const used = new Set(s.groups.map((g) => g.name))
+      let n = 1
+      while (used.has(`Group ${n}`)) n++
       const group: Group = { id, name: name ?? `Group ${n}`, root: null, activeLeaf: null }
       return { groups: [...s.groups, group], activeGroupId: id, focusedId: null }
     })

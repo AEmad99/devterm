@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import {
+  SHELL_INTEGRATION_IDLE_MS,
+  SHELL_INTEGRATION_MAX_WAIT_MS,
   SHELL_INTEGRATION_RECLAIM_LINES,
   buildDetachedSessionBootstrap,
   buildPosixShellIntegrationSetup
@@ -77,5 +79,10 @@ describe('buildPosixShellIntegrationSetup', () => {
     assert.match(script, /printf '\\033\[3A\\r\\033\[J'/)
     // OSC 7 is emitted on the next prompt, not on a row we then delete.
     assert.doesNotMatch(script, /stty echo 2>\/dev\/null; __dt7/)
+  })
+
+  it('exports MOTD-idle timing so long banners are not raced', () => {
+    assert.ok(SHELL_INTEGRATION_IDLE_MS >= 300)
+    assert.ok(SHELL_INTEGRATION_MAX_WAIT_MS >= SHELL_INTEGRATION_IDLE_MS * 4)
   })
 })

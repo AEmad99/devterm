@@ -1,5 +1,5 @@
 import type { Dispatch, SetStateAction } from 'react'
-import { IconTerminals, IconGroup, IconSave, IconClose, IconPlus } from '../common/Icons'
+import { IconGroup, IconSave, IconClose, IconPlus } from '../common/Icons'
 import Button from '../common/Button'
 import { DEFAULT_GROUP, type Group } from '../../store/layout'
 import type { Session } from '../../store/sessions'
@@ -43,7 +43,6 @@ export default function GroupBar({
   return (
     <div className="group-bar" role="tablist" aria-label="Terminal groups">
       {groups.map((g) => {
-        if (groups.length === 1 && g.id === DEFAULT_GROUP) return null
         return (
           <div
             key={g.id}
@@ -62,11 +61,7 @@ export default function GroupBar({
                 switchGroup(g.id)
               }
             }}
-            title={
-              g.id === DEFAULT_GROUP
-                ? 'Ungrouped terminals — drag a tab here to move it in'
-                : `Group: ${g.name} — drag a tab here to move it in`
-            }
+            title={`Group: ${g.name} — drag a tab here to move it in`}
             onDragOver={(e) => {
               e.preventDefault()
               e.dataTransfer.dropEffect = 'move'
@@ -80,7 +75,7 @@ export default function GroupBar({
             }}
           >
             <span className="group-icon">
-              {g.id === DEFAULT_GROUP ? <IconTerminals size={14} /> : <IconGroup size={14} />}
+              <IconGroup size={14} />
             </span>
             <span className="group-name">{g.name}</span>
             <span className="group-count">{groupCount(g.id)}</span>
