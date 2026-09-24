@@ -103,6 +103,17 @@ function classify(uname: string): HostOS {
 }
 
 /**
+ * `cmd /c ver` on Windows prints a banner like
+ * `Microsoft Windows [Version 10.0.22631.3447]`. A failed probe on a POSIX
+ * host is `bash: cmd: command not found` or a timeout — those must not be
+ * treated as Windows, or the interactive session is started with
+ * `powershell.exe` and the login shell prints that command, then exits.
+ */
+export function looksLikeWindowsBanner(output: string): boolean {
+  return /microsoft windows|windows \[version/i.test(output)
+}
+
+/**
  * Detect the remote OS by probing with `uname`. Unix-likes answer cleanly; a
  * Windows remote (OpenSSH default shell = cmd.exe/powershell) fails `uname`,
  * so we fall back to a Windows-only probe.
@@ -126,14 +137,28 @@ export async function detectRemoteContext(
     }
   }
 
-  // Not Unix-like → assume Windows; confirm with a cmd-style probe.
+  // uname failed or timed out. Only call it Windows when the cmd probe
+  // actually returns a Windows version banner. Anything else (bash "command
+  // not found", a timeout, an empty reply) stays a normal login shell.
   const ver = await exec(client, 'cmd /c "ver & hostname"', execTimeoutMs, signal)
   if (signal?.aborted) throw new Error('SSH transport closed during startup')
-  const out = (ver.stdout || ver.stderr).trim()
+  const out = `${ver.stdout}\n${ver.stderr}`.trim()
+  if (ver.code === 0 && looksLikeWindowsBanner(out)) {
+    const lines = out
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+    return {
+      kind: 'remote',
+      os: 'windows',
+      detail: lines[0] || 'Windows',
+      hostname: lines[lines.length - 1] || 'remote'
+    }
+  }
   return {
     kind: 'remote',
-    os: 'windows',
-    detail: out || 'Windows (uname unavailable)',
-    hostname: out.split(/\r?\n/).pop()?.trim() || 'remote'
+    os: 'unknown',
+    detail: uname.stderr.trim() || out || 'remote OS probe inconclusive',
+    hostname: 'remote'
   }
 }
