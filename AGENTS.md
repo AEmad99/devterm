@@ -4,7 +4,7 @@ Guidance for coding agents working in the DevTerm repository. Read this first; p
 
 DevTerm is an Electron 29 desktop terminal: local shells (prebuilt node-pty), SSH/SFTP sessions, tiling workspaces, file browsing/editing (CodeMirror 6), an in-app browser, snippets, a Warp-style Git panel, a persistent transfer queue, offline Whisper dictation, global terminal search, and an embedded multi-provider **DevTerm Agent** with nine external CLI fallbacks (`pi`, `claude`, `opencode`, `kimi`, `grok`, `codex`, `antigravity`, `muse`, `cursor`). Every agent runs in a local PTY and reaches the remote host only through DevTerm's in-process MCP bridge. Stack: electron-vite, TypeScript strict, React 19, Zustand, xterm.js, ssh2, marked + DOMPurify, `@huggingface/transformers`, `@earendil-works/pi-coding-agent` (bundled runtime), a dedicated `node` binary for the agent, electron-updater, zod.
 
-**Version:** `package.json` (currently `1.6.4`). The terminal workspace stays on screen. **Files**, **Connections**, **Workspaces**, and **Snippets** open from the left rail beside it and start closed. DevTerm is a normal framed desktop app; the first screen is the terminal, not a marketing page. Release history lives in `CHANGELOG.md` — do not duplicate it here.
+**Version:** `package.json` (currently `1.6.5`). The terminal workspace stays on screen. **Files**, **Connections**, **Workspaces**, and **Snippets** open from the left rail beside it and start closed. DevTerm is a normal framed desktop app; the first screen is the terminal, not a marketing page. Release history lives in `CHANGELOG.md` — do not duplicate it here.
 
 ## Start here
 

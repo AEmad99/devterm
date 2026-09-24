@@ -3,6 +3,12 @@
 All notable changes to DevTerm are documented here. The most recent section is
 at the top. Dates are ISO `YYYY-MM-DD`.
 
+## 1.6.5 — 2026-09-24
+
+### Fixed
+
+- A remote whose `uname` probe fails or times out is no longer assumed to be Windows. That assumption started the login shell with `powershell.exe`, which a Linux host printed into the terminal (`bash: powershell.exe: command not found`) and then closed.
+
 ## 1.6.4 — 2026-09-24
 
 ### Fixed
