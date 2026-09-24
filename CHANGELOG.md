@@ -3,6 +3,13 @@
 All notable changes to DevTerm are documented here. The most recent section is
 at the top. Dates are ISO `YYYY-MM-DD`.
 
+## 1.6.4 — 2026-09-24
+
+### Fixed
+
+- SSH sessions stay up while an agent is working. Keepalives no longer tear down a busy connection when command output delays the reply, and parallel agent tool calls share a small set of exec channels instead of overflowing the server's session cap.
+- The command header above the terminal (the last command, Copy, and Ask agent) is gone. It sat on top of the pane and, with the command highlight bars, kept the line you were typing from painting while output streamed.
+
 ## 1.6.3 — 2026-09-23
 
 ### Changed

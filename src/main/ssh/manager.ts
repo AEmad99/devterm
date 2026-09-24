@@ -10,6 +10,7 @@ import type {
   TmuxListing
 } from '@shared/types'
 import { establish } from './connection'
+import { createExecGate, POSIX_EXEC_SLOTS } from './exec-gate'
 import { establishProfile } from './auth'
 import { detectRemoteContext } from './osDetect'
 import { PortForwardManager } from './port-forward'
@@ -70,6 +71,8 @@ interface Session {
   execJump?: Client
   execClientInflight?: Promise<Client>
   execQueue?: Promise<void>
+  /** Caps parallel exec channels on the primary client (POSIX MaxSessions). */
+  execGate?: ReturnType<typeof createExecGate>
   sftpClient?: Client
   sftpJump?: Client
   sftpClientInflight?: Promise<Client>
@@ -1248,7 +1251,16 @@ export class SSHManager {
       return queued
     }
     if (!s.client) return Promise.reject(new Error(RECONNECTING_ERR))
-    return this.execOnClient(s.client, command, timeoutMs)
+    const gate = s.execGate ?? (s.execGate = createExecGate(POSIX_EXEC_SLOTS))
+    return gate.acquire().then(async (release) => {
+      try {
+        const current = this.sessions.get(sessionId)
+        if (!current?.client || current !== s) throw new Error(RECONNECTING_ERR)
+        return await this.execOnClient(current.client, command, timeoutMs)
+      } finally {
+        release()
+      }
+    })
   }
 
   private execOnClient(

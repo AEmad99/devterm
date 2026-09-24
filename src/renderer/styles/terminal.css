@@ -844,66 +844,6 @@ body.agent-float-body,
   min-height: 0;
 }
 
-.cmd-block-header {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 26px;
-  padding: 0 8px;
-  background: var(--panel);
-  border-bottom: 1px solid var(--border);
-  font-size: 12px;
-  color: var(--muted);
-}
-.cmd-block-header-mark {
-  width: 4px;
-  height: 14px;
-  border-radius: 1px;
-  background: var(--accent);
-  flex: 0 0 auto;
-}
-.cmd-block-header.is-ok .cmd-block-header-mark {
-  background: var(--ok);
-}
-.cmd-block-header.is-fail .cmd-block-header-mark {
-  background: var(--danger);
-}
-.cmd-block-header-cmd {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-family: var(--font-mono);
-  color: var(--fg);
-}
-.cmd-block-header-exit {
-  flex: 0 0 auto;
-  font-variant-numeric: tabular-nums;
-}
-.cmd-block-header.is-fail .cmd-block-header-exit {
-  color: var(--danger);
-}
-.cmd-block-header.is-ok .cmd-block-header-exit {
-  color: var(--ok);
-}
-.cmd-block-header button {
-  flex: 0 0 auto;
-  background: transparent;
-  color: var(--muted);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 1px 6px;
-  font: inherit;
-  font-size: 11px;
-  cursor: pointer;
-}
-.cmd-block-header button:hover {
-  color: var(--fg);
-  background: var(--hover);
-}
-
 .cmd-block-gutter {
   width: 4px !important;
   left: 0 !important;

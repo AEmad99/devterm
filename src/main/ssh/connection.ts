@@ -60,6 +60,10 @@ function tcpNoDelay(host: string, port: number): Promise<Socket> {
       socket.setTimeout(0)
       socket.removeListener('timeout', onTimeout)
       socket.setNoDelay(true)
+      // Probe a dead peer even when SSH-level keepalives are stuck behind a
+      // full window of agent output. The SSH keepalive count below is what
+      // used to tear the session down while a command was still streaming.
+      socket.setKeepAlive(true, 15000)
       socket.removeListener('error', onError)
       resolve(socket)
     })
@@ -123,6 +127,11 @@ async function connectHop(
       ...authConfig(hop),
       sock: transport as ConnectConfig['sock'],
       keepaliveInterval: 15000,
+      // ssh2's default is 3 unanswered keepalives (~45s). A busy agent fills
+      // the channel with stdout, so the keepalive reply sits behind that data
+      // and the client destroys a still-live session. Allow a long stall;
+      // TCP keepalive above still notices a peer that is actually gone.
+      keepaliveCountMax: 120,
       readyTimeout: 20000,
       // Windows OpenSSH / older servers still offer ssh-rsa (and rarely ssh-dss).
       // Keep modern keys first; omit a category and ssh2 uses its defaults.
