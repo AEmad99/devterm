@@ -24,6 +24,9 @@ export interface InteractionOutcome {
   /** Viewport coords after scrollIntoView (for CDP Input). */
   x?: number
   y?: number
+  /** Guest layout viewport, so the overlay can map x/y onto the webview box. */
+  vw?: number
+  vh?: number
   tag?: string
   role?: string
   name?: string
@@ -70,7 +73,7 @@ ${resolvePrelude(ref)}
 var r=el.getBoundingClientRect();
 var x=r.left+r.width/2,y=r.top+r.height/2;
 try{el.focus({preventScroll:true})}catch(_e){}
-return JSON.stringify({ok:true,x:x,y:y,tag:(el.tagName||'').toLowerCase(),role:(el.getAttribute('role')||''),name:${accessibleNameExpr()}});
+return JSON.stringify({ok:true,x:x,y:y,vw:window.innerWidth||0,vh:window.innerHeight||0,tag:(el.tagName||'').toLowerCase(),role:(el.getAttribute('role')||''),name:${accessibleNameExpr()}});
 })()`
 }
 
@@ -85,7 +88,7 @@ if(typeof PointerEvent==='function'){el.dispatchEvent(new PointerEvent('pointerd
 el.dispatchEvent(new MouseEvent('mousedown',opts));
 el.dispatchEvent(new MouseEvent('mouseup',opts));
 el.click();
-return JSON.stringify({ok:true,detail:(el.tagName||'').toLowerCase()+(el.innerText?(' "'+String(el.innerText).slice(0,60)+'"'):''),x:x,y:y})
+return JSON.stringify({ok:true,detail:(el.tagName||'').toLowerCase()+(el.innerText?(' "'+String(el.innerText).slice(0,60)+'"'):''),x:x,y:y,vw:window.innerWidth||0,vh:window.innerHeight||0})
 })()`
 }
 
@@ -98,7 +101,7 @@ var opts={bubbles:true,cancelable:true,view:window,clientX:x,clientY:y};
 el.dispatchEvent(new MouseEvent('mouseover',opts));
 el.dispatchEvent(new MouseEvent('mouseenter',opts));
 el.dispatchEvent(new MouseEvent('mousemove',opts));
-return JSON.stringify({ok:true,detail:'hovered '+(el.tagName||'').toLowerCase(),x:x,y:y})
+return JSON.stringify({ok:true,detail:'hovered '+(el.tagName||'').toLowerCase(),x:x,y:y,vw:window.innerWidth||0,vh:window.innerHeight||0})
 })()`
 }
 
@@ -132,7 +135,7 @@ if(form&&typeof form.requestSubmit==='function'){form.requestSubmit();return JSO
 ['keydown','keypress','keyup'].forEach(function(ty){el.dispatchEvent(new KeyboardEvent(ty,{key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true,cancelable:true}))});`
     : ''
 }
-return JSON.stringify({ok:true,detail:'typed',x:x,y:y,value:String(el.value||el.textContent||'').slice(0,80)})
+return JSON.stringify({ok:true,detail:'typed',x:x,y:y,vw:window.innerWidth||0,vh:window.innerHeight||0,value:String(el.value||el.textContent||'').slice(0,80)})
 })()`
 }
 
@@ -158,7 +161,7 @@ var next=${JSON.stringify(text)};
 if(el.isContentEditable){
   if(${JSON.stringify(mode)}==='prepare'){
     document.execCommand('selectAll',false,null);
-    return JSON.stringify({ok:true,x:x,y:y,tag:'contenteditable',detail:'prepared'})
+    return JSON.stringify({ok:true,x:x,y:y,vw:window.innerWidth||0,vh:window.innerHeight||0,tag:'contenteditable',detail:'prepared'})
   }
   el.textContent=next;
   el.dispatchEvent(new Event('input',{bubbles:true}));
@@ -170,7 +173,7 @@ if(el.isContentEditable){
     desc.set.call(el,'');
     el.dispatchEvent(new Event('input',{bubbles:true}));
     try{el.select()}catch(_e){}
-    return JSON.stringify({ok:true,x:x,y:y,tag:(el.tagName||'').toLowerCase(),detail:'prepared'})
+    return JSON.stringify({ok:true,x:x,y:y,vw:window.innerWidth||0,vh:window.innerHeight||0,tag:(el.tagName||'').toLowerCase(),detail:'prepared'})
   }
   desc.set.call(el,next);
   el.dispatchEvent(new Event('input',{bubbles:true}));
@@ -183,7 +186,7 @@ if(form&&typeof form.requestSubmit==='function'){form.requestSubmit();return JSO
 ['keydown','keypress','keyup'].forEach(function(ty){el.dispatchEvent(new KeyboardEvent(ty,{key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true,cancelable:true}))});`
     : ''
 }
-return JSON.stringify({ok:true,detail:'filled',x:x,y:y,value:String(el.value||el.textContent||'').slice(0,80)})
+return JSON.stringify({ok:true,detail:'filled',x:x,y:y,vw:window.innerWidth||0,vh:window.innerHeight||0,value:String(el.value||el.textContent||'').slice(0,80)})
 })()`
 }
 
@@ -212,7 +215,7 @@ el.dispatchEvent(new Event('input',{bubbles:true}));
 el.dispatchEvent(new Event('change',{bubbles:true}));
 var o=opts[chosen];
 var r=el.getBoundingClientRect();
-return JSON.stringify({ok:true,detail:'selected "'+String(o.text).slice(0,80)+'"',value:String(o.value),x:r.left+r.width/2,y:r.top+r.height/2})
+return JSON.stringify({ok:true,detail:'selected "'+String(o.text).slice(0,80)+'"',value:String(o.value),x:r.left+r.width/2,y:r.top+r.height/2,vw:window.innerWidth||0,vh:window.innerHeight||0})
 })()`
 }
 
@@ -233,7 +236,7 @@ if(dir==='down')dy=px;else if(dir==='up')dy=-px;else if(dir==='right')dx=px;else
 if(el===document.body||el===document.documentElement){window.scrollBy(dx,dy)}
 else{el.scrollBy(dx,dy)}
 var r=el.getBoundingClientRect();
-return JSON.stringify({ok:true,detail:'scrolled '+dir+' '+px+'px',scrollX:window.scrollX,scrollY:window.scrollY,x:r.left+r.width/2,y:r.top+r.height/2})
+return JSON.stringify({ok:true,detail:'scrolled '+dir+' '+px+'px',scrollX:window.scrollX,scrollY:window.scrollY,x:r.left+r.width/2,y:r.top+r.height/2,vw:window.innerWidth||0,vh:window.innerHeight||0})
 })()`
   }
   return `(function(){
@@ -241,7 +244,7 @@ var dir=${dir},px=${px};
 var dx=0,dy=0;
 if(dir==='down')dy=px;else if(dir==='up')dy=-px;else if(dir==='right')dx=px;else if(dir==='left')dx=-px;
 window.scrollBy(dx,dy);
-return JSON.stringify({ok:true,detail:'scrolled page '+dir+' '+px+'px',scrollX:window.scrollX,scrollY:window.scrollY,x:window.innerWidth/2,y:window.innerHeight/2})
+return JSON.stringify({ok:true,detail:'scrolled page '+dir+' '+px+'px',scrollX:window.scrollX,scrollY:window.scrollY,x:window.innerWidth/2,y:window.innerHeight/2,vw:window.innerWidth||0,vh:window.innerHeight||0})
 })()`
 }
 

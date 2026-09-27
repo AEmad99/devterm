@@ -82,19 +82,47 @@ export async function remapStaleRef(
   return null
 }
 
-/** Let the pane overlay glide to the target before the page changes. */
-const POINTER_LEAD_MS = 200
+/** Glide time when the cursor has a real target. Shorter when the cue is centered. */
+const POINTER_LEAD_MS = 220
+const POINTER_REVEAL_MS = 120
 
+interface AimPoint {
+  x?: number
+  y?: number
+  vw?: number
+  vh?: number
+}
+
+function finite(n: unknown): n is number {
+  return typeof n === 'number' && Number.isFinite(n)
+}
+
+/** Guest CSS pixels only. Missing or NaN coords are omitted so we never click the corner. */
+function pointOf(o: InteractionOutcome): AimPoint {
+  const point: AimPoint = {}
+  if (finite(o.x) && finite(o.y)) {
+    point.x = o.x
+    point.y = o.y
+  }
+  if (finite(o.vw) && o.vw > 0) point.vw = o.vw
+  if (finite(o.vh) && o.vh > 0) point.vh = o.vh
+  return point
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/** Reveal the pane and move the cursor. Always waits so the operator can see it land. */
 async function aim(
   service: BrowserControlService,
   entry: BrowserTabEntry,
-  x: number | undefined,
-  y: number | undefined,
+  point: AimPoint,
   label: string
 ): Promise<void> {
-  service.showPointer(entry, { kind: 'move', x, y, label })
-  if (x === undefined || y === undefined) return
-  await new Promise((resolve) => setTimeout(resolve, POINTER_LEAD_MS))
+  service.showPointer(entry, { kind: 'move', ...point, label })
+  const hasPoint = point.x !== undefined && point.y !== undefined
+  await delay(hasPoint ? POINTER_LEAD_MS : POINTER_REVEAL_MS)
 }
 
 async function resolveCoords(
@@ -130,12 +158,18 @@ export async function actionClick(
   }
   if (resolved.err) return { ok: false, isError: true, text: withObs(entry, resolved.err) }
 
-  const x = resolved.x ?? 0
-  const y = resolved.y ?? 0
-  await aim(service, entry, x, y, 'Click')
-  const cdp = await cdpClickAt(wc, x, y)
-  service.showPointer(entry, { kind: 'click', x, y, label: 'Click' })
+  const point = pointOf(resolved)
+  if (point.x === undefined || point.y === undefined) {
+    return {
+      ok: false,
+      isError: true,
+      text: withObs(entry, 'element has no viewport coordinates — run browser_snapshot and retry')
+    }
+  }
+  await aim(service, entry, point, 'Click')
+  const cdp = await cdpClickAt(wc, point.x, point.y)
   if (cdp.ok) {
+    service.showPointer(entry, { kind: 'click', ...point, label: 'Click' })
     const settled = await service.waitForSettle(entry, 4000)
     return {
       ok: true,
@@ -150,6 +184,7 @@ export async function actionClick(
   // DOM fallback
   const out = parseInteraction(await service.executeJs(entry, buildClickScript(ref)))
   if (out.err) return { ok: false, isError: true, text: withObs(entry, out.err) }
+  service.showPointer(entry, { kind: 'click', ...point, ...pointOf(out), label: 'Click' })
   const settled = await service.waitForSettle(entry, 4000)
   return {
     ok: true,
@@ -175,12 +210,18 @@ export async function actionHover(
     }
   const resolved = await resolveCoords(service, entry, ref)
   if (resolved.err) return { ok: false, isError: true, text: withObs(entry, resolved.err) }
-  const x = resolved.x ?? 0
-  const y = resolved.y ?? 0
-  await aim(service, entry, x, y, 'Hover')
-  const cdp = await cdpHoverAt(wc, x, y)
-  service.showPointer(entry, { kind: 'hover', x, y, label: 'Hover' })
+  const point = pointOf(resolved)
+  if (point.x === undefined || point.y === undefined) {
+    return {
+      ok: false,
+      isError: true,
+      text: withObs(entry, 'element has no viewport coordinates — run browser_snapshot and retry')
+    }
+  }
+  await aim(service, entry, point, 'Hover')
+  const cdp = await cdpHoverAt(wc, point.x, point.y)
   if (cdp.ok) {
+    service.showPointer(entry, { kind: 'hover', ...point, label: 'Hover' })
     return {
       ok: true,
       text: withObs(entry, `hovered ${ref}${resolved.tag ? ` (${resolved.tag})` : ''}`)
@@ -188,6 +229,7 @@ export async function actionHover(
   }
   const out = parseInteraction(await service.executeJs(entry, buildHoverScript(ref)))
   if (out.err) return { ok: false, isError: true, text: withObs(entry, out.err) }
+  service.showPointer(entry, { kind: 'hover', ...point, ...pointOf(out), label: 'Hover' })
   return {
     ok: true,
     text: withObs(entry, `${out.detail ?? `hovered ${ref}`} ${SYNTHETIC_FALLBACK_NOTE}`)
@@ -233,10 +275,18 @@ export async function actionFill(
   if (prepared.passwordField) return { ok: false, passwordField: true, text: 'password field' }
 
   const label = submit ? 'Submit' : 'Type'
-  await aim(service, entry, prepared.x, prepared.y, label)
+  const point = pointOf(prepared)
+  await aim(service, entry, point, label)
+  if (point.x === undefined || point.y === undefined) {
+    return {
+      ok: false,
+      isError: true,
+      text: withObs(entry, 'field has no viewport coordinates — run browser_snapshot and retry')
+    }
+  }
   const cdp = await cdpInsertText(wc, text)
-  service.showPointer(entry, { kind: 'type', x: prepared.x, y: prepared.y, label })
   if (cdp.ok) {
+    service.showPointer(entry, { kind: 'type', ...point, label })
     if (submit) {
       const key = await cdpPressKey(wc, 'Enter')
       if (!key.ok) {
@@ -258,6 +308,7 @@ export async function actionFill(
     await service.executeJs(entry, buildFillScript(ref, text, submit, allowPassword, 'full'))
   )
   if (out.err) return { ok: false, isError: true, text: withObs(entry, out.err) }
+  service.showPointer(entry, { kind: 'type', ...point, ...pointOf(out), label })
   return {
     ok: true,
     text: withObs(
@@ -284,6 +335,11 @@ export async function actionType(
   )
   if (out.passwordField) return { ok: false, passwordField: true, text: 'password field' }
   if (out.err) return { ok: false, isError: true, text: withObs(entry, out.err) }
+  service.showPointer(entry, {
+    kind: 'type',
+    ...pointOf(out),
+    label: submit ? 'Submit' : 'Type'
+  })
   return {
     ok: true,
     text: withObs(
@@ -299,10 +355,10 @@ export async function actionSelect(
   ref: string,
   opts: { value?: string; label?: string; index?: number }
 ): Promise<ActionResult> {
-  service.showPointer(entry, { kind: 'move', label: 'Select' })
+  await aim(service, entry, {}, 'Select')
   const out = parseInteraction(await service.executeJs(entry, buildSelectScript(ref, opts)))
   if (out.err) return { ok: false, isError: true, text: withObs(entry, out.err) }
-  service.showPointer(entry, { kind: 'click', x: out.x, y: out.y, label: 'Select' })
+  service.showPointer(entry, { kind: 'click', ...pointOf(out), label: 'Select' })
   return { ok: true, text: withObs(entry, out.detail ?? `selected on ${ref}`) }
 }
 
@@ -320,21 +376,26 @@ export async function actionPressKey(
       text: "the tab's page is no longer running (was it closed?)"
     }
 
-  let x: number | undefined
-  let y: number | undefined
+  let point: AimPoint = {}
   if (ref) {
     const resolved = await resolveCoords(service, entry, ref)
     if (resolved.err) return { ok: false, isError: true, text: withObs(entry, resolved.err) }
-    x = resolved.x
-    y = resolved.y
-    await aim(service, entry, x, y, key)
+    point = pointOf(resolved)
+    if (point.x === undefined || point.y === undefined) {
+      return {
+        ok: false,
+        isError: true,
+        text: withObs(entry, 'element has no viewport coordinates — run browser_snapshot and retry')
+      }
+    }
+    await aim(service, entry, point, key)
   } else {
-    service.showPointer(entry, { kind: 'key', label: key })
+    await aim(service, entry, {}, key)
   }
 
   const cdp = await cdpPressKey(wc, key)
-  service.showPointer(entry, { kind: 'key', x, y, label: key })
   if (cdp.ok) {
+    service.showPointer(entry, { kind: 'key', ...point, label: key })
     return {
       ok: true,
       text: withObs(entry, `sent ${key}${ref ? ` to ${ref}` : ''}`)
@@ -342,6 +403,7 @@ export async function actionPressKey(
   }
   const out = parseInteraction(await service.executeJs(entry, buildKeyPressScript(key, ref)))
   if (out.err) return { ok: false, isError: true, text: withObs(entry, out.err) }
+  service.showPointer(entry, { kind: 'key', ...point, label: key })
   return {
     ok: true,
     text: withObs(entry, `${out.detail ?? `sent ${key}`} ${SYNTHETIC_FALLBACK_NOTE}`)

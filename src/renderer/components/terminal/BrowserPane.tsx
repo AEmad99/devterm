@@ -23,7 +23,12 @@ import {
   revealBrowserPane
 } from '../../lib/browser-control'
 import { formatBytes } from '../../lib/format'
-import type { BrowserDownloadItem, SessionRestoreBrowserTab } from '@shared/types'
+import { placeAgentPointer, sanitizePointerEvent, type PointerKind } from '@shared/agent-pointer'
+import type {
+  BrowserDownloadItem,
+  BrowserPointerEvent,
+  SessionRestoreBrowserTab
+} from '@shared/types'
 import {
   IconArrowDown,
   IconArrowLeft,
@@ -699,33 +704,55 @@ const BrowserFindBar = memo(function BrowserFindBar({
   )
 })
 
+interface PointerCue {
+  tabId: string
+  kind: PointerKind
+  label: string
+  x?: number
+  y?: number
+  vw?: number
+  vh?: number
+  zoom?: number
+  seq: number
+  tick: number
+  direction?: BrowserPointerEvent['direction']
+}
+
 function AgentPointer({
   x,
   y,
   label,
   kind,
   centered,
+  labelSide,
+  clamped,
   tick
 }: {
-  x: number
-  y: number
+  x: number | null
+  y: number | null
   label: string
-  kind: string
+  kind: PointerKind
   centered: boolean
+  labelSide: 'left' | 'right'
+  clamped: boolean
   tick: number
 }) {
   return (
     <div
-      className={`agent-pointer kind-${kind}${centered ? ' is-centered' : ''}${kind === 'click' ? ' is-click' : ''}`}
-      style={centered ? undefined : { transform: `translate(${x - 6}px, ${y - 4}px)` }}
+      className={`agent-pointer kind-${kind}${centered ? ' is-centered' : ''}${kind === 'click' ? ' is-click' : ''}${labelSide === 'left' ? ' label-left' : ''}${clamped ? ' is-clamped' : ''}`}
+      style={
+        centered || x === null || y === null
+          ? undefined
+          : { transform: `translate(${x - 7}px, ${y - 4}px)` }
+      }
       aria-hidden
     >
-      {kind === 'click' && <span className="agent-pointer-ring" key={tick} />}
-      <svg className="agent-pointer-icon" viewBox="0 0 32 32" width="28" height="28">
+      <span className="agent-pointer-ring" key={tick} />
+      <svg className="agent-pointer-icon" viewBox="0 0 32 32" width="32" height="32">
         <path
           fill="var(--panel)"
           stroke="var(--fg)"
-          strokeWidth="1.5"
+          strokeWidth="1.6"
           strokeLinejoin="round"
           d="M5 3.2 5.6 24.8l6.4-5.5 3.9 9.1 3.7-1.6-3.9-8.9L24.2 17z"
         />
@@ -757,40 +784,40 @@ function BrowserPane({ session }: { session: Session }) {
   activeRef.current = activeId
   const tabsRef = useRef(tabs)
   tabsRef.current = tabs
-  const [pointer, setPointer] = useState<{
-    tabId: string
-    x: number
-    y: number
-    centered: boolean
-    kind: string
-    label: string
-    tick: number
-  } | null>(null)
+  const [pointer, setPointer] = useState<PointerCue | null>(null)
+  const [stackBox, setStackBox] = useState({ w: 0, h: 0 })
+  const pointerSeq = useRef(-1)
 
   useEffect(() => {
-    return window.devterm.browserControl.onPointer((ev) => {
-      if (!tabsRef.current.some((t) => t.id === ev.tabKey)) return
+    const el = previewRoot
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const measure = () => setStackBox({ w: el.clientWidth, h: el.clientHeight })
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [previewRoot])
+
+  useEffect(() => {
+    return window.devterm.browserControl.onPointer((raw) => {
+      const ev = sanitizePointerEvent(raw)
+      if (!ev || !tabsRef.current.some((t) => t.id === ev.tabKey)) return
+      if (typeof ev.seq === 'number' && ev.seq < pointerSeq.current) return
+      if (typeof ev.seq === 'number') pointerSeq.current = ev.seq
       setActiveId(ev.tabKey)
       revealBrowserPane(session.id)
-      const host = paneRef.current?.querySelector('.browser-stack')
-      const zoom = ev.zoom && ev.zoom > 0 ? ev.zoom : 1
-      const centered = ev.x === undefined || ev.y === undefined || !host
-      let x = 0
-      let y = 0
-      if (!centered && host && ev.x !== undefined && ev.y !== undefined) {
-        const w = host.clientWidth || 1
-        const h = host.clientHeight || 1
-        x = Math.min(Math.max(12, ev.x * zoom), Math.max(12, w - 28))
-        y = Math.min(Math.max(12, ev.y * zoom), Math.max(12, h - 28))
-      }
       setPointer({
         tabId: ev.tabKey,
-        x,
-        y,
-        centered,
         kind: ev.kind,
         label: ev.label || ev.kind,
-        tick: Date.now()
+        x: ev.x,
+        y: ev.y,
+        vw: ev.vw,
+        vh: ev.vh,
+        zoom: ev.zoom,
+        seq: ev.seq ?? pointerSeq.current,
+        tick: Date.now(),
+        direction: ev.direction
       })
     })
   }, [session.id])
@@ -995,6 +1022,19 @@ function BrowserPane({ session }: { session: Session }) {
     handles.current.get(activeRef.current)?.find(text, true)
   }, [])
 
+  const livePointer = pointer && pointer.tabId === activeId ? pointer : null
+  const placement = livePointer
+    ? placeAgentPointer({
+        x: livePointer.x,
+        y: livePointer.y,
+        vw: livePointer.vw,
+        vh: livePointer.vh,
+        zoom: livePointer.zoom,
+        width: stackBox.w,
+        height: stackBox.h
+      })
+    : null
+
   return (
     <div ref={paneRef} className={`browser-pane${session.preview ? ' has-preview' : ''}`}>
       <div className="browser-tabs">
@@ -1048,6 +1088,12 @@ function BrowserPane({ session }: { session: Session }) {
         >
           <IconPlus size={14} />
         </Button>
+        {livePointer && (
+          <div className="browser-agent-live" role="status">
+            <span className="browser-agent-live-dot" />
+            Agent · {livePointer.label}
+          </div>
+        )}
       </div>
       <BrowserToolbar
         address={address}
@@ -1113,14 +1159,22 @@ function BrowserPane({ session }: { session: Session }) {
               />
             </div>
           ))}
-          {pointer && pointer.tabId === activeId && (
+          {livePointer?.kind === 'scroll' && (
+            <div
+              className={`agent-scroll-wash dir-${livePointer.direction ?? 'down'}`}
+              aria-hidden
+            />
+          )}
+          {livePointer && placement?.ready && (
             <AgentPointer
-              x={pointer.x}
-              y={pointer.y}
-              label={pointer.label}
-              kind={pointer.kind}
-              centered={pointer.centered}
-              tick={pointer.tick}
+              x={placement.x}
+              y={placement.y}
+              label={livePointer.label}
+              kind={livePointer.kind}
+              centered={placement.centered}
+              labelSide={placement.labelSide}
+              clamped={placement.clamped}
+              tick={livePointer.tick}
             />
           )}
         </div>

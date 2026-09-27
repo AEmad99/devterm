@@ -391,13 +391,24 @@ export function registerBrowserTools(mcp: McpServer, deps: ToolDeps): void {
       if ('error' in t) return t.error
       const blocked = await guard('browser_scroll', originOf(t.entry.url), true)
       if (blocked) return blocked
-      const label = `Scroll ${direction ?? 'down'}`
-      service.showPointer(t.entry, { kind: 'scroll', label })
+      const dir = direction ?? 'down'
+      const label = `Scroll ${dir}`
+      service.showPointer(t.entry, { kind: 'scroll', label, direction: dir })
       try {
         const out = parseInteraction(
           await service.executeJs(t.entry, buildScrollScript({ ref, direction, pixels }))
         )
-        service.showPointer(t.entry, { kind: 'scroll', x: out.x, y: out.y, label })
+        if (!out.err) {
+          service.showPointer(t.entry, {
+            kind: 'scroll',
+            x: out.x,
+            y: out.y,
+            vw: out.vw,
+            vh: out.vh,
+            label,
+            direction: dir
+          })
+        }
         if (out.err) return errorText(out.err)
         return text(
           `${out.detail ?? 'scrolled'}` +

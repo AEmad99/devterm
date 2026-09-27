@@ -18,6 +18,7 @@ describe('guest interaction scripts', () => {
     assert.ok(s.includes('e12'))
     assert.ok(s.includes('el.click()'))
     assert.ok(s.includes('getBoundingClientRect'))
+    assert.ok(s.includes('innerWidth'))
     assert.equal(s.includes('__dt-agent-cursor'), false)
   })
 

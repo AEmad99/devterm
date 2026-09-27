@@ -2417,15 +2417,22 @@ export interface BrowserControlTabPatch {
 /**
  * Main → renderer: where the agent is acting inside a browser tab.
  * `x`/`y` are guest-viewport CSS pixels (omit them for a centered cue).
- * `zoom` is the guest zoom factor so the overlay lines up with the webview.
+ * `vw`/`vh` are `window.innerWidth/innerHeight` so the overlay can map those
+ * pixels onto the webview box. `zoom` is only a fallback when the viewport
+ * size is missing. `seq` is monotonic per process so a late event cannot
+ * rewind the cursor.
  */
 export interface BrowserPointerEvent {
   tabKey: string
   kind: 'move' | 'click' | 'type' | 'hover' | 'scroll' | 'key' | 'navigate'
   x?: number
   y?: number
+  vw?: number
+  vh?: number
   zoom?: number
   label?: string
+  seq?: number
+  direction?: 'up' | 'down' | 'left' | 'right'
 }
 
 /** Main → renderer request to open an agent-owned browser pane + tab. */

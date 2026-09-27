@@ -6,6 +6,7 @@ import {
   type BrowserOpenRequest,
   type BrowserPointerEvent
 } from '@shared/types'
+import { sanitizePointerEvent } from '@shared/agent-pointer'
 import { detachDebugger, forgetDebugger } from './cdp-input'
 import { clearGuestObs, recordConsole, recordNavFail, recordNavOk } from './observers'
 import type { OutlineNode, SnapshotPayload } from './snapshot'
@@ -82,6 +83,8 @@ export class BrowserControlService {
   private refMeta = new Map<string, Map<string, { role: string; name: string }>>()
   /** wcIds we already wired observers on. */
   private observed = new Set<number>()
+  /** Monotonic id so the renderer can drop a pointer event that arrives late. */
+  private pointerSeq = 0
 
   constructor(private sendRequest: (req: BrowserOpenRequest) => void) {}
 
@@ -302,7 +305,10 @@ export class BrowserControlService {
    * sees the action even when the page's CSP would hide an injected cursor.
    * Safe to call from unit tests: a missing Electron app is ignored.
    */
-  showPointer(entry: BrowserTabEntry, ev: Omit<BrowserPointerEvent, 'tabKey' | 'zoom'>): void {
+  showPointer(
+    entry: BrowserTabEntry,
+    ev: Omit<BrowserPointerEvent, 'tabKey' | 'zoom' | 'seq'>
+  ): void {
     let zoom = 1
     const guest = wcFromId(entry.wcId)
     if (guest && !guest.isDestroyed()) {
@@ -313,16 +319,28 @@ export class BrowserControlService {
         /* zoom is optional */
       }
     }
-    const payload: BrowserPointerEvent = {
+    const payload = sanitizePointerEvent({
       tabKey: entry.tabKey,
       kind: ev.kind,
+      x: ev.x,
+      y: ev.y,
+      vw: ev.vw,
+      vh: ev.vh,
       zoom,
-      label: ev.label
-    }
-    if (typeof ev.x === 'number' && Number.isFinite(ev.x)) payload.x = ev.x
-    if (typeof ev.y === 'number' && Number.isFinite(ev.y)) payload.y = ev.y
+      label: ev.label,
+      seq: ++this.pointerSeq,
+      direction: ev.direction
+    })
+    if (!payload) return
+    let windows: BrowserWindow[]
     try {
-      for (const win of BrowserWindow.getAllWindows()) {
+      windows = BrowserWindow.getAllWindows()
+    } catch {
+      /* unit tests construct the service without a running Electron app */
+      return
+    }
+    for (const win of windows) {
+      try {
         if (win.isDestroyed()) continue
         win.webContents.send(IPC.browserControlPointer, payload)
         win.webContents.send(IPC.browserControlFocusTab, entry.tabKey)
@@ -336,9 +354,9 @@ export class BrowserControlService {
           if (win.isMinimized()) win.restore()
           win.show()
         }
+      } catch {
+        /* one window failing must not drop the cue for the others */
       }
-    } catch {
-      /* unit tests construct the service without a running Electron app */
     }
   }
 

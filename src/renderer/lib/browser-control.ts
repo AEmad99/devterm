@@ -52,13 +52,22 @@ function leafContaining(node: LayoutNode | null, sid: string): LeafNode | null {
  * operator sees the page instead of only the agent terminal.
  */
 export function revealBrowserPane(sessionId: string): void {
-  const session = useSessions.getState().sessions.find((s) => s.id === sessionId)
+  const session = useSessions.getState().sessions.find((s) => s.id === sessionId && !s.closed)
   if (!session) return
-  const layout = useLayout.getState()
   const groupId = session.groupId || DEFAULT_GROUP
+  let layout = useLayout.getState()
+  let group = layout.groups.find((g) => g.id === groupId)
+  let leaf = leafContaining(group?.root ?? null, sessionId)
+  // A pane created in this same turn may not be in the tree yet. Sync once
+  // so the reveal still lands instead of leaving the operator on the agent.
+  if (!leaf) {
+    const live = useSessions.getState().sessions.filter((s) => !s.closed)
+    layout.sync(live.map((s) => ({ id: s.id, groupId: s.groupId })))
+    layout = useLayout.getState()
+    group = layout.groups.find((g) => g.id === groupId)
+    leaf = leafContaining(group?.root ?? null, sessionId)
+  }
   if (layout.activeGroupId !== groupId || layout.focusedId) layout.setActiveGroup(groupId)
-  const group = useLayout.getState().groups.find((g) => g.id === groupId)
-  const leaf = leafContaining(group?.root ?? null, sessionId)
   if (leaf && (leaf.active !== sessionId || group?.activeLeaf !== leaf.id)) {
     useLayout.getState().setActiveTab(leaf.id, sessionId)
   }
