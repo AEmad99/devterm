@@ -82,15 +82,27 @@ export async function remapStaleRef(
   return null
 }
 
+/** Let the pane overlay glide to the target before the page changes. */
+const POINTER_LEAD_MS = 200
+
+async function aim(
+  service: BrowserControlService,
+  entry: BrowserTabEntry,
+  x: number | undefined,
+  y: number | undefined,
+  label: string
+): Promise<void> {
+  service.showPointer(entry, { kind: 'move', x, y, label })
+  if (x === undefined || y === undefined) return
+  await new Promise((resolve) => setTimeout(resolve, POINTER_LEAD_MS))
+}
+
 async function resolveCoords(
   service: BrowserControlService,
   entry: BrowserTabEntry,
-  ref: string,
-  pulse: boolean
+  ref: string
 ): Promise<InteractionOutcome> {
-  return parseInteraction(
-    await service.executeJs(entry, buildResolveRefScript(ref, { cursor: true, pulse }))
-  )
+  return parseInteraction(await service.executeJs(entry, buildResolveRefScript(ref)))
 }
 
 export async function actionClick(
@@ -100,9 +112,14 @@ export async function actionClick(
   triedRemap = false
 ): Promise<ActionResult> {
   const wc = guest(entry)
-  if (!wc) return { ok: false, isError: true, text: "the tab's page is no longer running (was it closed?)" }
+  if (!wc)
+    return {
+      ok: false,
+      isError: true,
+      text: "the tab's page is no longer running (was it closed?)"
+    }
 
-  const resolved = await resolveCoords(service, entry, ref, true)
+  const resolved = await resolveCoords(service, entry, ref)
   if (resolved.err?.includes('no longer exists') && !triedRemap) {
     const next = await remapStaleRef(service, entry, ref)
     if (next) {
@@ -115,7 +132,9 @@ export async function actionClick(
 
   const x = resolved.x ?? 0
   const y = resolved.y ?? 0
+  await aim(service, entry, x, y, 'Click')
   const cdp = await cdpClickAt(wc, x, y)
+  service.showPointer(entry, { kind: 'click', x, y, label: 'Click' })
   if (cdp.ok) {
     const settled = await service.waitForSettle(entry, 4000)
     return {
@@ -148,12 +167,24 @@ export async function actionHover(
   ref: string
 ): Promise<ActionResult> {
   const wc = guest(entry)
-  if (!wc) return { ok: false, isError: true, text: "the tab's page is no longer running (was it closed?)" }
-  const resolved = await resolveCoords(service, entry, ref, false)
+  if (!wc)
+    return {
+      ok: false,
+      isError: true,
+      text: "the tab's page is no longer running (was it closed?)"
+    }
+  const resolved = await resolveCoords(service, entry, ref)
   if (resolved.err) return { ok: false, isError: true, text: withObs(entry, resolved.err) }
-  const cdp = await cdpHoverAt(wc, resolved.x ?? 0, resolved.y ?? 0)
+  const x = resolved.x ?? 0
+  const y = resolved.y ?? 0
+  await aim(service, entry, x, y, 'Hover')
+  const cdp = await cdpHoverAt(wc, x, y)
+  service.showPointer(entry, { kind: 'hover', x, y, label: 'Hover' })
   if (cdp.ok) {
-    return { ok: true, text: withObs(entry, `hovered ${ref}${resolved.tag ? ` (${resolved.tag})` : ''}`) }
+    return {
+      ok: true,
+      text: withObs(entry, `hovered ${ref}${resolved.tag ? ` (${resolved.tag})` : ''}`)
+    }
   }
   const out = parseInteraction(await service.executeJs(entry, buildHoverScript(ref)))
   if (out.err) return { ok: false, isError: true, text: withObs(entry, out.err) }
@@ -173,7 +204,12 @@ export async function actionFill(
   triedRemap = false
 ): Promise<ActionResult & { passwordField?: boolean }> {
   const wc = guest(entry)
-  if (!wc) return { ok: false, isError: true, text: "the tab's page is no longer running (was it closed?)" }
+  if (!wc)
+    return {
+      ok: false,
+      isError: true,
+      text: "the tab's page is no longer running (was it closed?)"
+    }
 
   // Password probe first when not yet allowed.
   if (!allowPassword) {
@@ -196,7 +232,10 @@ export async function actionFill(
   if (prepared.err) return { ok: false, isError: true, text: withObs(entry, prepared.err) }
   if (prepared.passwordField) return { ok: false, passwordField: true, text: 'password field' }
 
+  const label = submit ? 'Submit' : 'Type'
+  await aim(service, entry, prepared.x, prepared.y, label)
   const cdp = await cdpInsertText(wc, text)
+  service.showPointer(entry, { kind: 'type', x: prepared.x, y: prepared.y, label })
   if (cdp.ok) {
     if (submit) {
       const key = await cdpPressKey(wc, 'Enter')
@@ -260,8 +299,10 @@ export async function actionSelect(
   ref: string,
   opts: { value?: string; label?: string; index?: number }
 ): Promise<ActionResult> {
+  service.showPointer(entry, { kind: 'move', label: 'Select' })
   const out = parseInteraction(await service.executeJs(entry, buildSelectScript(ref, opts)))
   if (out.err) return { ok: false, isError: true, text: withObs(entry, out.err) }
+  service.showPointer(entry, { kind: 'click', x: out.x, y: out.y, label: 'Select' })
   return { ok: true, text: withObs(entry, out.detail ?? `selected on ${ref}`) }
 }
 
@@ -272,14 +313,27 @@ export async function actionPressKey(
   ref?: string
 ): Promise<ActionResult> {
   const wc = guest(entry)
-  if (!wc) return { ok: false, isError: true, text: "the tab's page is no longer running (was it closed?)" }
+  if (!wc)
+    return {
+      ok: false,
+      isError: true,
+      text: "the tab's page is no longer running (was it closed?)"
+    }
 
+  let x: number | undefined
+  let y: number | undefined
   if (ref) {
-    const resolved = await resolveCoords(service, entry, ref, false)
+    const resolved = await resolveCoords(service, entry, ref)
     if (resolved.err) return { ok: false, isError: true, text: withObs(entry, resolved.err) }
+    x = resolved.x
+    y = resolved.y
+    await aim(service, entry, x, y, key)
+  } else {
+    service.showPointer(entry, { kind: 'key', label: key })
   }
 
   const cdp = await cdpPressKey(wc, key)
+  service.showPointer(entry, { kind: 'key', x, y, label: key })
   if (cdp.ok) {
     return {
       ok: true,

@@ -1,5 +1,5 @@
 import { useSessions } from '../store/sessions'
-import { DEFAULT_GROUP, useLayout } from '../store/layout'
+import { DEFAULT_GROUP, useLayout, type LayoutNode, type LeafNode } from '../store/layout'
 import type { BrowserOpenRequest } from '@shared/types'
 
 /**
@@ -34,6 +34,35 @@ export function registerTabCloser(tabKey: string, close: () => void): () => void
   return () => {
     if (closers.get(tabKey) === close) closers.delete(tabKey)
   }
+}
+
+function leafContaining(node: LayoutNode | null, sid: string): LeafNode | null {
+  if (!node) return null
+  if (node.type === 'leaf') return node.tabs.includes(sid) ? node : null
+  for (const child of node.children) {
+    const hit = leafContaining(child, sid)
+    if (hit) return hit
+  }
+  return null
+}
+
+/**
+ * Bring a browser pane on screen: switch to its group, leave focus mode,
+ * and make its leaf the active one. Agent browser actions call this so the
+ * operator sees the page instead of only the agent terminal.
+ */
+export function revealBrowserPane(sessionId: string): void {
+  const session = useSessions.getState().sessions.find((s) => s.id === sessionId)
+  if (!session) return
+  const layout = useLayout.getState()
+  const groupId = session.groupId || DEFAULT_GROUP
+  if (layout.activeGroupId !== groupId || layout.focusedId) layout.setActiveGroup(groupId)
+  const group = useLayout.getState().groups.find((g) => g.id === groupId)
+  const leaf = leafContaining(group?.root ?? null, sessionId)
+  if (leaf && (leaf.active !== sessionId || group?.activeLeaf !== leaf.id)) {
+    useLayout.getState().setActiveTab(leaf.id, sessionId)
+  }
+  if (useSessions.getState().activeId !== sessionId) useSessions.getState().setActive(sessionId)
 }
 
 export function registerTabFocuser(tabKey: string, focus: () => void): () => void {

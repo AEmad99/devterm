@@ -1,13 +1,13 @@
-import { webContents } from 'electron'
+import { BrowserWindow, webContents } from 'electron'
 import { randomUUID } from 'crypto'
-import type { BrowserControlTabInfo, BrowserOpenRequest } from '@shared/types'
-import { detachDebugger, forgetDebugger } from './cdp-input'
 import {
-  clearGuestObs,
-  recordConsole,
-  recordNavFail,
-  recordNavOk
-} from './observers'
+  IPC,
+  type BrowserControlTabInfo,
+  type BrowserOpenRequest,
+  type BrowserPointerEvent
+} from '@shared/types'
+import { detachDebugger, forgetDebugger } from './cdp-input'
+import { clearGuestObs, recordConsole, recordNavFail, recordNavOk } from './observers'
 import type { OutlineNode, SnapshotPayload } from './snapshot'
 
 /** Safe guest lookup — unit tests run without a real Electron runtime. */
@@ -294,6 +294,52 @@ export class BrowserControlService {
   /** Make this tab the agent's default target for subsequent tool calls. */
   setLastOwned(agentSessionId: string, tabKey: string): void {
     this.lastOwned.set(agentSessionId, tabKey)
+  }
+
+  /**
+   * Tell every window to reveal this tab and paint the agent pointer.
+   * The overlay lives in the renderer, over the webview, so the operator
+   * sees the action even when the page's CSP would hide an injected cursor.
+   * Safe to call from unit tests: a missing Electron app is ignored.
+   */
+  showPointer(entry: BrowserTabEntry, ev: Omit<BrowserPointerEvent, 'tabKey' | 'zoom'>): void {
+    let zoom = 1
+    const guest = wcFromId(entry.wcId)
+    if (guest && !guest.isDestroyed()) {
+      try {
+        const z = guest.getZoomFactor()
+        if (Number.isFinite(z) && z > 0) zoom = z
+      } catch {
+        /* zoom is optional */
+      }
+    }
+    const payload: BrowserPointerEvent = {
+      tabKey: entry.tabKey,
+      kind: ev.kind,
+      zoom,
+      label: ev.label
+    }
+    if (typeof ev.x === 'number' && Number.isFinite(ev.x)) payload.x = ev.x
+    if (typeof ev.y === 'number' && Number.isFinite(ev.y)) payload.y = ev.y
+    try {
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (win.isDestroyed()) continue
+        win.webContents.send(IPC.browserControlPointer, payload)
+        win.webContents.send(IPC.browserControlFocusTab, entry.tabKey)
+        let agentWindow = false
+        try {
+          agentWindow = win.webContents.getURL().includes('agent-window')
+        } catch {
+          agentWindow = false
+        }
+        if (!agentWindow && (!win.isVisible() || win.isMinimized())) {
+          if (win.isMinimized()) win.restore()
+          win.show()
+        }
+      }
+    } catch {
+      /* unit tests construct the service without a running Electron app */
+    }
   }
 
   list(agentSessionId: string): TabListing[] {

@@ -919,6 +919,12 @@ export const IPC = {
   browserControlCloseTab: 'browser:control:close-tab',
   /** Main → renderer: activate/focus the pane tab whose key matches (browser_focus tool). */
   browserControlFocusTab: 'browser:control:focus-tab',
+  /**
+   * Main → renderer: show the agent pointer over a browser tab. Fired for
+   * click, type, scroll, hover, and navigation so the operator sees the
+   * action in the pane, not only in the agent terminal.
+   */
+  browserControlPointer: 'browser:control:pointer',
 
   // window appearance (glass/translucent material)
   windowSetGlass: 'window:set-glass',
@@ -1302,6 +1308,8 @@ export interface DevTermApi {
     onCloseTab(cb: (tabKey: string) => void): () => void
     /** Main asks the renderer to activate the pane tab with this key. */
     onFocusTab(cb: (tabKey: string) => void): () => void
+    /** Main reports an agent pointer move/click/scroll so the pane can draw it. */
+    onPointer(cb: (ev: BrowserPointerEvent) => void): () => void
   }
   /** Window appearance hooks. Native window controls are owned by the OS frame. */
   window: {
@@ -2404,6 +2412,20 @@ export interface BrowserControlTabInfo {
 export interface BrowserControlTabPatch {
   url?: string
   title?: string
+}
+
+/**
+ * Main → renderer: where the agent is acting inside a browser tab.
+ * `x`/`y` are guest-viewport CSS pixels (omit them for a centered cue).
+ * `zoom` is the guest zoom factor so the overlay lines up with the webview.
+ */
+export interface BrowserPointerEvent {
+  tabKey: string
+  kind: 'move' | 'click' | 'type' | 'hover' | 'scroll' | 'key' | 'navigate'
+  x?: number
+  y?: number
+  zoom?: number
+  label?: string
 }
 
 /** Main → renderer request to open an agent-owned browser pane + tab. */

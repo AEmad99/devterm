@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import {
-  AGENT_CURSOR_RUNTIME,
   buildClickScript,
   buildFillScript,
   buildHoverScript,
@@ -13,33 +12,26 @@ import {
   staleRefError
 } from './interact'
 
-describe('agent cursor overlay', () => {
-  it('click script glides a visible cursor then dispatches mouse events', () => {
+describe('guest interaction scripts', () => {
+  it('click script dispatches mouse events and returns viewport coords', () => {
     const s = buildClickScript('e12')
     assert.ok(s.includes('e12'))
-    assert.ok(s.includes('__dt-agent-cursor'))
-    assert.ok(s.includes('__dtMoveCursor'))
     assert.ok(s.includes('el.click()'))
-    assert.ok(s.includes('.then('))
+    assert.ok(s.includes('getBoundingClientRect'))
+    assert.equal(s.includes('__dt-agent-cursor'), false)
   })
 
-  it('type script moves the cursor to the field before typing', () => {
+  it('type script returns field coordinates without an in-page cursor', () => {
     const s = buildTypeScript('e3', 'hello', false)
-    assert.ok(s.includes('__dt-agent-cursor'))
-    assert.ok(s.includes('__dtMoveCursor'))
     assert.ok(s.includes('hello'))
-  })
-
-  it('cursor runtime injects a pointer overlay with a pop animation', () => {
-    assert.ok(AGENT_CURSOR_RUNTIME.includes('__dt-agent-cursor'))
-    assert.ok(AGENT_CURSOR_RUNTIME.includes('__dt-cursor-pop'))
-    assert.ok(AGENT_CURSOR_RUNTIME.includes('8b6cff'))
+    assert.ok(s.includes('x:x,y:y'))
+    assert.equal(s.includes('__dtMoveCursor'), false)
   })
 })
 
 describe('interact helpers', () => {
   it('resolve-ref script returns viewport coords after scrollIntoView', () => {
-    const s = buildResolveRefScript('e9', { pulse: true })
+    const s = buildResolveRefScript('e9')
     assert.ok(s.includes('getBoundingClientRect'))
     assert.ok(s.includes('scrollIntoView'))
     assert.ok(s.includes('e9'))

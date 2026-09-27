@@ -282,7 +282,9 @@ const api: DevTermApi = {
     onRequest: (cb) =>
       subscribe<import('@shared/types').BrowserOpenRequest>(IPC.browserControlRequest, cb),
     onCloseTab: (cb) => subscribe<string>(IPC.browserControlCloseTab, cb),
-    onFocusTab: (cb) => subscribe<string>(IPC.browserControlFocusTab, cb)
+    onFocusTab: (cb) => subscribe<string>(IPC.browserControlFocusTab, cb),
+    onPointer: (cb) =>
+      subscribe<import('@shared/types').BrowserPointerEvent>(IPC.browserControlPointer, cb)
   },
   window: {
     setGlass: (enabled: boolean): Promise<void> => ipcRenderer.invoke(IPC.windowSetGlass, enabled),

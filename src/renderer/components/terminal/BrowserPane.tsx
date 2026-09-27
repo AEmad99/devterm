@@ -19,7 +19,8 @@ import {
   reportTabRegistered,
   reportTabTitle,
   reportTabUnregistered,
-  reportTabUrl
+  reportTabUrl,
+  revealBrowserPane
 } from '../../lib/browser-control'
 import { formatBytes } from '../../lib/format'
 import type { BrowserDownloadItem, SessionRestoreBrowserTab } from '@shared/types'
@@ -698,6 +699,43 @@ const BrowserFindBar = memo(function BrowserFindBar({
   )
 })
 
+function AgentPointer({
+  x,
+  y,
+  label,
+  kind,
+  centered,
+  tick
+}: {
+  x: number
+  y: number
+  label: string
+  kind: string
+  centered: boolean
+  tick: number
+}) {
+  return (
+    <div
+      className={`agent-pointer kind-${kind}${centered ? ' is-centered' : ''}${kind === 'click' ? ' is-click' : ''}`}
+      style={centered ? undefined : { transform: `translate(${x - 6}px, ${y - 4}px)` }}
+      aria-hidden
+    >
+      {kind === 'click' && <span className="agent-pointer-ring" key={tick} />}
+      <svg className="agent-pointer-icon" viewBox="0 0 32 32" width="28" height="28">
+        <path
+          fill="var(--panel)"
+          stroke="var(--fg)"
+          strokeWidth="1.5"
+          strokeLinejoin="round"
+          d="M5 3.2 5.6 24.8l6.4-5.5 3.9 9.1 3.7-1.6-3.9-8.9L24.2 17z"
+        />
+        <path fill="currentColor" d="M7 6.2 7.4 21.6l4.7-4.1 3 6.9 1.8-.8-3-6.7 5.5-1.2z" />
+      </svg>
+      <span className="agent-pointer-label">{label}</span>
+    </div>
+  )
+}
+
 function BrowserPane({ session }: { session: Session }) {
   const [previewRoot, setPreviewRoot] = useState<HTMLDivElement | null>(null)
   // An agent-created pane's first tab must carry the pre-agreed tabKey from
@@ -717,6 +755,51 @@ function BrowserPane({ session }: { session: Session }) {
   const paneRef = useRef<HTMLDivElement | null>(null)
   const activeRef = useRef(activeId)
   activeRef.current = activeId
+  const tabsRef = useRef(tabs)
+  tabsRef.current = tabs
+  const [pointer, setPointer] = useState<{
+    tabId: string
+    x: number
+    y: number
+    centered: boolean
+    kind: string
+    label: string
+    tick: number
+  } | null>(null)
+
+  useEffect(() => {
+    return window.devterm.browserControl.onPointer((ev) => {
+      if (!tabsRef.current.some((t) => t.id === ev.tabKey)) return
+      setActiveId(ev.tabKey)
+      revealBrowserPane(session.id)
+      const host = paneRef.current?.querySelector('.browser-stack')
+      const zoom = ev.zoom && ev.zoom > 0 ? ev.zoom : 1
+      const centered = ev.x === undefined || ev.y === undefined || !host
+      let x = 0
+      let y = 0
+      if (!centered && host && ev.x !== undefined && ev.y !== undefined) {
+        const w = host.clientWidth || 1
+        const h = host.clientHeight || 1
+        x = Math.min(Math.max(12, ev.x * zoom), Math.max(12, w - 28))
+        y = Math.min(Math.max(12, ev.y * zoom), Math.max(12, h - 28))
+      }
+      setPointer({
+        tabId: ev.tabKey,
+        x,
+        y,
+        centered,
+        kind: ev.kind,
+        label: ev.label || ev.kind,
+        tick: Date.now()
+      })
+    })
+  }, [session.id])
+
+  useEffect(() => {
+    if (!pointer) return
+    const timer = window.setTimeout(() => setPointer(null), 2600)
+    return () => window.clearTimeout(timer)
+  }, [pointer])
 
   // Subscribe to the live download list. The preload wrapper delivers the
   // initial snapshot on subscribe and re-fires on every change. We do NOT
@@ -1025,11 +1108,21 @@ function BrowserPane({ session }: { session: Session }) {
                 onClose={() => closeTab(t.id)}
                 onActivate={() => {
                   setActiveId(t.id)
-                  useSessions.getState().setActive(session.id)
+                  revealBrowserPane(session.id)
                 }}
               />
             </div>
           ))}
+          {pointer && pointer.tabId === activeId && (
+            <AgentPointer
+              x={pointer.x}
+              y={pointer.y}
+              label={pointer.label}
+              kind={pointer.kind}
+              centered={pointer.centered}
+              tick={pointer.tick}
+            />
+          )}
         </div>
       </div>
       {dlDrawerOpen && (
