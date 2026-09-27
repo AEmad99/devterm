@@ -287,6 +287,10 @@
    content-security policy cannot hide it, and so the operator sees clicks,
    typing, and scrolls instead of only the agent's terminal transcript. */
 .browser-agent-live {
+  position: sticky;
+  right: 6px;
+  z-index: 2;
+  flex: none;
   margin-left: auto;
   align-self: center;
   display: inline-flex;
