@@ -64,6 +64,7 @@ import ModalFooter from './components/common/ModalFooter'
 import { toast } from './store/toasts'
 import GitPanel from './components/git/GitPanel'
 import { initBrowserControl } from './lib/browser-control'
+import CertificatePrompt from './components/browser/CertificatePrompt'
 import { initAgentHandoff } from './lib/agent-handoff'
 import { initPreviewControl } from './lib/preview'
 import PreviewOpenModal, { type PreviewOpenKind } from './components/modals/PreviewOpenModal'
@@ -1065,6 +1066,7 @@ export default function App() {
         onClose={() => setPendingClose(null)}
       />
       <ConfirmActionModal />
+      <CertificatePrompt />
       <GlobalSearchModal
         isOpen={globalSearchOpen}
         onClose={() => setGlobalSearchOpen(false)}

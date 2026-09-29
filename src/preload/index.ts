@@ -268,7 +268,14 @@ const api: DevTermApi = {
     reveal: (localPath: string): Promise<void> => ipcRenderer.invoke(IPC.shellReveal, localPath)
   },
   browser: {
-    onOpenTab: (cb) => subscribe<{ sourceId: number; url: string }>(IPC.browserOpenTab, cb)
+    onOpenTab: (cb) => subscribe<{ sourceId: number; url: string }>(IPC.browserOpenTab, cb),
+    onCertificatePrompt: (cb) =>
+      subscribe<import('@shared/types').BrowserCertificatePrompt>(IPC.browserCertificatePrompt, cb),
+    replyCertificate: (id: string, trust: boolean): void => {
+      ipcRenderer.send(IPC.browserCertificateReply, id, trust)
+    },
+    pendingCertificates: (): Promise<import('@shared/types').BrowserCertificatePrompt[]> =>
+      ipcRenderer.invoke(IPC.browserCertificatePending)
   },
   browserControl: {
     register: (info: import('@shared/types').BrowserControlTabInfo): Promise<void> =>
@@ -282,7 +289,9 @@ const api: DevTermApi = {
     onRequest: (cb) =>
       subscribe<import('@shared/types').BrowserOpenRequest>(IPC.browserControlRequest, cb),
     onCloseTab: (cb) => subscribe<string>(IPC.browserControlCloseTab, cb),
-    onFocusTab: (cb) => subscribe<string>(IPC.browserControlFocusTab, cb)
+    onFocusTab: (cb) => subscribe<string>(IPC.browserControlFocusTab, cb),
+    onPointer: (cb) =>
+      subscribe<import('@shared/types').BrowserPointerEvent>(IPC.browserControlPointer, cb)
   },
   window: {
     setGlass: (enabled: boolean): Promise<void> => ipcRenderer.invoke(IPC.windowSetGlass, enabled),

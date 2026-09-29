@@ -1,13 +1,14 @@
-import { webContents } from 'electron'
+import { BrowserWindow, webContents } from 'electron'
 import { randomUUID } from 'crypto'
-import type { BrowserControlTabInfo, BrowserOpenRequest } from '@shared/types'
-import { detachDebugger, forgetDebugger } from './cdp-input'
 import {
-  clearGuestObs,
-  recordConsole,
-  recordNavFail,
-  recordNavOk
-} from './observers'
+  IPC,
+  type BrowserControlTabInfo,
+  type BrowserOpenRequest,
+  type BrowserPointerEvent
+} from '@shared/types'
+import { sanitizePointerEvent } from '@shared/agent-pointer'
+import { detachDebugger, forgetDebugger } from './cdp-input'
+import { clearGuestObs, recordConsole, recordNavFail, recordNavOk } from './observers'
 import type { OutlineNode, SnapshotPayload } from './snapshot'
 
 /** Safe guest lookup — unit tests run without a real Electron runtime. */
@@ -82,6 +83,8 @@ export class BrowserControlService {
   private refMeta = new Map<string, Map<string, { role: string; name: string }>>()
   /** wcIds we already wired observers on. */
   private observed = new Set<number>()
+  /** Monotonic id so the renderer can drop a pointer event that arrives late. */
+  private pointerSeq = 0
 
   constructor(private sendRequest: (req: BrowserOpenRequest) => void) {}
 
@@ -294,6 +297,67 @@ export class BrowserControlService {
   /** Make this tab the agent's default target for subsequent tool calls. */
   setLastOwned(agentSessionId: string, tabKey: string): void {
     this.lastOwned.set(agentSessionId, tabKey)
+  }
+
+  /**
+   * Tell every window to reveal this tab and paint the agent pointer.
+   * The overlay lives in the renderer, over the webview, so the operator
+   * sees the action even when the page's CSP would hide an injected cursor.
+   * Safe to call from unit tests: a missing Electron app is ignored.
+   */
+  showPointer(
+    entry: BrowserTabEntry,
+    ev: Omit<BrowserPointerEvent, 'tabKey' | 'zoom' | 'seq'>
+  ): void {
+    let zoom = 1
+    const guest = wcFromId(entry.wcId)
+    if (guest && !guest.isDestroyed()) {
+      try {
+        const z = guest.getZoomFactor()
+        if (Number.isFinite(z) && z > 0) zoom = z
+      } catch {
+        /* zoom is optional */
+      }
+    }
+    const payload = sanitizePointerEvent({
+      tabKey: entry.tabKey,
+      kind: ev.kind,
+      x: ev.x,
+      y: ev.y,
+      vw: ev.vw,
+      vh: ev.vh,
+      zoom,
+      label: ev.label,
+      seq: ++this.pointerSeq,
+      direction: ev.direction
+    })
+    if (!payload) return
+    let windows: BrowserWindow[]
+    try {
+      windows = BrowserWindow.getAllWindows()
+    } catch {
+      /* unit tests construct the service without a running Electron app */
+      return
+    }
+    for (const win of windows) {
+      try {
+        if (win.isDestroyed()) continue
+        win.webContents.send(IPC.browserControlPointer, payload)
+        win.webContents.send(IPC.browserControlFocusTab, entry.tabKey)
+        let agentWindow = false
+        try {
+          agentWindow = win.webContents.getURL().includes('agent-window')
+        } catch {
+          agentWindow = false
+        }
+        if (!agentWindow && (!win.isVisible() || win.isMinimized())) {
+          if (win.isMinimized()) win.restore()
+          win.show()
+        }
+      } catch {
+        /* one window failing must not drop the cue for the others */
+      }
+    }
   }
 
   list(agentSessionId: string): TabListing[] {

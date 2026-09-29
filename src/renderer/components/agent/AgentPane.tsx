@@ -5,6 +5,7 @@ import type { AgentBridgeStatus, AgentKind, PolicyMode } from '@shared/types'
 import { useSessions } from '../../store/sessions'
 import { useSettings } from '../../store/settings'
 import { fitNow, fitSoon } from '../../lib/fit'
+import { createPtyResizeGate, keepTerminalFollowTail, waitForHostBox } from '../../lib/term-follow'
 import { attachRenderer, attachClipboard } from '../../lib/renderer'
 import {
   createIdleChime,
@@ -90,6 +91,7 @@ export default function AgentPane({
   const label = agentKindLabel(kind).replace(/ Agent$/, '')
   const hostRef = useRef<HTMLDivElement>(null)
   const terminalRef = useRef<Terminal | null>(null)
+  const tailRef = useRef<ReturnType<typeof keepTerminalFollowTail> | null>(null)
   const activeRef = useRef(active)
   activeRef.current = active
   const themeId = useSettings((s) => s.themeId)
@@ -193,7 +195,23 @@ export default function AgentPane({
       sessionId,
       agentPty: true
     })
+    let ptyId = ''
+    const tail = keepTerminalFollowTail(term, host)
+    tailRef.current = tail
+    const resizeGate = createPtyResizeGate((cols, rows) => {
+      if (!ptyId) return
+      window.devterm.pty.resize(ptyId, cols, rows)
+    })
+    const pushFit = () => {
+      if (!activeRef.current) return
+      tail.beforeResize()
+      if (!fitNow(fit, host)) return
+      tail.afterResize()
+      resizeGate.push(term.cols, term.rows)
+    }
+    tail.beforeResize()
     fitNow(fit, host)
+    tail.afterResize()
     const forceRestart = restartNonce > 0
     const localCwd = useSessions.getState().sessions.find((x) => x.id === sessionId)?.cwd
     term.write(
@@ -205,9 +223,22 @@ export default function AgentPane({
     )
 
     let disposed = false
-    const cleanups: Array<() => void> = [disposeRenderer, disposeClipboard]
+    const cleanups: Array<() => void> = [
+      disposeRenderer,
+      disposeClipboard,
+      () => tail.dispose(),
+      () => resizeGate.dispose(),
+      () => {
+        if (tailRef.current === tail) tailRef.current = null
+      }
+    ]
 
     ;(async () => {
+      await waitForHostBox(host)
+      if (disposed) return
+      tail.beforeResize()
+      fitNow(fit, host)
+      tail.afterResize()
       // Delegated sessions carry a one-time prompt/model/effort on the
       // renderer session. Consume it before opening so reconnects and UI mode
       // remounts never submit the handoff twice.
@@ -223,12 +254,7 @@ export default function AgentPane({
       }
       try {
         const live = useSessions.getState().sessions.find((x) => x.id === sessionId)
-        const {
-          ptyId,
-          mcpUrl: url,
-          reused,
-          promptDelivered
-        } = await window.devterm.agent.open({
+        const opened = await window.devterm.agent.open({
           sessionId,
           kind,
           mode,
@@ -244,6 +270,11 @@ export default function AgentPane({
           sessionKind: isLocal ? 'local' : 'remote',
           browserTools: useSettings.getState().agentPreferences.browserTools !== false
         })
+        ptyId = opened.ptyId
+        const url = opened.mcpUrl
+        const reused = opened.reused
+        const promptDelivered = opened.promptDelivered
+        resizeGate.seed(term.cols, term.rows)
         if (disposed) {
           acknowledge(false, 'The delegated agent pane was closed before it could start.')
           // Only kill if we were asked to own the lifecycle.
@@ -381,19 +412,15 @@ export default function AgentPane({
           window.devterm.pty.input(ptyId, d)
         })
         cleanups.push(() => inputDisposable.dispose())
-        const push = () => {
-          if (!activeRef.current) return
-          if (fitNow(fit, host)) window.devterm.pty.resize(ptyId, term.cols, term.rows)
-        }
-        const ro = new ResizeObserver(push)
+        const ro = new ResizeObserver(() => pushFit())
         ro.observe(host)
-        const onWin = () => push()
+        const onWin = () => pushFit()
         window.addEventListener('resize', onWin)
         cleanups.push(() => {
           ro.disconnect()
           window.removeEventListener('resize', onWin)
         })
-        fitSoon(fit, host, push)
+        fitSoon(fit, host, pushFit)
       } catch (e) {
         const msg = String((e as Error).message || e)
         acknowledge(false, msg)
@@ -432,16 +459,14 @@ export default function AgentPane({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [kind, label, mode, restartNonce, sessionId])
 
-  // When becoming active after stash/float, re-fit so the PTY matches the viewport.
+  // When becoming active after stash/float, re-fit so the PTY matches the viewport
+  // and put the transcript back on the tail if the operator had not scrolled away.
   useEffect(() => {
     if (!active) return
-    const host = hostRef.current
-    if (!host) return
-    // Soft fit only — resize is sent on the next ResizeObserver tick in the
-    // main effect's observer while activeRef is true.
     const t = window.setTimeout(() => {
-      host.dispatchEvent(new Event('resize'))
-    }, 50)
+      tailRef.current?.afterResize()
+      window.dispatchEvent(new Event('resize'))
+    }, 60)
     return () => window.clearTimeout(t)
   }, [active])
 

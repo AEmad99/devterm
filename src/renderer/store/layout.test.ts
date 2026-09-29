@@ -143,3 +143,73 @@ describe('splitBeside', () => {
     assert.equal(root.active, 'ssh-b')
   })
 })
+
+describe('splitNewBeside', () => {
+  it('opens a pane beside the anchor without changing the terminal the operator is on', () => {
+    useLayout.setState({
+      groups: [
+        {
+          id: DEFAULT_GROUP,
+          name: 'Group 1',
+          root: {
+            type: 'leaf',
+            id: 'leaf-1',
+            tabs: ['term-a', 'term-b', 'term-c'],
+            active: 'term-b'
+          },
+          activeLeaf: 'leaf-1'
+        }
+      ],
+      activeGroupId: DEFAULT_GROUP,
+      focusedId: 'term-b',
+      groupFlags: {}
+    })
+    assert.equal(useLayout.getState().splitNewBeside('term-b', 'browser-1', 'right'), true)
+    const root = useLayout.getState().groups[0].root
+    assert.equal(root?.type, 'split')
+    if (root?.type !== 'split') return
+    const left = root.children[0]
+    const right = root.children[1]
+    assert.equal(left.type, 'leaf')
+    assert.equal(right.type, 'leaf')
+    if (left.type !== 'leaf' || right.type !== 'leaf') return
+    assert.deepEqual(left.tabs, ['term-a', 'term-b', 'term-c'])
+    assert.equal(left.active, 'term-b')
+    assert.deepEqual(right.tabs, ['browser-1'])
+    assert.equal(useLayout.getState().groups[0].activeLeaf, 'leaf-1')
+    assert.equal(useLayout.getState().focusedId, 'term-b')
+    assert.equal(useLayout.getState().activeGroupId, DEFAULT_GROUP)
+  })
+
+  it('pulls a parked browser out of a tab strip and keeps the strip on its previous tab', () => {
+    useLayout.setState({
+      groups: [
+        {
+          id: DEFAULT_GROUP,
+          name: 'Group 1',
+          root: {
+            type: 'leaf',
+            id: 'leaf-1',
+            tabs: ['term-a', 'term-b', 'term-c', 'browser-1'],
+            active: 'browser-1'
+          },
+          activeLeaf: 'leaf-1'
+        }
+      ],
+      activeGroupId: DEFAULT_GROUP,
+      focusedId: null,
+      groupFlags: {}
+    })
+    useLayout.getState().setLeafActiveTab('leaf-1', 'term-b')
+    assert.equal(useLayout.getState().splitNewBeside('term-b', 'browser-1', 'right'), true)
+    const root = useLayout.getState().groups[0].root
+    assert.equal(root?.type, 'split')
+    if (root?.type !== 'split') return
+    const terminal = root.children[0]
+    assert.equal(terminal.type, 'leaf')
+    if (terminal.type !== 'leaf') return
+    assert.deepEqual(terminal.tabs, ['term-a', 'term-b', 'term-c'])
+    assert.equal(terminal.active, 'term-b')
+    assert.equal(useLayout.getState().groups[0].activeLeaf, 'leaf-1')
+  })
+})
