@@ -925,6 +925,12 @@ export const IPC = {
   browserCertificateReply: 'browser:certificate-reply',
   /** Renderer → main: prompts still waiting, so a late-mounting window can show them. */
   browserCertificatePending: 'browser:certificate-pending',
+  /**
+   * Main → renderer: show the agent pointer over a browser tab. Fired for
+   * click, type, scroll, hover, and navigation so the operator sees the
+   * action in the pane, not only in the agent terminal.
+   */
+  browserControlPointer: 'browser:control:pointer',
 
   // window appearance (glass/translucent material)
   windowSetGlass: 'window:set-glass',
@@ -1314,6 +1320,8 @@ export interface DevTermApi {
     onCloseTab(cb: (tabKey: string) => void): () => void
     /** Main asks the renderer to activate the pane tab with this key. */
     onFocusTab(cb: (tabKey: string) => void): () => void
+    /** Main reports an agent pointer move/click/scroll so the pane can draw it. */
+    onPointer(cb: (ev: BrowserPointerEvent) => void): () => void
   }
   /** Window appearance hooks. Native window controls are owned by the OS frame. */
   window: {
@@ -2416,6 +2424,27 @@ export interface BrowserControlTabInfo {
 export interface BrowserControlTabPatch {
   url?: string
   title?: string
+}
+
+/**
+ * Main → renderer: where the agent is acting inside a browser tab.
+ * `x`/`y` are guest-viewport CSS pixels (omit them for a centered cue).
+ * `vw`/`vh` are `window.innerWidth/innerHeight` so the overlay can map those
+ * pixels onto the webview box. `zoom` is only a fallback when the viewport
+ * size is missing. `seq` is monotonic per process so a late event cannot
+ * rewind the cursor.
+ */
+export interface BrowserPointerEvent {
+  tabKey: string
+  kind: 'move' | 'click' | 'type' | 'hover' | 'scroll' | 'key' | 'navigate'
+  x?: number
+  y?: number
+  vw?: number
+  vh?: number
+  zoom?: number
+  label?: string
+  seq?: number
+  direction?: 'up' | 'down' | 'left' | 'right'
 }
 
 /** Main → renderer request to open an agent-owned browser pane + tab. */

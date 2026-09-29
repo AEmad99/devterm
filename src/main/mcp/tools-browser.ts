@@ -122,7 +122,8 @@ export function registerBrowserTools(mcp: McpServer, deps: ToolDeps): void {
         const outcome = await confirmWithActivity(tool, `password field on ${origin}`)
         if (outcome === 'timeout')
           return errorText('Approval timed out for typing into the password field.')
-        if (outcome === 'denied') return errorText('Operator denied typing into the password field.')
+        if (outcome === 'denied')
+          return errorText('Operator denied typing into the password field.')
       }
       out = await run(true)
     }
@@ -179,6 +180,7 @@ export function registerBrowserTools(mcp: McpServer, deps: ToolDeps): void {
           url: normalized,
           ownerAgentSessionId: sessionId
         })
+        service.showPointer(entry, { kind: 'navigate', label: 'Open' })
         await service.waitForSettle(entry)
         const fail = lastNavFail(entry.wcId)
         if (fail && !entry.url.startsWith(normalized.slice(0, 32))) {
@@ -220,6 +222,7 @@ export function registerBrowserTools(mcp: McpServer, deps: ToolDeps): void {
       try {
         const wc = webContents.fromId(t.entry.wcId)
         if (!wc || wc.isDestroyed()) return errorText('the tab was closed')
+        service.showPointer(t.entry, { kind: 'navigate', label: 'Navigate' })
         await wc.loadURL(normalized)
         let note = ''
         if (wait !== 'none') {
@@ -268,7 +271,7 @@ export function registerBrowserTools(mcp: McpServer, deps: ToolDeps): void {
     'browser_click',
     {
       description:
-        'FIRST-CLASS in-app browser: click an element by snapshot ref (e.g. e12). Uses trusted CDP input when available; a visible agent cursor moves to the target. Snapshot again after the page may have changed.',
+        'FIRST-CLASS in-app browser: click an element by snapshot ref (e.g. e12). Uses trusted CDP input when available. DevTerm draws a pointer on the browser pane and brings that pane on screen. Snapshot again after the page may have changed.',
       inputSchema: {
         ref: z.string().describe('Element ref from your last browser_snapshot.'),
         tabId: z.string().optional()
@@ -388,13 +391,24 @@ export function registerBrowserTools(mcp: McpServer, deps: ToolDeps): void {
       if ('error' in t) return t.error
       const blocked = await guard('browser_scroll', originOf(t.entry.url), true)
       if (blocked) return blocked
+      const dir = direction ?? 'down'
+      const label = `Scroll ${dir}`
+      service.showPointer(t.entry, { kind: 'scroll', label, direction: dir })
       try {
         const out = parseInteraction(
-          await service.executeJs(
-            t.entry,
-            buildScrollScript({ ref, direction, pixels })
-          )
+          await service.executeJs(t.entry, buildScrollScript({ ref, direction, pixels }))
         )
+        if (!out.err) {
+          service.showPointer(t.entry, {
+            kind: 'scroll',
+            x: out.x,
+            y: out.y,
+            vw: out.vw,
+            vh: out.vh,
+            label,
+            direction: dir
+          })
+        }
         if (out.err) return errorText(out.err)
         return text(
           `${out.detail ?? 'scrolled'}` +
@@ -464,7 +478,9 @@ export function registerBrowserTools(mcp: McpServer, deps: ToolDeps): void {
         if (needle) {
           const r = await service.waitForText(t.entry, needle, ms)
           if (r === 'timeout')
-            return errorText(`browser_wait timed out after ${ms}ms waiting for text ${JSON.stringify(needle)}`)
+            return errorText(
+              `browser_wait timed out after ${ms}ms waiting for text ${JSON.stringify(needle)}`
+            )
           return text(`text found: ${JSON.stringify(needle)}`)
         }
         const settled = await service.waitForSettle(t.entry, ms)

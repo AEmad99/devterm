@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { afterEach, describe, it } from 'node:test'
-import { placeAgentBrowser } from './browser-control'
+import { placeAgentBrowser, revealBrowserPane } from './browser-control'
 import { useSessions } from '../store/sessions'
 import { allLeaves, DEFAULT_GROUP, useLayout } from '../store/layout'
 
@@ -126,5 +126,51 @@ describe('placeAgentBrowser', () => {
       true
     )
     assert.equal(agentGroup?.activeLeaf, 'leaf-agent')
+  })
+
+  it('does not retarget the operator when the agent drives a browser in another group', () => {
+    useLayout.setState({
+      groups: [
+        {
+          id: DEFAULT_GROUP,
+          name: 'Group 1',
+          root: {
+            type: 'leaf',
+            id: 'leaf-user',
+            tabs: ['user-term', 'other-term'],
+            active: 'user-term'
+          },
+          activeLeaf: 'leaf-user'
+        },
+        {
+          id: 'grp-2',
+          name: 'Group 2',
+          root: { type: 'leaf', id: 'leaf-browser', tabs: ['browser-1'], active: 'browser-1' },
+          activeLeaf: 'leaf-browser'
+        }
+      ],
+      activeGroupId: DEFAULT_GROUP,
+      focusedId: 'user-term',
+      groupFlags: {}
+    })
+    useSessions.setState({
+      sessions: [
+        { id: 'user-term', kind: 'local', title: 'Mine', groupId: DEFAULT_GROUP },
+        { id: 'other-term', kind: 'local', title: 'Other', groupId: DEFAULT_GROUP },
+        { id: 'browser-1', kind: 'browser', title: 'Browser', groupId: 'grp-2' }
+      ],
+      activeId: 'user-term',
+      lastActiveId: null
+    })
+
+    revealBrowserPane('browser-1')
+
+    assert.equal(useLayout.getState().activeGroupId, DEFAULT_GROUP)
+    assert.equal(useSessions.getState().activeId, 'user-term')
+    assert.equal(useLayout.getState().focusedId, 'user-term')
+    const user = useLayout.getState().groups.find((group) => group.id === DEFAULT_GROUP)
+    assert.equal(user?.activeLeaf, 'leaf-user')
+    assert.equal(user?.root?.type, 'leaf')
+    if (user?.root?.type === 'leaf') assert.equal(user.root.active, 'user-term')
   })
 })

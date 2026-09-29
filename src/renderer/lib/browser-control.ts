@@ -36,6 +36,28 @@ export function registerTabCloser(tabKey: string, close: () => void): () => void
   }
 }
 
+/**
+ * Make an agent browser tab the selected tab of its own pane when that pane
+ * is not also holding a terminal. Does not change the operator's group,
+ * focus mode, or which terminal they are working in — those switches were
+ * sending people to a shell they had not opened.
+ */
+export function revealBrowserPane(sessionId: string): void {
+  const sessions = useSessions.getState().sessions
+  if (!sessions.some((session) => session.id === sessionId && !session.closed)) return
+  for (const group of useLayout.getState().groups) {
+    const leaf = allLeaves(group.root).find((item) => item.tabs.includes(sessionId))
+    if (!leaf || leaf.active === sessionId) return
+    const hidesTerminal = leaf.tabs.some((id) => {
+      if (id === sessionId) return false
+      const other = sessions.find((session) => session.id === id)
+      return !!other && other.kind !== 'browser'
+    })
+    if (!hidesTerminal) useLayout.getState().setLeafActiveTab(leaf.id, sessionId)
+    return
+  }
+}
+
 export function registerTabFocuser(tabKey: string, focus: () => void): () => void {
   focusers.set(tabKey, focus)
   return () => {
