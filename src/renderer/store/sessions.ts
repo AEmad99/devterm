@@ -205,6 +205,8 @@ interface SessionState {
     browserActiveTab?: number
     preview?: PreviewMeta
     title?: string
+    /** When false, keep the operator's current session focused. Agent opens use this. */
+    activate?: boolean
   }) => string
   setActive: (id: string) => void
   /** Move a session into another terminal group (the layout sync reconciles trees). */
@@ -539,7 +541,12 @@ export const useSessions = create<SessionState>((set, get) => ({
     }
     // The App-level layout sync effect drops this id into the active group's
     // active leaf (same path as addLocal); no pty/ssh is created for it.
-    set((s) => ({ sessions: [...s.sessions, session], activeId: id }))
+    // Agent-owned panes pass activate:false and place themselves with
+    // splitNewBeside so that sync cannot retarget the operator's tab.
+    set((s) => ({
+      sessions: [...s.sessions, session],
+      activeId: opts?.activate === false ? s.activeId : id
+    }))
     return id
   },
 

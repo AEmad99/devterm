@@ -125,6 +125,22 @@ function removeTab(root: LayoutNode | null, sid: string): LayoutNode | null {
   return prune(updated)
 }
 
+/**
+ * Remove a tab that was parked on an existing pane. If that tab is not the
+ * pane's active tab, the active tab stays — dropping a parked browser must
+ * not reveal whichever terminal happens to be last in the strip.
+ */
+function detachTab(root: LayoutNode, sid: string): LayoutNode | null {
+  const owner = leafOf(root, sid)
+  if (!owner) return root
+  const tabs = owner.tabs.filter((t) => t !== sid)
+  const active =
+    owner.active && owner.active !== sid && tabs.includes(owner.active)
+      ? owner.active
+      : (tabs[tabs.length - 1] ?? null)
+  return prune(updateLeaf(root, owner.id, () => ({ ...owner, tabs, active })))
+}
+
 function replaceTabId(n: LayoutNode, oldId: string, newId: string): LayoutNode {
   if (n.type === 'leaf') {
     if (!n.tabs.includes(oldId)) return n
@@ -337,11 +353,19 @@ interface LayoutState {
   drop: (sid: string, targetLeafId: string, zone: DropZone) => void
   /**
    * Pull `newSid` out of `anchorSid`'s leaf and split it to an edge so both
-   * stay on screen. Used when an agent opens an in-app browser beside the
-   * occupying local agent pane (a sibling tab would hide the agent and can
-   * leave the webview off-screen).
+   * stay on screen. Activates the new pane. User-initiated splits use this.
+   * Agent browser opens use `splitNewBeside` so the operator's tab stays put.
    */
   splitBeside: (anchorSid: string, newSid: string, zone?: DropZone) => void
+  /**
+   * Place `newSid` in a new pane beside `anchorSid` without changing which
+   * tab any existing pane is showing, which pane is active, or focus mode.
+   * `newSid` does not need to be in the tree yet. Returns false when the
+   * anchor session is not in a layout.
+   */
+  splitNewBeside: (anchorSid: string, newSid: string, zone?: DropZone) => boolean
+  /** Set one leaf's active tab in any group without moving the active leaf. */
+  setLeafActiveTab: (leafId: string, sid: string) => void
   /** Add a new session to the exact leaf containing the anchor session. */
   addTabToSessionLeaf: (anchorSid: string, newSid: string) => boolean
   /** Collapse a split pane: move all its tabs into another leaf and prune. */
@@ -614,6 +638,49 @@ export const useLayout = create<LayoutState>((set) => ({
         groups: s.groups.map((g) => (g.id === group.id ? { ...g, root, activeLeaf: nl.id } : g)),
         focusedId: null
       }
+    }),
+
+  splitNewBeside: (anchorSid, newSid, zone = 'right') => {
+    let placed = false
+    set((s) => {
+      if (!anchorSid || anchorSid === newSid) return s
+      const group = s.groups.find((g) => g.root && leafOf(g.root, anchorSid))
+      if (!group?.root) return s
+      let root: LayoutNode | null = group.root
+      if (leafOf(root, newSid)) root = detachTab(root, newSid)
+      const target = root ? leafOf(root, anchorSid) : null
+      if (!root || !target) return s
+      const nl = mkLeaf([newSid])
+      const dir: SplitDir = zone === 'left' || zone === 'right' ? 'row' : 'col'
+      const before = zone === 'left' || zone === 'top'
+      root = replaceLeaf(root, target.id, (t) => ({
+        type: 'split',
+        id: nid('split'),
+        dir,
+        children: before ? [nl, t] : [t, nl],
+        sizes: [0.5, 0.5]
+      }))
+      placed = true
+      return {
+        groups: s.groups.map((g) =>
+          g.id === group.id ? { ...g, root, activeLeaf: g.activeLeaf } : g
+        )
+      }
+    })
+    return placed
+  },
+
+  setLeafActiveTab: (leafId, sid) =>
+    set((s) => {
+      let changed = false
+      const groups = s.groups.map((g) => {
+        if (!g.root || !findLeaf(g.root, leafId)) return g
+        const leaf = findLeaf(g.root, leafId)
+        if (!leaf || !leaf.tabs.includes(sid) || leaf.active === sid) return g
+        changed = true
+        return { ...g, root: updateLeaf(g.root, leafId, (l) => ({ ...l, active: sid })) }
+      })
+      return changed ? { groups } : s
     }),
 
   addTabToSessionLeaf: (anchorSid, newSid) => {

@@ -919,6 +919,12 @@ export const IPC = {
   browserControlCloseTab: 'browser:control:close-tab',
   /** Main → renderer: activate/focus the pane tab whose key matches (browser_focus tool). */
   browserControlFocusTab: 'browser:control:focus-tab',
+  /** Main → renderer: an in-app browser hit an untrusted HTTPS certificate. */
+  browserCertificatePrompt: 'browser:certificate-prompt',
+  /** Renderer → main: the operator's trust decision for one certificate prompt. */
+  browserCertificateReply: 'browser:certificate-reply',
+  /** Renderer → main: prompts still waiting, so a late-mounting window can show them. */
+  browserCertificatePending: 'browser:certificate-pending',
 
   // window appearance (glass/translucent material)
   windowSetGlass: 'window:set-glass',
@@ -1280,6 +1286,12 @@ export interface DevTermApi {
      * webContents id, so the renderer can add the tab to the right pane.
      */
     onOpenTab(cb: (e: { sourceId: number; url: string }) => void): () => void
+    /** In-app prompt when a browser guest hits an untrusted certificate. */
+    onCertificatePrompt(cb: (prompt: BrowserCertificatePrompt) => void): () => void
+    /** Trust (or refuse) the certificate for one prompt. Refusal is the safe default. */
+    replyCertificate(id: string, trust: boolean): void
+    /** Prompts that arrived before the renderer subscribed. */
+    pendingCertificates(): Promise<BrowserCertificatePrompt[]>
   }
   /**
    * Agent browser control plumbing. Every browser tab reports its lifecycle to
@@ -2407,6 +2419,21 @@ export interface BrowserControlTabPatch {
 }
 
 /** Main → renderer request to open an agent-owned browser pane + tab. */
+/** Shown inside DevTerm when an in-app browser guest fails TLS verification. */
+export interface BrowserCertificatePrompt {
+  id: string
+  host: string
+  url: string
+  /** Chromium error code, e.g. net::ERR_CERT_AUTHORITY_INVALID. */
+  error: string
+  subjectName: string
+  issuerName: string
+  fingerprint: string
+  /** Seconds since epoch, matching Electron's Certificate fields. */
+  validStart?: number
+  validExpiry?: number
+}
+
 export interface BrowserOpenRequest {
   /** Pre-agreed tab key — registration must use exactly this value. */
   tabKey: string

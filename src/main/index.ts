@@ -19,6 +19,7 @@ import { loadAppIcon, resolveAppIconPath } from './app-icon'
 // a development certificate exception into a later session.
 const trustedBrowserCertificates = new Set<string>()
 const pendingBrowserCertificatePrompts = new Map<string, Promise<boolean>>()
+const certificatePrompts = createCertificatePromptBroker()
 
 // Pin Chromium's disk cache, GPU shader cache, and service-worker storage
 // inside the app's own userData directory before the cache subsystem
@@ -131,7 +132,8 @@ process.on('unhandledRejection', (reason) => {
   reportAsyncMainError(msg)
 })
 import { registerPtyIpc } from './ipc/pty'
-import { IPC } from '@shared/types'
+import { IPC, type BrowserCertificatePrompt } from '@shared/types'
+import { createCertificatePromptBroker } from './browser/certificate-prompt'
 import { flushPersist, globalSearchIndex } from './search/index'
 import { registerSshIpc } from './ipc/ssh'
 import { registerContextIpc } from './ipc/context'
@@ -585,8 +587,12 @@ if (!gotSingleInstance) {
 
     // Electron does not render Chromium's normal certificate interstitial in a
     // <webview>; without an app handler, invalid/self-signed development
-    // certificates simply fail. Offer an explicit, one-session trust decision
-    // for browser guests while preserving the secure default.
+    // certificates simply fail. Ask inside the DevTerm window — a native
+    // Windows message box reads as a system dialog the page itself raised.
+    ipcMain.on(IPC.browserCertificateReply, (_event, id: string, trust: boolean) => {
+      certificatePrompts.reply(id, trust === true)
+    })
+    ipcMain.handle(IPC.browserCertificatePending, () => certificatePrompts.pending())
     app.on('certificate-error', (event, webContents, url, error, certificate, callback) => {
       if (!webContents || webContents.session !== browserSession) return
       event.preventDefault()
@@ -605,27 +611,26 @@ if (!gotSingleInstance) {
 
       let decision = pendingBrowserCertificatePrompts.get(trustKey)
       if (!decision) {
-        const opts = {
-          type: 'warning' as const,
-          title: 'Certificate warning',
-          message: `The certificate for ${host} cannot be verified.`,
-          detail:
-            `${error}\n\n` +
-            `Issued to: ${certificate.subjectName || host}\n` +
-            `Issued by: ${certificate.issuerName || 'Unknown issuer'}\n` +
-            `Fingerprint: ${fingerprint}\n\n` +
-            'Only continue if you trust this development or test server. This exception lasts until DevTerm exits.',
-          buttons: ['Go back', 'Trust and continue'],
-          defaultId: 0,
-          cancelId: 0,
-          noLink: true
+        const prompt: BrowserCertificatePrompt = {
+          id: crypto.randomUUID(),
+          host,
+          url,
+          error,
+          subjectName: certificate.subjectName || host,
+          issuerName: certificate.issuerName || 'Unknown issuer',
+          fingerprint,
+          validStart: certificate.validStart || undefined,
+          validExpiry: certificate.validExpiry || undefined
         }
-        decision = (
-          mainWindow ? dialog.showMessageBox(mainWindow, opts) : dialog.showMessageBox(opts)
-        ).then(
-          ({ response }) => response === 1,
-          () => false
-        )
+        decision = certificatePrompts.ask(prompt, (next) => {
+          const win = mainWindow
+          if (!win || win.isDestroyed() || win.webContents.isDestroyed()) return false
+          if (!win.isVisible()) showMainWindow()
+          const shown = mainWindow
+          if (!shown || shown.isDestroyed() || shown.webContents.isDestroyed()) return false
+          shown.webContents.send(IPC.browserCertificatePrompt, next)
+          return true
+        })
         pendingBrowserCertificatePrompts.set(trustKey, decision)
         void decision.finally(() => pendingBrowserCertificatePrompts.delete(trustKey))
       }

@@ -1,5 +1,5 @@
 import { useSessions } from '../store/sessions'
-import { DEFAULT_GROUP, useLayout } from '../store/layout'
+import { allLeaves, DEFAULT_GROUP, useLayout } from '../store/layout'
 import type { BrowserOpenRequest } from '@shared/types'
 
 /**
@@ -43,11 +43,67 @@ export function registerTabFocuser(tabKey: string, focus: () => void): () => voi
   }
 }
 
-function handleOpenRequest(req: BrowserOpenRequest): void {
-  const { sessions } = useSessions.getState()
-  // Prefer extending the agent's most recent living pane…
+interface OperatorFocus {
+  activeId: string | null
+  activeGroupId: string
+  focusedId: string | null
+  activeLeaves: Map<string, string | null>
+  leafActives: Array<{ leafId: string; active: string | null }>
+}
+
+function snapshotOperatorFocus(): OperatorFocus {
+  const layout = useLayout.getState()
+  const leafActives: OperatorFocus['leafActives'] = []
+  const activeLeaves = new Map<string, string | null>()
+  for (const group of layout.groups) {
+    activeLeaves.set(group.id, group.activeLeaf)
+    for (const leaf of allLeaves(group.root)) {
+      leafActives.push({ leafId: leaf.id, active: leaf.active })
+    }
+  }
+  return {
+    activeId: useSessions.getState().activeId,
+    activeGroupId: layout.activeGroupId,
+    focusedId: layout.focusedId,
+    activeLeaves,
+    leafActives
+  }
+}
+
+function restoreOperatorFocus(saved: OperatorFocus): void {
+  useLayout.setState((state) => ({
+    activeGroupId: state.groups.some((g) => g.id === saved.activeGroupId)
+      ? saved.activeGroupId
+      : state.activeGroupId,
+    focusedId: saved.focusedId,
+    groups: state.groups.map((group) => {
+      const leafId = saved.activeLeaves.get(group.id)
+      if (leafId == null || group.activeLeaf === leafId) return group
+      const live = new Set(allLeaves(group.root).map((leaf) => leaf.id))
+      if (!live.has(leafId)) return group
+      return { ...group, activeLeaf: leafId }
+    })
+  }))
+  const current = useSessions.getState().activeId
+  if (!saved.activeId || current === saved.activeId) return
+  if (useSessions.getState().sessions.some((session) => session.id === saved.activeId)) {
+    useSessions.getState().setActive(saved.activeId)
+  }
+}
+
+/**
+ * Open an agent-owned browser beside the calling session.
+ * The operator's active terminal, group, and focus mode stay where they were.
+ * Parking the new id on the active leaf first (layout sync) used to mark it
+ * active and, once it was split back out, reveal whichever tab was last.
+ */
+export function placeAgentBrowser(req: BrowserOpenRequest): void {
+  const sessions = useSessions.getState().sessions
   const owned = sessions.filter(
-    (x) => x.kind === 'browser' && x.agentOwnedBy === req.ownerAgentSessionId && !x.closed
+    (session) =>
+      session.kind === 'browser' &&
+      session.agentOwnedBy === req.ownerAgentSessionId &&
+      !session.closed
   )
   for (let i = owned.length - 1; i >= 0; i--) {
     const opener = openers.get(owned[i].id)
@@ -56,25 +112,46 @@ function handleOpenRequest(req: BrowserOpenRequest): void {
       return
     }
   }
-  // …otherwise spawn a dedicated agent-owned pane. Place it in the calling
-  // session's group when we can find one, else the request's group hint,
-  // else the active group.
-  const caller = sessions.find((x) => x.id === req.ownerAgentSessionId)
-  const groupId = caller?.groupId ?? req.groupId ?? DEFAULT_GROUP
+
+  const saved = snapshotOperatorFocus()
+  const caller = sessions.find((session) => session.id === req.ownerAgentSessionId)
+  const layout = useLayout.getState()
+  const callerGroup = caller
+    ? layout.groups.find((group) =>
+        allLeaves(group.root).some((leaf) => leaf.tabs.includes(caller.id))
+      )
+    : undefined
+  const groupId =
+    callerGroup?.id ?? caller?.groupId ?? req.groupId ?? layout.activeGroupId ?? DEFAULT_GROUP
   const paneId = useSessions.getState().addBrowser({
     url: req.url,
     groupId,
     agentOwnedBy: req.ownerAgentSessionId,
-    firstTabKey: req.tabKey
+    firstTabKey: req.tabKey,
+    activate: false
   })
-  // Layout.sync normally waits for a React effect. Do it now so the new pane
-  // is in the tree before we split — otherwise the webview mounts off-screen
-  // (`.term-hidden`) and Chromium may never fire `dom-ready`, which makes
-  // browser_open time out.
-  const live = useSessions.getState().sessions
-  const layout = useLayout.getState()
-  layout.sync(live.map((s) => ({ id: s.id, groupId: s.groupId })))
-  if (caller) layout.splitBeside(caller.id, paneId, 'right')
+  const place = () =>
+    caller ? useLayout.getState().splitNewBeside(caller.id, paneId, 'right') : false
+  if (!place()) {
+    // The anchor is not in a tree yet. Sync would append the browser onto
+    // whatever leaf is active and select it; put the previous tabs back
+    // before splitting so that selection does not stick.
+    useLayout.getState().sync(
+      useSessions.getState().sessions.map((session) => ({
+        id: session.id,
+        groupId: session.groupId
+      }))
+    )
+    for (const row of saved.leafActives) {
+      if (row.active) useLayout.getState().setLeafActiveTab(row.leafId, row.active)
+    }
+    place()
+  }
+  restoreOperatorFocus(saved)
+}
+
+function handleOpenRequest(req: BrowserOpenRequest): void {
+  placeAgentBrowser(req)
 }
 
 let wired = false

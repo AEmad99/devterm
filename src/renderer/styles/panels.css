@@ -540,6 +540,43 @@
   border-color: color-mix(in srgb, var(--danger) 45%, var(--border));
   color: var(--danger);
 }
+.cert-prompt .cert-lead,
+.cert-prompt .cert-reason,
+.cert-prompt .cert-note,
+.cert-prompt .cert-code {
+  margin: 0;
+}
+.cert-prompt .cert-reason {
+  color: var(--fg);
+}
+.cert-facts {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  gap: 6px 12px;
+  margin: 4px 0 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--panel-2) 70%, transparent);
+  font-size: 12px;
+}
+.cert-facts dt {
+  color: var(--muted);
+}
+.cert-facts dd {
+  margin: 0;
+  color: var(--fg);
+  font-family: var(--font-mono);
+  word-break: break-all;
+}
+.cert-prompt .cert-note,
+.cert-prompt .cert-code {
+  color: var(--muted);
+  font-size: 12px;
+}
+.cert-prompt .cert-code {
+  font-family: var(--font-mono);
+}
 
 /* Saved connections list inside the SSH modal */
 .saved-conns {

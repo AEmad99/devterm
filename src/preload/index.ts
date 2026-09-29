@@ -268,7 +268,14 @@ const api: DevTermApi = {
     reveal: (localPath: string): Promise<void> => ipcRenderer.invoke(IPC.shellReveal, localPath)
   },
   browser: {
-    onOpenTab: (cb) => subscribe<{ sourceId: number; url: string }>(IPC.browserOpenTab, cb)
+    onOpenTab: (cb) => subscribe<{ sourceId: number; url: string }>(IPC.browserOpenTab, cb),
+    onCertificatePrompt: (cb) =>
+      subscribe<import('@shared/types').BrowserCertificatePrompt>(IPC.browserCertificatePrompt, cb),
+    replyCertificate: (id: string, trust: boolean): void => {
+      ipcRenderer.send(IPC.browserCertificateReply, id, trust)
+    },
+    pendingCertificates: (): Promise<import('@shared/types').BrowserCertificatePrompt[]> =>
+      ipcRenderer.invoke(IPC.browserCertificatePending)
   },
   browserControl: {
     register: (info: import('@shared/types').BrowserControlTabInfo): Promise<void> =>

@@ -1024,8 +1024,11 @@ function BrowserPane({ session }: { session: Session }) {
                 ownerAgentSessionId={session.agentOwnedBy}
                 onClose={() => closeTab(t.id)}
                 onActivate={() => {
+                  // Switch the page inside this browser pane only. Selecting the
+                  // pane as the app's active session here yanked the operator
+                  // onto a different terminal whenever the browser shared a
+                  // group with the tab they were using.
                   setActiveId(t.id)
-                  useSessions.getState().setActive(session.id)
                 }}
               />
             </div>
