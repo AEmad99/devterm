@@ -3,6 +3,18 @@
 All notable changes to DevTerm are documented here. The most recent section is
 at the top. Dates are ISO `YYYY-MM-DD`.
 
+## 1.6.6 — 2026-09-29
+
+### Fixed
+
+- Agent transcripts stay on the latest output unless you scroll. Resizing or hiding the agent pane no longer jumps the chat to the top, and the agent process is only told about a size change after the pane has settled.
+- Opening or driving an in-app browser no longer switches you to a different terminal, group, or focus mode. The browser opens beside the session that started it.
+- Certificate warnings for pages in the in-app browser appear inside DevTerm. Go back is the default, and trusting a certificate lasts until DevTerm quits.
+
+### Added
+
+- Agent browser actions draw a pointer on the browser pane for clicks, typing, scrolling, hovering, and navigation, with an Agent chip on that pane's tab strip.
+
 ## 1.6.5 — 2026-09-24
 
 ### Fixed
