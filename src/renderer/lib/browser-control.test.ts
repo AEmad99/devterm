@@ -173,4 +173,48 @@ describe('placeAgentBrowser', () => {
     assert.equal(user?.root?.type, 'leaf')
     if (user?.root?.type === 'leaf') assert.equal(user.root.active, 'user-term')
   })
+
+  it('selects an agent browser tab inside its own pane without leaving the current group', () => {
+    useLayout.setState({
+      groups: [
+        {
+          id: DEFAULT_GROUP,
+          name: 'Group 1',
+          root: { type: 'leaf', id: 'leaf-user', tabs: ['user-term'], active: 'user-term' },
+          activeLeaf: 'leaf-user'
+        },
+        {
+          id: 'grp-2',
+          name: 'Group 2',
+          root: {
+            type: 'leaf',
+            id: 'leaf-browser',
+            tabs: ['browser-1', 'browser-2'],
+            active: 'browser-1'
+          },
+          activeLeaf: 'leaf-browser'
+        }
+      ],
+      activeGroupId: DEFAULT_GROUP,
+      focusedId: null,
+      groupFlags: {}
+    })
+    useSessions.setState({
+      sessions: [
+        { id: 'user-term', kind: 'local', title: 'Mine', groupId: DEFAULT_GROUP },
+        { id: 'browser-1', kind: 'browser', title: 'One', groupId: 'grp-2' },
+        { id: 'browser-2', kind: 'browser', title: 'Two', groupId: 'grp-2' }
+      ],
+      activeId: 'user-term',
+      lastActiveId: null
+    })
+
+    revealBrowserPane('browser-2')
+
+    assert.equal(useLayout.getState().activeGroupId, DEFAULT_GROUP)
+    assert.equal(useSessions.getState().activeId, 'user-term')
+    const agentGroup = useLayout.getState().groups.find((group) => group.id === 'grp-2')
+    assert.equal(agentGroup?.root?.type, 'leaf')
+    if (agentGroup?.root?.type === 'leaf') assert.equal(agentGroup.root.active, 'browser-2')
+  })
 })

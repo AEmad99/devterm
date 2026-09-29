@@ -47,7 +47,8 @@ export function revealBrowserPane(sessionId: string): void {
   if (!sessions.some((session) => session.id === sessionId && !session.closed)) return
   for (const group of useLayout.getState().groups) {
     const leaf = allLeaves(group.root).find((item) => item.tabs.includes(sessionId))
-    if (!leaf || leaf.active === sessionId) return
+    if (!leaf) continue
+    if (leaf.active === sessionId) return
     const hidesTerminal = leaf.tabs.some((id) => {
       if (id === sessionId) return false
       const other = sessions.find((session) => session.id === id)
