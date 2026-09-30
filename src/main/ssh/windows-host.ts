@@ -114,6 +114,19 @@ export function powershellCommand(script: string): string {
 }
 
 /**
+ * PowerShell statement that enters `startCwd` before the first prompt.
+ * Empty when the path is missing or would break the one-line startup script.
+ * Runs inside the interactive `-Command` script block, so it is not typed
+ * into the visible terminal.
+ */
+export function windowsStartLocationPrefix(startCwd: string | undefined): string {
+  if (!startCwd) return ""
+  const trimmed = startCwd.trim()
+  if (!trimmed || /[\0\r\n]/.test(trimmed)) return ""
+  return "Set-Location -LiteralPath " + psQuote(toWindowsFsPath(trimmed)) + "; "
+}
+
+/**
  * Start an interactive PowerShell with the prompt hook already installed.
  * `-EncodedCommand` is ideal for one-shot commands, but PowerShell emits a
  * CLIXML progress marker when it is used for an interactive PTY. Put the

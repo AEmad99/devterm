@@ -3,6 +3,12 @@
 All notable changes to DevTerm are documented here. The most recent section is
 at the top. Dates are ISO `YYYY-MM-DD`.
 
+## Unreleased
+
+### Fixed
+
+- Connecting to a remote shell no longer prints `stty echo` or `cd "/path"` into the terminal. Prompt hooks and the restored working directory run with echo off.
+
 ## 1.6.6 — 2026-09-29
 
 ### Fixed
