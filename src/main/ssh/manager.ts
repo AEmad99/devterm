@@ -14,9 +14,11 @@ import { createExecGate, POSIX_EXEC_SLOTS } from './exec-gate'
 import { establishProfile } from './auth'
 import { detectRemoteContext } from './osDetect'
 import { PortForwardManager } from './port-forward'
+import { shQuote } from '../utils/shell-quote'
 import {
   normalizeWindowsInteractiveInput,
-  windowsPowerShellInteractiveCommand
+  windowsPowerShellInteractiveCommand,
+  windowsStartLocationPrefix
 } from './windows-host'
 import {
   TMUX_CLIENT_LEFT_RE,
@@ -127,6 +129,15 @@ interface Session {
   /** Re-arms the MOTD-idle timer; set only while `shellIntegrationPending`. */
   shellIntegrationArmIdle?: () => void
   /**
+   * True once the quiet inject has printed its ready marker (echo is back on).
+   * The failsafe must not type `stty echo` after this.
+   */
+  shellIntegrationReady?: boolean
+  /** Trailing bytes that might be a ready marker split across SSH chunks. */
+  shellIntegrationCarry?: string
+  /** Timer that restores echo if the inject never confirms. */
+  echoRestoreTimer?: NodeJS.Timeout
+  /**
    * True while `disconnect()` is tearing the session down. Shell-channel
    * close must not auto-reopen a login shell in that window.
    */
@@ -164,6 +175,11 @@ interface ShellRequest {
   detached: boolean
   /** Last tmux session the operator attached to; restored after SSH reconnect. */
   tmuxSession?: string
+  /**
+   * Directory to enter once the login shell is up. Applied inside the quiet
+   * POSIX inject or the Windows PowerShell startup command — never typed.
+   */
+  startCwd?: string
 }
 
 export interface ReconnectPolicy {
@@ -223,10 +239,108 @@ export const SHELL_INTEGRATION_MAX_WAIT_MS = 8000
 /**
  * After writeQuiet disables echo for the inject, nudge it back on in case the
  * setup one-liner never ran (or died before its trailing `stty echo`).
+ *
+ * This has to wait long enough for the ready marker to travel back. The
+ * marker cancels the failsafe; if the timer fires first, the fallback is
+ * typed into a shell that already has echo on and shows up as
+ * `stty echo 2>/dev/null` at the prompt.
  */
-const ECHO_RESTORE_FAILSAFE_MS = 1200
+export const ECHO_RESTORE_FAILSAFE_MS = 4000
 
-export function buildPosixShellIntegrationSetup(): string {
+/**
+ * OSC the quiet inject prints once `stty echo` has run. The main process
+ * strips it and cancels {@link ECHO_RESTORE_FAILSAFE_MS}. Not a prompt hook.
+ */
+export const SHELL_INTEGRATION_READY_MARK = '\x1b]633;P;DevTermReady\x07'
+
+/** Same marker inside a tmux DCS passthrough wrapper. */
+export const SHELL_INTEGRATION_READY_MARK_TMUX = '\x1bPtmux;\x1b\x1b]633;P;DevTermReady\x07\x1b\\'
+
+const SHELL_INTEGRATION_READY_MARKS = [
+  SHELL_INTEGRATION_READY_MARK,
+  SHELL_INTEGRATION_READY_MARK_TMUX
+]
+
+/** Drop a start directory that would split the one-line inject. */
+export function sanitizeStartCwd(cwd: string | undefined): string | undefined {
+  if (!cwd) return undefined
+  const trimmed = cwd.trim()
+  if (!trimmed || /[\0\r\n]/.test(trimmed)) return undefined
+  return trimmed
+}
+
+/** `cd` fragment for the quiet inject. Empty when there is nothing safe to enter. */
+export function quietPosixCd(cwd: string | undefined): string {
+  const clean = sanitizeStartCwd(cwd)
+  if (!clean) return ''
+  return `cd -- ${shQuote(clean)} 2>/dev/null || true; `
+}
+
+/** Echo-off `cd` for hosts that do not get the full POSIX hook script. */
+export function buildQuietStartCwd(cwd: string | undefined): string {
+  const cd = quietPosixCd(cwd)
+  if (!cd) return ''
+  return (
+    cd +
+    `stty echo 2>/dev/null; printf '\\033[${SHELL_INTEGRATION_RECLAIM_LINES}A\\r\\033[J'; ` +
+    shellIntegrationReadyCommand() +
+    '\n'
+  )
+}
+
+function shellIntegrationReadyCommand(): string {
+  return (
+    `if [ -n "\${TMUX-}" ]; then printf '\\033Ptmux;\\033\\033]633;P;DevTermReady\\007\\033\\\\'; ` +
+    `else printf '\\033]633;P;DevTermReady\\007'; fi`
+  )
+}
+
+/**
+ * Pull ready markers out of a shell chunk. A marker split across SSH reads
+ * stays in `carry` so it is neither shown nor missed. `flush` releases a
+ * partial carry (channel close).
+ */
+export function consumeShellIntegrationReady(
+  carry: string,
+  chunk: string,
+  flush = false
+): { carry: string; text: string; ready: boolean } {
+  let buf = carry + chunk
+  let ready = false
+  for (;;) {
+    let at = -1
+    let len = 0
+    for (const mark of SHELL_INTEGRATION_READY_MARKS) {
+      const i = buf.indexOf(mark)
+      if (i !== -1 && (at === -1 || i < at)) {
+        at = i
+        len = mark.length
+      }
+    }
+    if (at === -1) break
+    ready = true
+    buf = buf.slice(0, at) + buf.slice(at + len)
+  }
+  if (flush) return { carry: '', text: buf, ready }
+  const maxHold = Math.max(...SHELL_INTEGRATION_READY_MARKS.map((m) => m.length)) - 1
+  const limit = Math.min(maxHold, buf.length)
+  let hold = 0
+  for (let n = limit; n > 0; n--) {
+    const suffix = buf.slice(buf.length - n)
+    if (SHELL_INTEGRATION_READY_MARKS.some((m) => m.startsWith(suffix))) {
+      hold = n
+      break
+    }
+  }
+  if (!hold) return { carry: '', text: buf, ready }
+  return {
+    carry: buf.slice(buf.length - hold),
+    text: buf.slice(0, buf.length - hold),
+    ready
+  }
+}
+
+export function buildPosixShellIntegrationSetup(opts?: { startCwd?: string }): string {
   // DCS-wrapped OSC payloads: every ESC in the inner sequence is doubled.
   // BEL (`\007`) is left as-is. Terminator is ESC \ (ST).
   const osc7Tmux = `printf '\\033Ptmux;\\033\\033]7;file://%s%s\\007\\033\\\\' "\${HOSTNAME:-h}" "$PWD"`
@@ -236,9 +350,13 @@ export function buildPosixShellIntegrationSetup(): string {
   const osc133APlain = `printf '\\033]133;A\\007'`
   const osc133BPlain = `printf '\\033]133;B\\007'`
 
+  const cd = quietPosixCd(opts?.startCwd)
   return (
     // Echo is already off for this one-liner (writeQuiet's `stty -echo`).
     // Do not `clear` — that wiped the login banner after the inject flashed.
+    // `cd` stays on this same line so a restored directory is not typed
+    // at the prompt (`cd "/root"` after connect).
+    cd +
     `[ -n "\${TMUX-}" ] && tmux set-option allow-passthrough on 2>/dev/null; ` +
     `__dt7() { ` +
     `if [ -n "\${TMUX-}" ]; then ${osc7Tmux}; ` +
@@ -272,15 +390,24 @@ export function buildPosixShellIntegrationSetup(): string {
     // under the login prompt). Do not `clear` — that wipes the MOTD. The next
     // prompt runs `__dt7` via PROMPT_COMMAND / precmd, so do not call it here
     // (it would print OSC 7 on a row we are about to delete).
-    `stty echo 2>/dev/null; printf '\\033[${SHELL_INTEGRATION_RECLAIM_LINES}A\\r\\033[J'\n`
+    // The ready marker is printed only after echo is restored, so the
+    // failsafe can be cancelled before it types a second `stty echo`.
+    `stty echo 2>/dev/null; printf '\\033[${SHELL_INTEGRATION_RECLAIM_LINES}A\\r\\033[J'; ` +
+    shellIntegrationReadyCommand() +
+    '\n'
   )
 }
 
 /** First half of a quiet inject: turn off PTY echo (this line itself may flash). */
 export const STTY_DISABLE_ECHO = '\x15stty -echo 2>/dev/null\n'
 
-/** Failsafe / post-tmux restore so operator typing is always visible. */
-export const STTY_ENABLE_ECHO = '\x15stty echo 2>/dev/null\n'
+/**
+ * Failsafe so operator typing is visible if the inject never confirms.
+ * Echo is still off in that case, so this line is not painted. The trailing
+ * erase drops the row if a slow ready-marker loses the race and the line is
+ * echoed after all.
+ */
+export const STTY_ENABLE_ECHO = '\x15stty echo 2>/dev/null; printf "\\033[1A\\r\\033[2K"\n'
 
 /** Wait for `stty -echo` to run before sending the payload on a slow SSH link. */
 const QUIET_WRITE_GAP_MS = 180
@@ -957,11 +1084,13 @@ export class SSHManager {
     const s = this.sessions.get(sessionId)
     if (!s) return Promise.reject(new Error('unknown session'))
     const prevTmux = s.shellRequest?.tmuxSession
+    const prevStartCwd = s.shellRequest?.startCwd
     s.shellRequest = {
       cols: Math.max(1, cols),
       rows: Math.max(1, rows),
       detached: options.detached === true,
-      tmuxSession: 'tmuxSession' in options ? options.tmuxSession || undefined : prevTmux
+      tmuxSession: 'tmuxSession' in options ? options.tmuxSession || undefined : prevTmux,
+      startCwd: options.startCwd !== undefined ? sanitizeStartCwd(options.startCwd) : prevStartCwd
     }
     if (s.shell) return Promise.resolve()
     if (!s.client) return Promise.reject(new Error(RECONNECTING_ERR))
@@ -978,6 +1107,7 @@ export class SSHManager {
         if (err) return reject(err)
         if (!channel) return reject(new Error('no shell channel'))
         s.shell = channel
+        s.shellIntegrationCarry = undefined
         s.exitReported = false
         // Stream every chunk through a per-session UTF-8 decoder so multi-byte
         // codepoints split across ssh2 data events decode correctly instead
@@ -986,13 +1116,14 @@ export class SSHManager {
         // single replacement char).
         s.shellDecoder = new TextDecoder('utf-8', { fatal: false })
         const dec = s.shellDecoder
-        const emitShellData = (chunk: string) => {
-          if (!chunk) return
+        const emitShellData = (chunk: string, flush = false) => {
+          const visible = this.absorbShellChunk(s, chunk, flush)
+          if (!visible) return
           if (s.shellIntegrationPending) this.noteShellIntegrationOutput(s)
-          if (s.tmuxClientRunning && TMUX_CLIENT_LEFT_RE.test(chunk)) {
+          if (s.tmuxClientRunning && TMUX_CLIENT_LEFT_RE.test(visible)) {
             this.scheduleResumeAfterTmux(sessionId)
           }
-          this.handlers.onData(sessionId, chunk)
+          this.handlers.onData(sessionId, visible)
         }
         let receivedExit = false
         channel
@@ -1011,10 +1142,10 @@ export class SSHManager {
             // the replacement shell (same public id) as closed.
             if (this.sessions.get(sessionId) !== s || s.client !== client || s.closing) return
             s.shell = undefined
-            if (s.shellDecoder) {
-              const tail = s.shellDecoder.decode()
-              if (tail) emitShellData(tail)
+            if (s.shellDecoder || s.shellIntegrationCarry) {
+              const tail = s.shellDecoder?.decode() ?? ''
               s.shellDecoder = undefined
+              if (tail || s.shellIntegrationCarry) emitShellData(tail, true)
             }
             // `exec tmux` + detach (or a crashed tmux client) closes this
             // channel while the ssh2 client is still up. Don't tell the
@@ -1056,7 +1187,15 @@ export class SSHManager {
         // `stty -echo` window (never leave the PTY echo-off by default).
         // Skipped when we are about to attach tmux — that path would otherwise
         // type the script into the pane.
-        if ((s.context.os === 'linux' || s.context.os === 'mac') && !s.shellRequest?.tmuxSession) {
+        // Linux/mac get prompt hooks. Any other non-Windows host still gets a
+        // quiet `cd` when a start directory was requested — otherwise restore
+        // would have to type `cd` at the prompt.
+        if (
+          !s.shellRequest?.tmuxSession &&
+          (s.context.os === 'linux' ||
+            s.context.os === 'mac' ||
+            (s.context.os !== 'windows' && !!s.shellRequest?.startCwd))
+        ) {
           this.schedulePosixShellIntegration(s)
         }
         resolve()
@@ -1069,6 +1208,7 @@ export class SSHManager {
         // `client.shell()` there. PowerShell is the useful default for agents;
         // cmd.exe keeps the terminal usable on minimal Windows installations.
         const promptSetup =
+          windowsStartLocationPrefix(s.shellRequest?.startCwd) +
           `function prompt { $e=[char]27; $b=[char]7; $p=$PWD.ProviderPath; ` +
           `$u=($p -replace '\\\\','/'); ` +
           `Write-Host -NoNewline ($e + ']133;A' + $b + $e + ']7;file:///' + $u + $b); ` +
@@ -1468,6 +1608,7 @@ export class SSHManager {
       for (const t of s.setupTimers) clearTimeout(t)
       s.setupTimers.clear()
     }
+    s.echoRestoreTimer = undefined
     s.shellIntegrationPending = false
     s.shellIntegrationArmIdle = undefined
   }
@@ -1497,7 +1638,15 @@ export class SSHManager {
       }
       // Attaching tmux cancels pending setup; never type hooks into a pane.
       if (!s.shell || s.shellRequest?.tmuxSession) return
-      this.writeQuiet(s, buildPosixShellIntegrationSetup())
+      const startCwd = s.shellRequest?.startCwd
+      const hooks = s.context.os === 'linux' || s.context.os === 'mac'
+      const script = hooks
+        ? buildPosixShellIntegrationSetup({ startCwd })
+        : buildQuietStartCwd(startCwd)
+      if (!script) return
+      // A previous inject's marker must not suppress this attempt's failsafe.
+      s.shellIntegrationReady = false
+      this.writeQuiet(s, script)
       this.scheduleEchoRestore(s, ECHO_RESTORE_FAILSAFE_MS)
     }
     s.shellIntegrationArmIdle = (): void => {
@@ -1520,12 +1669,37 @@ export class SSHManager {
     s.shellIntegrationArmIdle?.()
   }
 
+  private markShellIntegrationReady(s: Session): void {
+    s.shellIntegrationReady = true
+    if (!s.echoRestoreTimer) return
+    clearTimeout(s.echoRestoreTimer)
+    if (s.setupTimers) s.setupTimers.delete(s.echoRestoreTimer)
+    s.echoRestoreTimer = undefined
+  }
+
+  /** Hide the ready marker and, once it arrives, skip the visible echo failsafe. */
+  private absorbShellChunk(s: Session, chunk: string, flush = false): string {
+    const consumed = consumeShellIntegrationReady(s.shellIntegrationCarry ?? '', chunk, flush)
+    s.shellIntegrationCarry = consumed.carry || undefined
+    if (consumed.ready) this.markShellIntegrationReady(s)
+    return consumed.text
+  }
+
   private scheduleEchoRestore(s: Session, delayMs: number): void {
+    if (s.echoRestoreTimer) {
+      clearTimeout(s.echoRestoreTimer)
+      if (s.setupTimers) s.setupTimers.delete(s.echoRestoreTimer)
+      s.echoRestoreTimer = undefined
+    }
     const t = setTimeout(() => {
       if (s.setupTimers) s.setupTimers.delete(t)
-      if (!s.shell || s.tmuxClientRunning) return
+      if (s.echoRestoreTimer === t) s.echoRestoreTimer = undefined
+      // Ready marker already confirmed echo is on. A second `stty echo`
+      // here is painted at the prompt (`stty echo 2>/dev/null`).
+      if (!s.shell || s.tmuxClientRunning || s.shellIntegrationReady) return
       s.shell.write(STTY_ENABLE_ECHO)
     }, delayMs)
+    s.echoRestoreTimer = t
     this.trackTimer(s, t)
   }
 

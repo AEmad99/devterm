@@ -767,17 +767,12 @@ function TerminalView({ session, hibernated = false }: { session: Session; hiber
         )
       }
       const applyStartCwd = () => {
-        // Best-effort: restore the working directory when launched from a
-        // saved workspace. Works for POSIX shells and PowerShell alike.
-        // Seed store so the explorer shows that path before OSC 7 arrives.
+        // Seed the explorer before OSC 7 confirms the path. The shell is
+        // moved by openShell's startCwd, not by typing `cd` at the prompt.
         // Skipped when attaching to an existing tmux session (it has its own cwd).
         if (startCwdAppliedRef.current || !session.startCwd) return
         startCwdAppliedRef.current = true
-        if (session.startCwd) {
-          useSessions.getState().setCwd(session.id, session.startCwd)
-          const p = session.startCwd.replace(/"/g, '\\"')
-          window.devterm.ssh.input(sid, `cd "${p}"\r`)
-        }
+        useSessions.getState().setCwd(session.id, session.startCwd)
       }
       void (async () => {
         if (!sshShellOpenRef.current) {
@@ -797,7 +792,12 @@ function TerminalView({ session, hibernated = false }: { session: Session; hiber
                   listing = undefined
                 }
               }
-              await window.devterm.ssh.openShell(sid, term.cols, term.rows)
+              await window.devterm.ssh.openShell(sid, term.cols, term.rows, {
+                // Restored/workspace cwd is applied inside the quiet inject
+                // (or the Windows startup command). Typing `cd` here paints
+                // `cd "/root"` on the login prompt.
+                startCwd: session.startCwd
+              })
               sshTmuxListingRef.current = listing
               sshShellOpenRef.current = true
               sshShellEndedRef.current = false
@@ -937,8 +937,6 @@ function TerminalView({ session, hibernated = false }: { session: Session; hiber
     setTmuxAttached(choice.name || undefined)
     if (!choice.name && wasConnect && session.startCwd) {
       useSessions.getState().setCwd(sid, session.startCwd)
-      const p = session.startCwd.replace(/"/g, '\\"')
-      window.devterm.ssh.input(sid, `cd "${p}"\r`)
     }
     termRef.current?.focus()
   }

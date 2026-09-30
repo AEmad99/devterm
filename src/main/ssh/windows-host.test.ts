@@ -10,6 +10,7 @@ import {
   powershellCommand,
   normalizeWindowsInteractiveInput,
   windowsPowerShellInteractiveCommand,
+  windowsStartLocationPrefix,
   wrapWindowsRemoteCommand,
   wrapWindowsGitCommand
 } from './windows-host'
@@ -66,6 +67,19 @@ describe('windows remote paths', () => {
     assert.match(script, /Set-Location -LiteralPath/)
     assert.match(script, /git /)
     assert.match(script, /status/)
+  })
+
+  it('builds a quiet Set-Location prefix for the interactive startup', () => {
+    assert.equal(windowsStartLocationPrefix(undefined), '')
+    assert.equal(
+      windowsStartLocationPrefix('C:\\Users\\root'),
+      "Set-Location -LiteralPath 'C:\\Users\\root'; "
+    )
+    assert.equal(
+      windowsStartLocationPrefix("C:\\Users\\O'Brien"),
+      "Set-Location -LiteralPath 'C:\\Users\\O''Brien'; "
+    )
+    assert.equal(windowsStartLocationPrefix('C:\\Users\nroot'), '')
   })
 
   it('uses the quote-safe noninteractive PowerShell wrapper', () => {

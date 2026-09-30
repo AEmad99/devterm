@@ -506,6 +506,12 @@ export interface SSHOpenShellOptions {
   detached?: boolean
   /** Re-attach this named tmux session after the login shell opens (no `exec`). */
   tmuxSession?: string
+  /**
+   * Directory to enter when the login shell starts. POSIX remotes apply it
+   * inside the quiet shell-integration inject; Windows remotes apply it in
+   * the PowerShell startup command. It is not typed at the prompt.
+   */
+  startCwd?: string
 }
 
 /** One row from `tmux list-sessions` on a remote POSIX host. */
