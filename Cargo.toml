@@ -1,0 +1,17 @@
+[package]
+name = "devterm-gpui"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "DevTerm desktop terminal, rebuilt on Rust and GPUI"
+publish = false
+
+[dependencies]
+anyhow = "1"
+gpui = "0.2.2"
+portable-pty = "0.8.1"
+
+# xattr 0.2.3 (pulled in by GPUI's archive crate) still names libc::ENOATTR,
+# which newer libc removed. The vendor copy keeps the same 0.2.3 API.
+[patch.crates-io]
+xattr = { path = "vendor/xattr" }
