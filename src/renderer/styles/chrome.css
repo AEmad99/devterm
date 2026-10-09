@@ -864,11 +864,12 @@
   z-index: 2;
   container-type: inline-size;
   display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 8px;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
   margin: 0;
-  padding: 10px 12px 12px;
+  padding: 6px 10px;
   background: var(--bg);
   border-bottom: 1px solid var(--border);
   font-size: var(--fs-200);
@@ -880,6 +881,7 @@
   align-items: center;
   gap: 12px;
   min-height: 26px;
+  flex: 0 0 auto;
 }
 .welcome-hint-title {
   color: var(--fg);
@@ -929,18 +931,21 @@
   background: var(--hover);
 }
 .welcome-cards {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
+  display: flex;
+  flex: 1 1 auto;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
 }
 .welcome-card {
-  display: grid;
-  grid-template-columns: 28px minmax(0, 1fr) auto;
+  display: inline-grid;
+  grid-template-columns: 22px auto auto;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   min-width: 0;
-  min-height: 56px;
-  padding: 8px 10px;
+  min-height: 30px;
+  padding: 3px 10px 3px 4px;
   text-align: left;
   font: inherit;
   color: inherit;
@@ -959,8 +964,8 @@
   color: inherit;
 }
 .welcome-card-icon {
-  width: 28px;
-  height: 28px;
+  width: 22px;
+  height: 22px;
   display: grid;
   place-items: center;
   border-radius: var(--radius-sm);
@@ -977,6 +982,7 @@
   gap: 2px;
   min-width: 0;
 }
+
 .welcome-card-title {
   color: var(--fg);
   font-size: var(--fs-200);
@@ -987,6 +993,10 @@
   color: color-mix(in srgb, var(--fg) 68%, var(--muted));
   font-size: var(--fs-100);
   line-height: 1.35;
+}
+/* The one-line strip shows titles only; the copy is kept as the button tooltip. */
+.welcome-card-copy {
+  display: none;
 }
 .welcome-card-state {
   font-size: var(--fs-100);
@@ -1007,7 +1017,7 @@
 }
 @container (max-width: 640px) {
   .welcome-cards {
-    grid-template-columns: 1fr;
+    justify-content: flex-start;
   }
 }
 @keyframes welcome-hint-in {
@@ -1175,6 +1185,16 @@ button.status-cell.status-toggle[aria-pressed='true'] {
   transition:
     background var(--dur-fast) var(--ease-out),
     color var(--dur-fast) var(--ease-out);
+}
+/* Secondary pane controls stay quiet on inactive panes and appear when the pane
+   is active, hovered, or has keyboard focus. The agent cluster always shows. */
+.pane-group:not(.active):not(:hover):not(:focus-within) .pane-add,
+.pane-group:not(.active):not(:hover):not(:focus-within) .pane-merge,
+.pane-group:not(.active):not(:hover):not(:focus-within) .pane-focus,
+.pane-group:not(.active):not(:hover):not(:focus-within) .pane-tmux,
+.pane-group:not(.active):not(:hover):not(:focus-within) .pane-more {
+  opacity: 0;
+  pointer-events: none;
 }
 .pane-add:hover,
 .pane-merge:hover,

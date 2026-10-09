@@ -268,6 +268,7 @@ export default function TerminalsView({
                   key={step.id}
                   type="button"
                   className={`welcome-card${step.done ? ' is-done' : ''}`}
+                  title={step.copy}
                   disabled={step.done || !step.onClick}
                   onClick={step.onClick}
                 >

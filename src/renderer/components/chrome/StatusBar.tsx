@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useSessions } from '../../store/sessions'
 import { useSettings } from '../../store/settings'
-import { IconLocal, IconRemote, IconBrowser } from '../common/Icons'
+import { IconLocal, IconRemote, IconBrowser, IconSave } from '../common/Icons'
 import { IconBranch } from '../git/GitIcons'
 import { agentKindLabel, setAgentUiMode } from '../../lib/agent-ui'
 import { useActiveGitStatus } from '../../lib/use-git-status'
@@ -80,6 +80,46 @@ function transferAggregate(items: { transferred: number; total: number }[]): num
  * when that panel can actually show (or an approval is waiting) — otherwise it
  * read as "on" while nothing on screen changed.
  */
+/**
+ * Save actions for the single-group case, where the group bar is hidden. They
+ * mirror the group bar's buttons so workspace saving stays one click away.
+ */
+export interface WorkspaceActions {
+  canSave: boolean
+  onSave: () => void
+  launchedFromId?: string
+  onSaveBack: () => void
+}
+
+function WorkspaceSaveButtons({ actions }: { actions: WorkspaceActions }) {
+  return (
+    <>
+      {actions.launchedFromId && (
+        <button
+          type="button"
+          className="status-cell status-link"
+          title="Save changes back to the workspace this group was launched from"
+          disabled={!actions.canSave}
+          onClick={actions.onSaveBack}
+        >
+          <IconSave size={12} />
+          Save back
+        </button>
+      )}
+      <button
+        type="button"
+        className="status-cell status-link"
+        title="Save this group's terminals as a new workspace"
+        disabled={!actions.canSave}
+        onClick={actions.onSave}
+      >
+        <IconSave size={12} />
+        {actions.launchedFromId ? 'Save as new' : 'Save workspace'}
+      </button>
+    </>
+  )
+}
+
 function DockToggles({ agentDocked }: { agentDocked: boolean }) {
   const transfersOpen = useSettings((s) => s.transfersPanelOpen)
   const setTransfersOpen = useSettings((s) => s.setTransfersPanelOpen)
@@ -133,7 +173,7 @@ function DockToggles({ agentDocked }: { agentDocked: boolean }) {
 const SSH_PING_INITIAL_MS = 30_000
 const SSH_PING_MAX_MS = 5 * 60_000
 
-export default function StatusBar() {
+export default function StatusBar({ workspaceActions }: { workspaceActions?: WorkspaceActions }) {
   const active = useSessions((s) => s.sessions.find((x) => x.id === s.activeId))
   const showStatusBar = useSettings((s) => s.showStatusBar)
   const zenMode = useSettings((s) => s.zenMode)
@@ -269,6 +309,7 @@ export default function StatusBar() {
       <span className="spacer" />
 
       <span className="statusbar-right">
+        {workspaceActions && <WorkspaceSaveButtons actions={workspaceActions} />}
         <DockToggles agentDocked={active.agentUiMode === 'docked'} />
         {agentText ? (
           <button

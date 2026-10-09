@@ -74,6 +74,34 @@ import type { LibraryId } from './components/chrome/types'
 /** Survives an error-boundary remount so recovery does not launch every session again. */
 let appStartupStarted = false
 
+const LIBRARY_WIDTH_MIN = 320
+const LIBRARY_WIDTH_MAX = 640
+const LIBRARY_WIDTH_KEY = 'devterm.library-widths.v1'
+
+const clampWidth = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n))
+
+function libraryWidthFor(widths: Partial<Record<LibraryId, number>>, id: LibraryId): number {
+  const fallback = id === 'files' ? LIBRARY_WIDTH_MIN : 440
+  return clampWidth(widths[id] ?? fallback, LIBRARY_WIDTH_MIN, LIBRARY_WIDTH_MAX)
+}
+
+function readLibraryWidths(): Partial<Record<LibraryId, number>> {
+  try {
+    const raw = localStorage.getItem(LIBRARY_WIDTH_KEY)
+    return raw ? (JSON.parse(raw) as Partial<Record<LibraryId, number>>) : {}
+  } catch {
+    return {}
+  }
+}
+
+function writeLibraryWidths(widths: Partial<Record<LibraryId, number>>): void {
+  try {
+    localStorage.setItem(LIBRARY_WIDTH_KEY, JSON.stringify(widths))
+  } catch {
+    // Storage can be unavailable (private window, blocked site data); the width still applies this session.
+  }
+}
+
 function restoreStructureKey(): string {
   const sessions = useSessions
     .getState()
@@ -186,7 +214,18 @@ export default function App() {
   const [infoNotice, setInfoNotice] = useState<{ title: string; message: string } | null>(null)
   const [dragOverGroup, setDragOverGroup] = useState<string | null>(null)
   const [library, setLibrary] = useState<LibraryId | null>(null)
-  const [libraryWidth, setLibraryWidth] = useState(280)
+  // Each side panel remembers its own width (drag-resized), kept in localStorage
+  // so it survives a relaunch. Files starts narrower; forms need the wider default.
+  const [libraryWidths, setLibraryWidths] =
+    useState<Partial<Record<LibraryId, number>>>(readLibraryWidths)
+  const libraryWidth = library ? libraryWidthFor(libraryWidths, library) : LIBRARY_WIDTH_MIN
+  const setLibraryWidthFor = (id: LibraryId, width: number) => {
+    setLibraryWidths((cur) => {
+      const next = { ...cur, [id]: width }
+      writeLibraryWidths(next)
+      return next
+    })
+  }
   const [gitWidth, setGitWidth] = useState(280)
   const [local, setLocal] = useState<HostContext | null>(null)
   const [globalSearchOpen, setGlobalSearchOpen] = useState(false)
@@ -821,6 +860,10 @@ export default function App() {
 
   const capturable = capturableSessions(sessionsRef, activeGroupId)
   const showGroupBar = !editorFocused && sessionCount > 0 && !zenMode
+  // The group bar only earns its row once there is more than one group. With a
+  // single group, its Save actions move to the status bar (see below).
+  const groupBarVisible = showGroupBar && groups.length > 1
+  const workspaceActionsInStatus = !editorFocused && sessionCount > 0 && !groupBarVisible
 
   const saveWorkspace = async (name: string) => {
     const { items, layout } = captureWorkspace(sessionsRef, activeGroupId)
@@ -875,7 +918,6 @@ export default function App() {
   }, [keybindings, isMac])
   const toggleLibrary = (id: LibraryId) => {
     setLibrary((cur) => (cur === id ? null : id))
-    if (id !== 'files') setLibraryWidth((w) => Math.max(w, 440))
   }
   return (
     <div className="app" data-zen={zenMode ? 'on' : undefined}>
@@ -905,7 +947,13 @@ export default function App() {
             </aside>
             <Splitter
               direction="horizontal"
-              onDelta={(d) => setLibraryWidth((w) => clamp(w + d, 320, 640))}
+              onDelta={(d) =>
+                library &&
+                setLibraryWidthFor(
+                  library,
+                  clamp(libraryWidth + d, LIBRARY_WIDTH_MIN, LIBRARY_WIDTH_MAX)
+                )
+              }
             />
           </>
         )}
@@ -919,7 +967,7 @@ export default function App() {
             */}
             <div className="view-pane">
               <TerminalsView
-                showGroupBar={showGroupBar}
+                showGroupBar={groupBarVisible}
                 groups={groups}
                 activeGroupId={activeGroupId}
                 sessionsRef={sessionsRef}
@@ -934,7 +982,6 @@ export default function App() {
                 onNewTerminalInGroup={() => addLocal({ groupId: activeGroupId })}
                 onOpenConnections={() => {
                   setLibrary('connections')
-                  setLibraryWidth((w) => Math.max(w, 440))
                 }}
                 onCreateGrid={() => setShowGrid(true)}
                 onSaveWorkspace={() => setShowSaveWs(true)}
@@ -953,7 +1000,18 @@ export default function App() {
             </div>
           </div>
 
-          <StatusBar />
+          <StatusBar
+            workspaceActions={
+              workspaceActionsInStatus
+                ? {
+                    canSave: capturable.length > 0,
+                    onSave: () => setShowSaveWs(true),
+                    launchedFromId,
+                    onSaveBack: () => void saveBackToWorkspace()
+                  }
+                : undefined
+            }
+          />
           {!zenMode && <TransfersPanel />}
         </div>
 
