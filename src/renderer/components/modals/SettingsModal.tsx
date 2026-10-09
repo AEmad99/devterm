@@ -661,20 +661,6 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                   </div>
                   <div className="settings-card-body">
                     <label className="settings-row-grid">
-                      <span className="settings-label">Keep sessions running in the tray</span>
-                      <span className="settings-control">
-                        <input
-                          type="checkbox"
-                          checked={keepSessionsInTray}
-                          onChange={(e) => setKeepSessionsInTray(e.target.checked)}
-                        />
-                      </span>
-                    </label>
-                    <p className="settings-hint">
-                      Closing the window hides DevTerm without stopping local shells, SSH sessions,
-                      or agents. Use Quit DevTerm to stop everything.
-                    </p>
-                    <label className="settings-row-grid">
                       <span className="settings-label">Default shell</span>
                       <span className="settings-control">
                         <select
@@ -744,7 +730,7 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
 
                 <div className="settings-card">
                   <div className="settings-card-header">
-                    <h4>SSH Connections &amp; Workspaces</h4>
+                    <h4>SSH Reconnect</h4>
                     <p className="settings-card-subtitle">
                       Automatic recovery policies for transport disconnects.
                     </p>
@@ -778,7 +764,31 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                         <span className="settings-val-badge">{autoReconnect.maxAttempts}</span>
                       </span>
                     </label>
+                  </div>
+                </div>
 
+                <div className="settings-card">
+                  <div className="settings-card-header">
+                    <h4>Window</h4>
+                    <p className="settings-card-subtitle">
+                      What closing the window does, and distraction-free mode.
+                    </p>
+                  </div>
+                  <div className="settings-card-body">
+                    <label className="settings-row-grid">
+                      <span className="settings-label">Keep sessions running in the tray</span>
+                      <span className="settings-control">
+                        <input
+                          type="checkbox"
+                          checked={keepSessionsInTray}
+                          onChange={(e) => setKeepSessionsInTray(e.target.checked)}
+                        />
+                      </span>
+                    </label>
+                    <p className="settings-hint">
+                      Closing the window hides DevTerm without stopping local shells, SSH sessions,
+                      or agents. Use Quit DevTerm to stop everything.
+                    </p>
                     <label className="settings-row-grid">
                       <span className="settings-label">
                         Zen mode (

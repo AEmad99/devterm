@@ -75,7 +75,12 @@ function transferAggregate(items: { transferred: number; total: number }[]): num
   return Math.min(100, Math.round((done / total) * 100))
 }
 
-function DockToggles() {
+/**
+ * Activity only toggles the docked agent's activity panel, so the cell appears
+ * when that panel can actually show (or an approval is waiting) — otherwise it
+ * read as "on" while nothing on screen changed.
+ */
+function DockToggles({ agentDocked }: { agentDocked: boolean }) {
   const transfersOpen = useSettings((s) => s.transfersPanelOpen)
   const setTransfersOpen = useSettings((s) => s.setTransfersPanelOpen)
   const activityCollapsed = useSettings((s) => s.agentActivityCollapsed)
@@ -89,21 +94,23 @@ function DockToggles() {
 
   return (
     <>
-      <button
-        type="button"
-        className="status-cell status-link status-toggle"
-        aria-pressed={!activityCollapsed}
-        title={
-          pendingApprovals
-            ? `${pendingApprovals} approval(s) waiting — click to ${activityCollapsed ? 'show' : 'hide'} activity`
-            : activityCollapsed
-              ? 'Show agent activity'
-              : 'Hide agent activity'
-        }
-        onClick={() => setActivityCollapsed(!activityCollapsed)}
-      >
-        Activity{pendingApprovals > 0 ? ` ${pendingApprovals}` : ''}
-      </button>
+      {(agentDocked || pendingApprovals > 0) && (
+        <button
+          type="button"
+          className="status-cell status-link status-toggle"
+          aria-pressed={!activityCollapsed}
+          title={
+            pendingApprovals
+              ? `${pendingApprovals} approval(s) waiting — click to ${activityCollapsed ? 'show' : 'hide'} activity`
+              : activityCollapsed
+                ? 'Show agent activity'
+                : 'Hide agent activity'
+          }
+          onClick={() => setActivityCollapsed(!activityCollapsed)}
+        >
+          Activity{pendingApprovals > 0 ? ` ${pendingApprovals}` : ''}
+        </button>
+      )}
       <button
         type="button"
         className="status-cell status-link status-toggle"
@@ -186,7 +193,7 @@ export default function StatusBar() {
         <span className="status-cell">Ready</span>
         <span className="spacer" />
         <span className="statusbar-right">
-          <DockToggles />
+          <DockToggles agentDocked={false} />
         </span>
       </div>
     )
@@ -262,7 +269,7 @@ export default function StatusBar() {
       <span className="spacer" />
 
       <span className="statusbar-right">
-        <DockToggles />
+        <DockToggles agentDocked={active.agentUiMode === 'docked'} />
         {agentText ? (
           <button
             type="button"

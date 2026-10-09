@@ -81,6 +81,13 @@ export const IconKeyboard = (p: IconProps) => (
   </Svg>
 )
 
+/** Curly braces — reusable command snippets (distinct from the keyboard-shortcuts glyph). */
+export const IconSnippet = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M8.5 4.5c-1.9 0-2.5.9-2.5 2.4v2.6c0 1.3-.7 2.1-2 2.5 1.3.4 2 1.2 2 2.5v2.6c0 1.5.6 2.4 2.5 2.4M15.5 4.5c1.9 0 2.5.9 2.5 2.4v2.6c0 1.3.7 2.1 2 2.5-1.3.4-2 1.2-2 2.5v2.6c0 1.5-.6 2.4-2.5 2.4" />
+  </Svg>
+)
+
 /** Microphone — voice dictation. */
 export const IconMic = (p: IconProps) => (
   <Svg {...p}>

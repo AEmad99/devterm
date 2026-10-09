@@ -3,6 +3,16 @@
 All notable changes to DevTerm are documented here. The most recent section is
 at the top. Dates are ISO `YYYY-MM-DD`.
 
+## Unreleased
+
+### Changed
+
+- Snippets in the side rail now have their own braces icon. It used to share the keyboard icon with Keyboard shortcuts.
+- Each command palette action has its own icon (new terminal, SSH, browser, preview, split, Git, settings, …) instead of one grid icon for all.
+- Settings → General: "Keep sessions running in the tray" and Zen mode moved into a new **Window** card. They were under the shell and SSH cards. The SSH card is now called **SSH Reconnect**.
+- The status bar's **Activity** toggle only appears when an agent is docked or an approval is waiting. Before, it showed as "on" even when there was no panel to show.
+- The Workspaces panel text now points to the group bar's **Save** button. The old text named a "Terminals view" and a "Save as workspace" button that no longer exist.
+
 ## 1.6.7 — 2026-09-30
 
 ### Fixed

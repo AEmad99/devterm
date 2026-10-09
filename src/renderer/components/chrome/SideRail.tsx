@@ -1,6 +1,13 @@
 import Button from '../common/Button'
 import Tooltip from '../common/Tooltip'
-import { IconFolder, IconGroup, IconKeyboard, IconRemote, IconSettings } from '../common/Icons'
+import {
+  IconFolder,
+  IconGroup,
+  IconKeyboard,
+  IconRemote,
+  IconSettings,
+  IconSnippet
+} from '../common/Icons'
 import { IconBranch } from '../git/GitIcons'
 import MicButton from '../dictation/MicButton'
 import { gitChangeCount, useActiveGitStatus } from '../../lib/use-git-status'
@@ -11,7 +18,7 @@ const ITEMS: { id: LibraryId; label: string; icon: typeof IconFolder }[] = [
   { id: 'files', label: 'Files', icon: IconFolder },
   { id: 'connections', label: 'Connections', icon: IconRemote },
   { id: 'workspaces', label: 'Workspaces', icon: IconGroup },
-  { id: 'snippets', label: 'Snippets', icon: IconKeyboard }
+  { id: 'snippets', label: 'Snippets', icon: IconSnippet }
 ]
 
 /**

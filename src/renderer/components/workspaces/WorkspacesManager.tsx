@@ -19,8 +19,7 @@ import { IconGroup, IconConnect, IconTrash, IconEdit, IconCopy, IconPin } from '
  *   - rename in-place via the Update button,
  *   - duplicate (creates a new workspace with " (copy)" appended and a fresh id),
  *   - delete.
- * Workspaces are *created* from the Terminals view (the group bar's
- * "Save as workspace" button).
+ * Workspaces are *created* from the group bar's "Save" button.
  */
 export default function WorkspacesManager({ onLaunch }: { onLaunch: () => void }) {
   const pinned = useSettings((s) => s.pinned.workspaces)
@@ -152,23 +151,16 @@ export default function WorkspacesManager({ onLaunch }: { onLaunch: () => void }
         <h2>Workspaces</h2>
       </div>
       <p className="manager-sub">
-        Saved sets of terminals — local and remote, their working directories, and the split layout.
-        Launch one to reopen the whole set in its own group. Create a workspace from the Terminals
-        view with “Save as workspace”.
+        Saved sets of local and remote terminals with their folders and split layout. Launch one to
+        reopen it in its own group.
       </p>
 
       {loading ? (
         <ManagerSkeleton />
       ) : list.length === 0 ? (
         <div className="manager-empty">
-          No workspaces yet. Arrange some terminals in the Terminals view, then use “Save as
-          workspace”.
-          <div className="manager-empty-actions">
-            <Button variant="primary" onClick={onLaunch}>
-              <IconConnect size={14} />
-              Go to Terminals
-            </Button>
-          </div>
+          No workspaces yet. Arrange terminals in a group, then click <strong>Save</strong> at the
+          right end of the group bar.
         </div>
       ) : (
         <ManagerList>

@@ -1255,6 +1255,10 @@
   height: 22px;
   color: var(--muted);
 }
+/* Same split glyph as the tab quick-action; rotated for "split down". */
+.palette-row-icon .rotate-90 {
+  transform: rotate(90deg);
+}
 .palette-row-main {
   flex: 1;
   min-width: 0;

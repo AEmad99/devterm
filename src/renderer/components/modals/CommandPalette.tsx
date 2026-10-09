@@ -30,7 +30,26 @@ import { useEditors } from '../../store/editors'
 import { useLayout, DEFAULT_GROUP } from '../../store/layout'
 import { useSettings } from '../../store/settings'
 import { toLiveSnapshot } from '../../lib/workspace'
-import { IconGroup, IconGrid, IconPalette, IconRemote, IconTerminals } from '../common/Icons'
+import {
+  IconAgent,
+  IconBrowser,
+  IconClose,
+  IconEye,
+  IconFocus,
+  IconGroup,
+  IconGrid,
+  IconKeyboard,
+  IconLocal,
+  IconRemote,
+  IconSearch,
+  IconSettings,
+  IconSnippet,
+  IconSplit,
+  IconTerminals,
+  IconTmux,
+  IconTransfer
+} from '../common/Icons'
+import { IconBranch } from '../git/GitIcons'
 import Button from '../common/Button'
 import { toast } from '../../store/toasts'
 
@@ -42,6 +61,32 @@ type PaletteItem =
   | { kind: 'workspace'; ws: Workspace; score: number }
   | { kind: 'history'; command: string; count: number; score: number }
   | { kind: 'action'; id: string; title: string; subtitle: string; score: number }
+
+/** Per-action glyphs so the Actions list scans by shape, not just by text. */
+const ACTION_ICONS: Record<string, typeof IconGrid> = {
+  'new-local': IconLocal,
+  'new-remote': IconRemote,
+  'new-browser': IconBrowser,
+  'preview-localhost': IconEye,
+  'preview-forward': IconEye,
+  'preview-folder': IconEye,
+  'new-group': IconGroup,
+  grid: IconGrid,
+  tmux: IconTmux,
+  'split-right': IconSplit,
+  'split-down': IconSplit,
+  focus: IconFocus,
+  zen: IconFocus,
+  clear: IconTerminals,
+  close: IconClose,
+  git: IconBranch,
+  transfers: IconTransfer,
+  search: IconSearch,
+  agents: IconAgent,
+  'ask-agent': IconAgent,
+  settings: IconSettings,
+  shortcuts: IconKeyboard
+}
 
 const CATEGORIES: { id: Category; label: string }[] = [
   { id: 'all', label: 'All' },
@@ -226,7 +271,8 @@ export default function CommandPalette({
       const pinBoost = pinIndex.has(c.id) ? 400 - (pinIndex.get(c.id) ?? 0) : 0
       const recency = last[c.id] ? Math.min(200, (last[c.id] ?? 0) / 1e12) : 0
       const tagHit =
-        queryTrimmed && (c.tags ?? []).some((t) => t.toLowerCase().includes(queryTrimmed.toLowerCase()))
+        queryTrimmed &&
+        (c.tags ?? []).some((t) => t.toLowerCase().includes(queryTrimmed.toLowerCase()))
           ? 80
           : 0
       return fuzzy * 10 + pinBoost + recency + tagHit
@@ -798,18 +844,20 @@ export default function CommandPalette({
     }
   }
 
-  const rowIcon = (kind: PaletteItem['kind']) => {
-    switch (kind) {
+  const rowIcon = (item: PaletteItem) => {
+    switch (item.kind) {
       case 'snippet':
-        return <IconPalette size={16} />
+        return <IconSnippet size={16} />
       case 'connection':
         return <IconRemote size={16} />
       case 'workspace':
         return <IconGroup size={16} />
       case 'history':
         return <IconTerminals size={16} />
-      case 'action':
-        return <IconGrid size={16} />
+      case 'action': {
+        const Icon = ACTION_ICONS[item.id] ?? IconGrid
+        return <Icon size={16} className={item.id === 'split-down' ? 'rotate-90' : undefined} />
+      }
     }
   }
 
@@ -877,7 +925,7 @@ export default function CommandPalette({
         onMouseEnter={() => setSel(idx)}
         onClick={(e) => activate(item, !e.shiftKey)}
       >
-        <span className="palette-row-icon">{rowIcon(item.kind)}</span>
+        <span className="palette-row-icon">{rowIcon(item)}</span>
         <div className="palette-row-main">
           <div className="palette-name">{content.title}</div>
           <div className={`palette-row-sub ${content.mono ? 'sn-mono' : ''}`}>
