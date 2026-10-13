@@ -19,7 +19,9 @@ import { IconGroup, IconConnect, IconTrash, IconEdit, IconCopy, IconPin } from '
  *   - rename in-place via the Update button,
  *   - duplicate (creates a new workspace with " (copy)" appended and a fresh id),
  *   - delete.
- * Workspaces are *created* from the group bar's "Save" button.
+ * Workspaces are *created* from "Save workspace" in the status bar when there is
+ * one group, or from "Save" at the right end of the group bar when there are
+ * two or more.
  */
 export default function WorkspacesManager({ onLaunch }: { onLaunch: () => void }) {
   const pinned = useSettings((s) => s.pinned.workspaces)
@@ -159,8 +161,9 @@ export default function WorkspacesManager({ onLaunch }: { onLaunch: () => void }
         <ManagerSkeleton />
       ) : list.length === 0 ? (
         <div className="manager-empty">
-          No workspaces yet. Arrange terminals in a group, then click <strong>Save</strong> at the
-          right end of the group bar.
+          No workspaces yet. Arrange terminals in a group, then click{' '}
+          <strong>Save workspace</strong> in the status bar. With two or more groups,{' '}
+          <strong>Save</strong> is at the right end of the group bar.
         </div>
       ) : (
         <ManagerList>

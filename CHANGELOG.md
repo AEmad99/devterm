@@ -3,7 +3,7 @@
 All notable changes to DevTerm are documented here. The most recent section is
 at the top. Dates are ISO `YYYY-MM-DD`.
 
-## 1.6.8 — 2026-10-09
+## 1.6.8 — 2026-10-13
 
 ### Changed
 
@@ -11,7 +11,7 @@ at the top. Dates are ISO `YYYY-MM-DD`.
 - Each command palette action has its own icon (new terminal, SSH, browser, preview, split, Git, settings, …) instead of one grid icon for all.
 - Settings → General: "Keep sessions running in the tray" and Zen mode moved into a new **Window** card. They were under the shell and SSH cards. The SSH card is now called **SSH Reconnect**.
 - The status bar's **Activity** toggle only appears when an agent is docked or an approval is waiting. Before, it showed as "on" even when there was no panel to show.
-- The Workspaces panel text now points to the group bar's **Save** button. The old text named a "Terminals view" and a "Save as workspace" button that no longer exist.
+- The Workspaces panel no longer names a "Terminals view" or a "Save as workspace" button. It tells you to use **Save workspace** in the status bar, or **Save** on the group bar when you have two or more groups.
 - The group bar only appears with two or more groups. With one group, **Save workspace** (and **Save back**, for workspace-launched groups) sits in the status bar instead.
 - Secondary pane controls (new terminal, focus, merge, tmux, more) show only on the active or hovered pane. The agent button always shows.
 - The "Getting started" strip is now one row of compact buttons. Each step's description is in its tooltip.
