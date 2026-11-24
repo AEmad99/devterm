@@ -710,6 +710,7 @@ function TerminalView({ session, hibernated = false }: { session: Session; hiber
             startupShellRef.current = undefined
             exitNoticeRef.current = null
             lastExitNoticeRef.current = null
+            if (created.notice && !disposed) term.write(created.notice)
           }
         } catch (e) {
           ptyCreatePromiseRef.current = null

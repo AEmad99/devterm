@@ -4,9 +4,9 @@ import os from 'os'
 import { existsSync } from 'fs'
 import { dirname, join } from 'path'
 import { createRequire } from 'node:module'
-import * as pty from 'node-pty'
 import type { IPty, IWindowsPtyForkOptions } from 'node-pty'
 import { shouldUseBundledConpty } from './conpty-policy'
+import { openLocalPty } from './pty-fallback'
 import type {
   DefaultShellPref,
   PtyCreateOptions,
@@ -41,9 +41,7 @@ export type PtyDataListener = (data: string) => void
  * refuse to inherit a parent `NO_COLOR` / `FORCE_COLOR=0` — otherwise Muse and
  * similar TUIs auto-detect a 16-color terminal and skip syntax themes.
  */
-export function buildPtyBaseEnv(
-  source: NodeJS.ProcessEnv = process.env
-): Record<string, string> {
+export function buildPtyBaseEnv(source: NodeJS.ProcessEnv = process.env): Record<string, string> {
   const baseEnv: Record<string, string> = {}
   for (const [k, v] of Object.entries(source)) {
     if (v == null) continue
@@ -270,14 +268,16 @@ export class PtyManager {
       // hatch when the packaged dll is present. Ignored on non-Windows.
       useConptyDll: USE_CONPTY_DLL
     }
-    const proc = (() => {
+    const opened = (() => {
       try {
-        return pty.spawn(shell, args, ptyOpts)
+        return openLocalPty(shell, args, ptyOpts)
       } catch (err) {
         // node-pty can throw synchronously (bad custom shell path, missing cwd,
         // invalid dimensions). That path bypasses the exit-based startup-failure
         // diagnostic below, so surface the same structured event here before the
-        // error propagates to the IPC caller.
+        // error propagates to the IPC caller. A Windows Application Control
+        // block of conpty.node is handled inside openLocalPty and does not land
+        // here.
         try {
           this.handlers.onStartupFailure?.(id, { shell, exitCode: undefined, signal: undefined })
           // onStartupFailure is documented as always paired with onExit.
@@ -288,6 +288,7 @@ export class PtyManager {
         throw err
       }
     })()
+    const proc = opened.proc
 
     // Startup-failure diagnostic: if the shell exits before emitting any *real*
     // output (Windows PowerShell 5.1's 0x8009001d is the canonical case — the
@@ -359,7 +360,7 @@ export class PtyManager {
     })
 
     this.ptys.set(id, proc)
-    return { id, shell, cwd }
+    return opened.notice ? { id, shell, cwd, notice: opened.notice } : { id, shell, cwd }
   }
 
   // write/resize can throw (EPIPE et al.) when the process died but onExit

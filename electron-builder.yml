@@ -140,6 +140,14 @@ win:
   artifactName: ${productName}-${version}-setup.${ext}
   # Builds are unsigned; electron-updater would otherwise try to match a publisher cert.
   verifyUpdateCodeSignature: false
+  # electron-builder signs executables only. When a certificate is configured,
+  # also sign the native addons. Smart App Control blocks unsigned conpty.node
+  # even though the file is inside the installer; a signature is what lets the
+  # real ConPTY load. Unsigned builds still package, and the app falls back to
+  # the Windows console host if that load is blocked.
+  signExts:
+    - .dll
+    - .node
 publish:
   - provider: github
     owner: AEmad99

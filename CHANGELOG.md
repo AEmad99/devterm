@@ -3,6 +3,12 @@
 All notable changes to DevTerm are documented here. The most recent section is
 at the top. Dates are ISO `YYYY-MM-DD`.
 
+## Unreleased
+
+### Fixed
+
+- Local terminals still start on Windows when Application Control (Smart App Control or WDAC) blocks the unsigned `conpty.node` shipped in the installer. The shell runs through Windows' own console host instead of dying with `pty:create`. The pane says which file was blocked. A signed build also signs `.dll` and `.node` files, and the installer clears the download mark on those binaries.
+
 ## 1.6.8 — 2026-10-13
 
 ### Changed
