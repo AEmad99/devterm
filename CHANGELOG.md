@@ -8,6 +8,7 @@ at the top. Dates are ISO `YYYY-MM-DD`.
 ### Fixed
 
 - Local terminals still start on Windows when Application Control (Smart App Control or WDAC) blocks the unsigned `conpty.node` shipped in the installer. The shell runs through Windows' own console host instead of dying with `pty:create`. The pane says which file was blocked. A signed build also signs `.dll` and `.node` files, and the installer clears the download mark on those binaries.
+- The built-in agent starts again. Packaging was dropping `yaml`'s runtime files in `dist/doc` (including `directives.js`), so `agent:capabilities` died with `Cannot find module '../doc/directives.js'`.
 
 ## 1.6.8 — 2026-10-13
 

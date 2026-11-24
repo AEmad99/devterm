@@ -25,13 +25,7 @@ describe('Agent nested-closure packaging', () => {
       mkdirSync(srcPkg, { recursive: true })
       writeFileSync(join(srcPkg, 'package.json'), JSON.stringify({ name: 'typebox' }))
       // Simulate a nested dep the builder did collect on its own.
-      const stalePkg = join(
-        appOutDir,
-        'resources',
-        'app.asar.unpacked',
-        NESTED,
-        'semver'
-      )
+      const stalePkg = join(appOutDir, 'resources', 'app.asar.unpacked', NESTED, 'semver')
       mkdirSync(stalePkg, { recursive: true })
       writeFileSync(join(stalePkg, 'package.json'), JSON.stringify({ name: 'semver' }))
 
@@ -70,6 +64,17 @@ describe('Agent nested-closure packaging', () => {
       assert.equal(existsSync(join(dest, 'typebox', 'index.js.map')), false)
       assert.equal(existsSync(join(dest, 'typebox', 'index.d.ts')), false)
       assert.equal(existsSync(join(dest, 'typebox', 'docs', 'guide.md')), false)
+      // yaml's dist/doc is runtime code, not a documentation folder.
+      mkdirSync(join(nested, 'yaml', 'dist', 'doc'), { recursive: true })
+      mkdirSync(join(nested, 'yaml', 'dist', 'compose'), { recursive: true })
+      writeFileSync(join(nested, 'yaml', 'dist', 'doc', 'directives.js'), 'module.exports = {}\n')
+      writeFileSync(
+        join(nested, 'yaml', 'dist', 'compose', 'composer.js'),
+        'require("../doc/directives.js")\n'
+      )
+      mirrorAgentClosure(projectDir, appOutDir, { platform: 'win32', arch: 'x64' })
+      assert.ok(existsSync(join(dest, 'yaml', 'dist', 'doc', 'directives.js')))
+      assert.ok(existsSync(join(dest, 'yaml', 'dist', 'compose', 'composer.js')))
       assert.equal(existsSync(join(dest, '@esbuild', 'linux-x64')), false)
       assert.ok(existsSync(join(dest, '@esbuild', 'win32-x64', 'bin', 'esbuild.exe')))
     } finally {

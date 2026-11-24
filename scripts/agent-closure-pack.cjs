@@ -53,15 +53,31 @@ function archName(arch) {
 function esbuildTarget(platform, arch) {
   if (!platform) return null
   const name = archName(arch)
-  if (platform === 'win32') return `win32-${name === 'arm64' ? 'arm64' : name === 'ia32' ? 'ia32' : 'x64'}`
+  if (platform === 'win32')
+    return `win32-${name === 'arm64' ? 'arm64' : name === 'ia32' ? 'ia32' : 'x64'}`
   if (platform === 'darwin') return `darwin-${name === 'arm64' ? 'arm64' : 'x64'}`
-  if (platform === 'linux') return `linux-${name === 'arm64' ? 'arm64' : name === 'armv7l' ? 'arm' : 'x64'}`
+  if (platform === 'linux')
+    return `linux-${name === 'arm64' ? 'arm64' : name === 'armv7l' ? 'arm' : 'x64'}`
   return null
+}
+
+/**
+ * Directory names we leave out of the installer. `dist/doc` is the exception:
+ * the `yaml` package keeps runtime modules there (`directives.js`, `Document.js`),
+ * and `composer.js` requires them. Skipping that folder makes the packaged
+ * agent die on startup with MODULE_NOT_FOUND.
+ */
+function isPackagingSkipDir(part, parent) {
+  if (!SKIP_DIR_NAMES.has(part)) return false
+  if (part === 'doc' && parent === 'dist') return false
+  return true
 }
 
 function shouldMirrorFile(rel, target) {
   const parts = rel.split('/')
-  if (parts.some((part) => SKIP_DIR_NAMES.has(part))) return false
+  for (let i = 0; i < parts.length; i++) {
+    if (isPackagingSkipDir(parts[i], i > 0 ? parts[i - 1] : '')) return false
+  }
   const base = parts[parts.length - 1]
   if (
     base.endsWith('.map') ||
@@ -112,6 +128,7 @@ module.exports = {
   nestedClosureDest,
   mirrorAgentClosure,
   shouldMirrorFile,
+  isPackagingSkipDir,
   esbuildTarget,
   afterPack
 }
