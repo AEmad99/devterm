@@ -1057,10 +1057,37 @@
   border-bottom: 1px solid var(--border);
   font-size: 12px;
 }
-/* "Back to terminals" affordance — the editor replaces the terminal layout
-   when a file is opened from the side panel, so without an in-toolbar return
-   control the user can be stranded with no obvious way back. Pinned to the
-   left edge of the editor toolbar so the eye finds it immediately. */
+.editor-toolbar button.editor-split-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  padding: 4px 6px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+}
+.editor-toolbar button.editor-split-btn:hover:not(:disabled) {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.editor-toolbar button.editor-split-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.editor-toolbar button.editor-split-btn.split-down svg {
+  transform: rotate(90deg);
+}
+.editor-split-file {
+  font-weight: 600;
+}
+/* "Back to terminals" affordance. A file can cover the terminal layout, or
+   sit beside it in a split. This returns to the terminals full-screen. Pinned
+   to the left edge of the editor toolbar so the eye finds it immediately. */
 .editor-back {
   display: inline-flex;
   align-items: center;
@@ -1107,6 +1134,11 @@
   white-space: nowrap;
   direction: rtl; /* keep the filename visible when the path is long */
   text-align: left;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.editor-toolbar button {
+  flex-shrink: 0;
 }
 .editor-dirty {
   color: var(--accent);

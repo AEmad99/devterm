@@ -23,11 +23,14 @@ export default function MarkdownPreview({ docId, content, previewMode }: Markdow
       setError(null)
       const el = containerRef.current
       if (!el) return
-      const top = el.scrollTop
-      const left = el.scrollLeft
+      // The preview text scrolls on the parent `.editor-preview`, not on this
+      // node. Replacing the HTML must not send that pane back to the top.
+      const scroller = el.closest<HTMLElement>('.editor-preview') ?? el
+      const top = scroller.scrollTop
+      const left = scroller.scrollLeft
       el.innerHTML = html
-      el.scrollTop = top
-      el.scrollLeft = left
+      scroller.scrollTop = top
+      scroller.scrollLeft = left
     } catch (e) {
       setError(String((e as Error).message || e))
     }

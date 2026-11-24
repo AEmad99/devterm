@@ -1,7 +1,17 @@
-import { lazy, Suspense, useMemo, useState, type Dispatch, type SetStateAction } from 'react'
+import {
+  lazy,
+  Suspense,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type Dispatch,
+  type SetStateAction
+} from 'react'
 import TerminalLayout from '../terminal/TerminalLayout'
 import GroupBar from './GroupBar'
 import ConfirmDialog from '../common/ConfirmDialog'
+import Splitter from '../common/Splitter'
 import {
   IconTerminals,
   IconLocal,
@@ -11,11 +21,13 @@ import {
   IconPlus,
   IconGrid,
   IconClose,
+  IconSplit,
   EmptyTerminalArt
 } from '../common/Icons'
 import { DEFAULT_GROUP, useLayout, type Group } from '../../store/layout'
 import type { Session } from '../../store/sessions'
-import type { EditorDoc } from '../../store/editors'
+import { useEditors, type EditorDoc } from '../../store/editors'
+import { splitEditorWithTerminal } from '../../lib/editor-split-actions'
 import { useSettings } from '../../store/settings'
 import { setAgentUiMode } from '../../lib/agent-ui'
 import { comboLabel, resolveHotkeys, type HotkeyId } from '../../lib/hotkeys'
@@ -172,7 +184,10 @@ export default function TerminalsView({
             className={`tab ${!editorFocused ? 'active' : ''}`}
             role="tab"
             aria-selected={!editorFocused}
-            onClick={editorBlur}
+            onClick={() => {
+              useEditors.getState().setSplit(null)
+              editorBlur()
+            }}
             title="Back to terminals"
           >
             <span className="tab-icon">
@@ -189,12 +204,42 @@ export default function TerminalsView({
                 role="tab"
                 aria-selected={d.id === editorActiveId && editorFocused}
                 title={d.path}
-                onClick={() => editorSetActive(d.id)}
+                onClick={() => {
+                  const ed = useEditors.getState()
+                  if (ed.split && ed.split.primaryId !== d.id && ed.split.other !== d.id) {
+                    ed.setSplit({ ...ed.split, primaryId: d.id })
+                  }
+                  editorSetActive(d.id)
+                }}
               >
                 <span className="tab-icon">
                   {d.scope === 'remote' ? <IconRemote size={13} /> : <IconEdit size={13} />}
                 </span>
                 <span className="tab-title">{d.name}</span>
+                <button
+                  type="button"
+                  className="tab-quick"
+                  aria-label={`Split ${d.name} right with the terminal`}
+                  title="Split right with the terminal"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    splitEditorWithTerminal('row', d.id)
+                  }}
+                >
+                  <IconSplit size={11} />
+                </button>
+                <button
+                  type="button"
+                  className="tab-quick split-down"
+                  aria-label={`Split ${d.name} down with the terminal`}
+                  title="Split down with the terminal"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    splitEditorWithTerminal('col', d.id)
+                  }}
+                >
+                  <IconSplit size={11} />
+                </button>
                 <button
                   type="button"
                   className="tab-close"
@@ -286,16 +331,93 @@ export default function TerminalsView({
           </div>
         </section>
       )}
-      <div className="terminals-body">
-        <div className={`layout-wrap${editorFocused || sessionCount === 0 ? ' term-hidden' : ''}`}>
-          <TerminalLayout
-            sessions={sessionsRef}
-            onNewTerminal={onNewTerminal}
-            onRequestCloseSession={onRequestCloseSession}
-          />
-        </div>
+      <EditorTerminalBody
+        editorFocused={editorFocused}
+        sessionCount={sessionCount}
+        activeGroupCount={activeGroupCount}
+        sessionsRef={sessionsRef}
+        onNewTerminal={onNewTerminal}
+        onNewTerminalInGroup={onNewTerminalInGroup}
+        onCreateGrid={onCreateGrid}
+        onRequestCloseSession={onRequestCloseSession}
+      />
 
-        {!editorFocused && sessionCount > 0 && activeGroupCount === 0 && (
+      <ConfirmDialog
+        open={pendingEditorClose !== null}
+        title="Discard unsaved changes?"
+        message="This file has unsaved changes. Closing the tab discards them."
+        confirmLabel="Discard & close"
+        onConfirm={() => {
+          if (pendingEditorClose) editorClose(pendingEditorClose)
+          setPendingEditorClose(null)
+        }}
+        onClose={() => setPendingEditorClose(null)}
+      />
+    </div>
+  )
+}
+
+/**
+ * Terminals stay mounted in `.layout-wrap`. An open file can tile beside that
+ * layout (or beside another file) instead of covering it. The wrap is only
+ * hidden with `.term-hidden` — never unmounted — so xterm keeps its box.
+ */
+function EditorTerminalBody({
+  editorFocused,
+  sessionCount,
+  activeGroupCount,
+  sessionsRef,
+  onNewTerminal,
+  onNewTerminalInGroup,
+  onCreateGrid,
+  onRequestCloseSession
+}: {
+  editorFocused: boolean
+  sessionCount: number
+  activeGroupCount: number
+  sessionsRef: Session[]
+  onNewTerminal: () => void
+  onNewTerminalInGroup?: () => void
+  onCreateGrid?: () => void
+  onRequestCloseSession?: (sid: string) => void
+}) {
+  const split = useEditors((s) => s.split)
+  const docCount = useEditors((s) => s.docs.length)
+  const bodyRef = useRef<HTMLDivElement>(null)
+  const editorOnScreen = docCount > 0 && (editorFocused || split !== null)
+  const terminalBeside = editorOnScreen && split?.other === 'terminal'
+  const secondaryId = editorOnScreen && split && split.other !== 'terminal' ? split.other : null
+  const hideTerminals = !terminalBeside && (editorOnScreen || sessionCount === 0)
+  const activeSplit = editorOnScreen ? split : null
+
+  const onSplitDelta = (px: number) => {
+    const body = bodyRef.current
+    const cur = useEditors.getState().split
+    if (!body || !cur) return
+    const total = cur.dir === 'row' ? body.clientWidth : body.clientHeight
+    if (total <= 0) return
+    useEditors.getState().setSplitRatio(cur.ratio + px / total)
+  }
+
+  return (
+    <div
+      className={`terminals-body${activeSplit ? ` editor-split editor-split-${activeSplit.dir}` : ''}`}
+      ref={bodyRef}
+      style={
+        activeSplit
+          ? ({
+              '--editor-split': `${Math.round(activeSplit.ratio * 1000) / 10}%`
+            } as CSSProperties)
+          : undefined
+      }
+    >
+      <div className={`layout-wrap${hideTerminals ? ' term-hidden' : ''}`}>
+        <TerminalLayout
+          sessions={sessionsRef}
+          onNewTerminal={onNewTerminal}
+          onRequestCloseSession={onRequestCloseSession}
+        />
+        {sessionCount > 0 && activeGroupCount === 0 && (
           <div className="empty empty-group-overlay">
             <div className="empty-card">
               <EmptyTerminalArt />
@@ -314,47 +436,59 @@ export default function TerminalsView({
             </div>
           </div>
         )}
-
-        {editorFocused && editorActiveId && (
-          <div className="pane pane-editor">
-            <Suspense fallback={<div className="editor-status">Opening editor…</div>}>
-              <EditorView />
-            </Suspense>
-          </div>
-        )}
-
-        {sessionCount === 0 && !editorFocused && (
-          <div className="empty">
-            <div className="empty-card">
-              <EmptyTerminalArt />
-              <div className="empty-title">No terminals open</div>
-              <div className="empty-sub">
-                Open a local shell, connect to a server, or start a grid.
-              </div>
-              <button className="empty-cta" onClick={onNewTerminal}>
-                <IconPlus size={15} />
-                New terminal
-              </button>
-              <button className="empty-cta secondary" onClick={onCreateGrid ?? onNewTerminal}>
-                <IconGrid size={15} />
-                Create grid…
-              </button>
-            </div>
-          </div>
-        )}
       </div>
 
-      <ConfirmDialog
-        open={pendingEditorClose !== null}
-        title="Discard unsaved changes?"
-        message="This file has unsaved changes. Closing the tab discards them."
-        confirmLabel="Discard & close"
-        onConfirm={() => {
-          if (pendingEditorClose) editorClose(pendingEditorClose)
-          setPendingEditorClose(null)
-        }}
-        onClose={() => setPendingEditorClose(null)}
-      />
+      {activeSplit && (
+        <div className="editor-split-handle">
+          <Splitter
+            direction={activeSplit.dir === 'row' ? 'horizontal' : 'vertical'}
+            onDelta={onSplitDelta}
+          />
+        </div>
+      )}
+
+      {docCount > 0 && (
+        <div
+          className={`pane pane-editor${editorOnScreen ? '' : ' term-hidden'}`}
+          aria-hidden={editorOnScreen ? undefined : true}
+        >
+          <Suspense fallback={<div className="editor-status">Opening editor…</div>}>
+            <EditorView
+              docId={split?.primaryId}
+              autoFocus={editorOnScreen}
+              revealed={editorOnScreen}
+            />
+          </Suspense>
+        </div>
+      )}
+
+      {secondaryId && (
+        <div className="pane pane-editor pane-editor-secondary">
+          <Suspense fallback={<div className="editor-status">Opening editor…</div>}>
+            <EditorView docId={secondaryId} autoFocus={false} />
+          </Suspense>
+        </div>
+      )}
+
+      {sessionCount === 0 && !editorOnScreen && (
+        <div className="empty">
+          <div className="empty-card">
+            <EmptyTerminalArt />
+            <div className="empty-title">No terminals open</div>
+            <div className="empty-sub">
+              Open a local shell, connect to a server, or start a grid.
+            </div>
+            <button className="empty-cta" onClick={onNewTerminal}>
+              <IconPlus size={15} />
+              New terminal
+            </button>
+            <button className="empty-cta secondary" onClick={onCreateGrid ?? onNewTerminal}>
+              <IconGrid size={15} />
+              Create grid…
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

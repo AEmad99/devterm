@@ -7,6 +7,8 @@ interface SelectionView {
     doc: { toString: () => string }
   }
   requestMeasure?: () => void
+  scrollDOM?: HTMLElement
+  focus?: () => void
 }
 
 const viewRegistry = new Map<string, SelectionView>()

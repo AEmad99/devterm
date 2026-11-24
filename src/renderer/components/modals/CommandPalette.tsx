@@ -27,6 +27,7 @@ import { scoreTerms } from '../../lib/fuzzy'
 import { useEscapeKey } from '../../lib/useEscapeKey'
 import { useSessions } from '../../store/sessions'
 import { useEditors } from '../../store/editors'
+import { splitFocusedEditor } from '../../lib/editor-split-actions'
 import { useLayout, DEFAULT_GROUP } from '../../store/layout'
 import { useSettings } from '../../store/settings'
 import { toLiveSnapshot } from '../../lib/workspace'
@@ -409,15 +410,15 @@ export default function CommandPalette({
       },
       {
         id: 'split-right',
-        title: 'Split terminal right',
-        subtitle: 'Open a new shell in a pane beside this one',
-        kw: 'split pane right vertical'
+        title: 'Split right',
+        subtitle: 'Tile an open file with the terminal, or open a shell beside this one',
+        kw: 'split pane right vertical file editor'
       },
       {
         id: 'split-down',
-        title: 'Split terminal down',
-        subtitle: 'Open a new shell in a pane below this one',
-        kw: 'split pane down horizontal'
+        title: 'Split down',
+        subtitle: 'Tile an open file above the terminal, or open a shell below this one',
+        kw: 'split pane down horizontal file editor'
       },
       {
         id: 'focus',
@@ -716,11 +717,11 @@ export default function CommandPalette({
           break
         case 'split-right':
           onRun()
-          splitActive('right')
+          if (!splitFocusedEditor('row')) splitActive('right')
           break
         case 'split-down':
           onRun()
-          splitActive('bottom')
+          if (!splitFocusedEditor('col')) splitActive('bottom')
           break
         case 'focus':
           if (activeId) {

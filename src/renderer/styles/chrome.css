@@ -593,6 +593,88 @@
   position: absolute;
   inset: 0;
 }
+/* File | terminal (or file | file). The terminal wrap stays a direct child so
+   xterm is never reparented. `.term-hidden` still parks it off-screen when the
+   file is the only pane. */
+.terminals-body.editor-split {
+  display: grid;
+}
+.terminals-body.editor-split-row {
+  grid-template-columns: minmax(0, var(--editor-split, 50%)) 5px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+}
+.terminals-body.editor-split-col {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, var(--editor-split, 50%)) 5px minmax(0, 1fr);
+}
+.terminals-body.editor-split > .pane-editor {
+  position: relative;
+  inset: auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.terminals-body.editor-split > .pane-editor .editor-area {
+  min-width: 0;
+  min-height: 0;
+}
+/* Parked editor keeps its box (and therefore its scroll offsets). Pointers
+   must fall through to the terminal underneath. */
+.pane-editor.term-hidden {
+  pointer-events: none;
+}
+.terminals-body.editor-split-row > .pane-editor {
+  grid-column: 1;
+  grid-row: 1;
+}
+.terminals-body.editor-split-row > .editor-split-handle {
+  grid-column: 2;
+  grid-row: 1;
+}
+.terminals-body.editor-split-row > .layout-wrap:not(.term-hidden),
+.terminals-body.editor-split-row > .pane-editor-secondary {
+  grid-column: 3;
+  grid-row: 1;
+}
+.terminals-body.editor-split-col > .pane-editor {
+  grid-column: 1;
+  grid-row: 1;
+}
+.terminals-body.editor-split-col > .editor-split-handle {
+  grid-column: 1;
+  grid-row: 2;
+}
+.terminals-body.editor-split-col > .layout-wrap:not(.term-hidden),
+.terminals-body.editor-split-col > .pane-editor-secondary {
+  grid-column: 1;
+  grid-row: 3;
+}
+.terminals-body.editor-split > .layout-wrap:not(.term-hidden) {
+  position: relative;
+  inset: auto;
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+}
+.terminals-body.editor-split > .layout-wrap.term-hidden {
+  grid-column: 1;
+  grid-row: 1;
+  position: absolute;
+  inset: 0;
+}
+.editor-split-handle {
+  min-width: 0;
+  min-height: 0;
+  position: relative;
+}
+.editor-split-handle > .splitter {
+  position: absolute;
+  inset: 0;
+  width: auto;
+  height: auto;
+  margin: 0;
+}
 .panes.tiling {
   position: absolute;
   inset: 0;

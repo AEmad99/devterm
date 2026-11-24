@@ -1,6 +1,8 @@
 import { create } from 'zustand'
 import type { FileContent } from '@shared/types'
 import { isMarkdownName, nextMarkdownPreviewMode } from '../lib/markdown-preview'
+import { clampEditorSplitRatio, reconcileEditorSplit } from '../lib/editor-split'
+import { forgetEditorScroll } from '../lib/editor-scroll'
 
 export type EditorScope = 'local' | 'remote'
 export type MarkdownPreviewMode = 'edit' | 'side' | 'preview'
@@ -34,6 +36,25 @@ export interface OpenTarget {
   path: string
 }
 
+/**
+ * A file tiled with either the live terminal layout or a second open file.
+ * `row` is side by side (file | other). `col` stacks the file above the other.
+ * `ratio` is the fraction of the area given to the primary file.
+ */
+export interface EditorSplit {
+  dir: 'row' | 'col'
+  ratio: number
+  primaryId: string
+  other: 'terminal' | string
+}
+
+/** Opening or reopening a file shows it in the primary pane of an existing split. */
+function focusSplitOn(split: EditorSplit | null, id: string): EditorSplit | null {
+  if (!split) return null
+  if (split.other === id) return { ...split, primaryId: id, other: split.primaryId }
+  return { ...split, primaryId: id }
+}
+
 function basename(path: string): string {
   const parts = path.split(/[/\\]/).filter(Boolean)
   return parts[parts.length - 1] || path
@@ -64,11 +85,15 @@ interface EditorState {
   activeId: string | null
   /** Whether the editor area (vs the active session) currently has focus. */
   focused: boolean
+  /** File tiled with the terminal layout or with another open file. */
+  split: EditorSplit | null
   open: (t: OpenTarget) => void
   close: (id: string) => void
   setActive: (id: string) => void
   /** Hand focus back to the session view (e.g. a terminal tab was clicked). */
   blur: () => void
+  setSplit: (split: EditorSplit | null) => void
+  setSplitRatio: (ratio: number) => void
   setContent: (id: string, content: string) => void
   setPreviewMode: (id: string, mode: MarkdownPreviewMode) => void
   /** Cycle Edit → Side → Preview for Markdown docs; no-op otherwise. */
@@ -82,12 +107,13 @@ export const useEditors = create<EditorState>((set, get) => ({
   docs: [],
   activeId: null,
   focused: false,
+  split: null,
 
   open: (t) => {
     const id = docId(t)
     const existing = get().docs.find((d) => d.id === id)
     if (existing) {
-      set({ activeId: id, focused: true })
+      set((s) => ({ activeId: id, focused: true, split: focusSplitOn(s.split, id) }))
       return
     }
     const doc: EditorDoc = {
@@ -104,7 +130,12 @@ export const useEditors = create<EditorState>((set, get) => ({
       saving: false,
       previewMode: 'edit'
     }
-    set((s) => ({ docs: [...s.docs, doc], activeId: id, focused: true }))
+    set((s) => ({
+      docs: [...s.docs, doc],
+      activeId: id,
+      focused: true,
+      split: focusSplitOn(s.split, id)
+    }))
     read(t)
       .then((fc) => {
         const content = normalize(fc.content)
@@ -132,7 +163,8 @@ export const useEditors = create<EditorState>((set, get) => ({
       })
   },
 
-  close: (id) =>
+  close: (id) => {
+    forgetEditorScroll(id)
     set((s) => {
       const docs = s.docs.filter((d) => d.id !== id)
       let activeId = s.activeId
@@ -141,11 +173,29 @@ export const useEditors = create<EditorState>((set, get) => ({
         activeId = docs.length ? docs[docs.length - 1].id : null
         if (!docs.length) focused = false
       }
-      return { docs, activeId, focused }
-    }),
+      return {
+        docs,
+        activeId,
+        focused,
+        split: reconcileEditorSplit(
+          s.split,
+          docs.map((d) => d.id),
+          activeId
+        )
+      }
+    })
+  },
 
   setActive: (id) => set({ activeId: id, focused: true }),
   blur: () => set({ focused: false }),
+  setSplit: (split) => set({ split }),
+  setSplitRatio: (ratio) =>
+    set((s) => {
+      if (!s.split) return s
+      const next = clampEditorSplitRatio(ratio)
+      if (next === s.split.ratio) return s
+      return { split: { ...s.split, ratio: next } }
+    }),
 
   setContent: (id, content) =>
     set((s) => ({ docs: s.docs.map((d) => (d.id === id ? { ...d, content } : d)) })),
@@ -214,13 +264,22 @@ export const useEditors = create<EditorState>((set, get) => ({
 
   closeForSession: (sessionId) =>
     set((s) => {
+      for (const d of s.docs) {
+        if (d.sessionId === sessionId) forgetEditorScroll(d.id)
+      }
       const docs = s.docs.filter((d) => d.sessionId !== sessionId)
       if (docs.length === s.docs.length) return s
       const activeStillOpen = docs.some((d) => d.id === s.activeId)
+      const activeId = activeStillOpen ? s.activeId : docs.length ? docs[docs.length - 1].id : null
       return {
         docs,
-        activeId: activeStillOpen ? s.activeId : docs.length ? docs[docs.length - 1].id : null,
-        focused: activeStillOpen ? s.focused : docs.length ? s.focused : false
+        activeId,
+        focused: activeStillOpen ? s.focused : docs.length ? s.focused : false,
+        split: reconcileEditorSplit(
+          s.split,
+          docs.map((d) => d.id),
+          activeId
+        )
       }
     })
 }))

@@ -3,6 +3,13 @@
 All notable changes to DevTerm are documented here. The most recent section is
 at the top. Dates are ISO `YYYY-MM-DD`.
 
+## Unreleased
+
+### Added
+
+- An open file can be split with the terminal, or with another open file. Split right and split down work from the file tab, the editor toolbar, and the same shortcuts used for terminals. The terminal stays running underneath.
+- Leaving an open file to use a terminal no longer jumps the editor or its markdown preview back to the top.
+
 ## 1.6.9 — 2026-11-24
 
 ### Fixed
