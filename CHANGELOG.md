@@ -3,7 +3,7 @@
 All notable changes to DevTerm are documented here. The most recent section is
 at the top. Dates are ISO `YYYY-MM-DD`.
 
-## Unreleased
+## 1.6.9 — 2026-11-24
 
 ### Fixed
 
