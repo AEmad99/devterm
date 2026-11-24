@@ -3,6 +3,20 @@
 All notable changes to DevTerm are documented here. The most recent section is
 at the top. Dates are ISO `YYYY-MM-DD`.
 
+## Unreleased
+
+### Added
+
+- An open file can be split with the terminal, or with another open file. Split right and split down work from the file tab, the editor toolbar, and the same shortcuts used for terminals. The terminal stays running underneath.
+- Leaving an open file to use a terminal no longer jumps the editor or its markdown preview back to the top.
+
+## 1.6.9 — 2026-11-24
+
+### Fixed
+
+- Local terminals still start on Windows when Application Control (Smart App Control or WDAC) blocks the unsigned `conpty.node` shipped in the installer. The shell runs through Windows' own console host instead of dying with `pty:create`. The pane says which file was blocked. A signed build also signs `.dll` and `.node` files, and the installer clears the download mark on those binaries.
+- The built-in agent starts again. Packaging was dropping `yaml`'s runtime files in `dist/doc` (including `directives.js`), so `agent:capabilities` died with `Cannot find module '../doc/directives.js'`.
+
 ## 1.6.8 — 2026-10-13
 
 ### Changed

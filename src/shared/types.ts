@@ -45,6 +45,13 @@ export interface PtyCreated {
   shell: string
   /** Absolute working directory the PTY was spawned in (for early explorer seed). */
   cwd: string
+  /**
+   * Operator-facing note when the shell started through a fallback host.
+   * Windows Application Control can block the unsigned conpty.node that ships
+   * in the installer; the shell still runs via the inbox console host, and
+   * this text explains that in the pane.
+   */
+  notice?: string
 }
 
 /** Lightweight output notification used while a renderer xterm is hibernated. */

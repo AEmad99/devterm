@@ -182,6 +182,15 @@
   Delete "$TEMP\devterm-nsis-wipe.ps1"
 !macroend
 
+; A browser download marks the installer with a zone identifier. Clear that
+; mark on the shipped natives so Attachment Execution Service does not block
+; conpty.node / helper executables on top of Application Control.
+!macro customInstall
+  DetailPrint "DevTerm: clearing downloaded-file blocks on installed binaries..."
+  nsExec::Exec `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "Get-ChildItem -LiteralPath '$INSTDIR' -Recurse -File | Where-Object { $$_.Extension -in '.exe','.dll','.node' } | Unblock-File"`
+  Pop $0
+!macroend
+
 ; Outer + elevated inner .onInit — kill only (do not wipe: uninstaller still needed).
 !macro customInit
   !insertmacro _DevTermKillApp

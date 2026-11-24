@@ -33,6 +33,7 @@ import {
   isHotkeyCaptureActive,
   type HotkeyId
 } from './lib/hotkeys'
+import { splitFocusedEditor } from './lib/editor-split-actions'
 import {
   focusTerminal,
   clearTerminal,
@@ -535,6 +536,12 @@ export default function App() {
           void ed.save(doc.id)
           return
         }
+        if (id === 'splitRight' || id === 'splitDown') {
+          if (splitFocusedEditor(id === 'splitRight' ? 'row' : 'col')) {
+            e.preventDefault()
+            return
+          }
+        }
         if (id === 'previewMarkdown') {
           const ed = useEditors.getState()
           const doc = ed.docs.find((d) => d.id === ed.activeId)
@@ -859,11 +866,13 @@ export default function App() {
   }
 
   const capturable = capturableSessions(sessionsRef, activeGroupId)
-  const showGroupBar = !editorFocused && sessionCount > 0 && !zenMode
+  const editorSplitWithTerminal = useEditors((s) => s.split?.other === 'terminal')
+  const terminalsVisible = !editorFocused || editorSplitWithTerminal
+  const showGroupBar = terminalsVisible && sessionCount > 0 && !zenMode
   // The group bar only earns its row once there is more than one group. With a
   // single group, its Save actions move to the status bar (see below).
   const groupBarVisible = showGroupBar && groups.length > 1
-  const workspaceActionsInStatus = !editorFocused && sessionCount > 0 && !groupBarVisible
+  const workspaceActionsInStatus = terminalsVisible && sessionCount > 0 && !groupBarVisible
 
   const saveWorkspace = async (name: string) => {
     const { items, layout } = captureWorkspace(sessionsRef, activeGroupId)
